@@ -30,7 +30,7 @@ Named for what it is: a personal machine for loading capability shards.
 | 2 | Loadouts | systemd takeover, one-command swaps, OOM ladder walk |
 | 3 | HUD | Tauri app: live gauges, console pane, tray |
 | 4 | Signals | HF watchlist + new-release detection (filtered, deduped) |
-| 5 | Market | discovery + downloads |
+| 5 | Market | HF search + GGUF discovery + one-click download to ~/models |
 | 6 | FreeToken | full integration, bench history |
 
 ## Dev loop

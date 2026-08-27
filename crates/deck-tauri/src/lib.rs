@@ -245,6 +245,58 @@ pub fn watch_remove(org: &str) -> anyhow::Result<()> {
     deck_feeds::remove_org(&conn, org)
 }
 
+#[derive(Serialize)]
+pub struct MarketHit {
+    pub id: String,
+    pub downloads: u64,
+    pub likes: u64,
+    pub pipeline_tag: Option<String>,
+    pub tags: Vec<String>,
+    pub created_at: String,
+}
+
+#[derive(Serialize)]
+pub struct MarketFileRow {
+    pub rfilename: String,
+    pub size: Option<u64>,
+}
+
+/// Search HuggingFace models by free-text query.
+pub fn market_search(query: &str, limit: usize) -> anyhow::Result<Vec<MarketHit>> {
+    Ok(deck_feeds::search_models(query, limit)?
+        .into_iter()
+        .map(|h| MarketHit {
+            id: h.id,
+            downloads: h.downloads,
+            likes: h.likes,
+            pipeline_tag: h.pipeline_tag,
+            tags: h.tags,
+            created_at: h.created_at,
+        })
+        .collect())
+}
+
+/// List GGUF files (with sizes) for a repo.
+pub fn market_files(repo_id: &str) -> anyhow::Result<Vec<MarketFileRow>> {
+    Ok(deck_feeds::model_files(repo_id)?
+        .into_iter()
+        .map(|f| MarketFileRow { rfilename: f.rfilename, size: f.size })
+        .collect())
+}
+
+fn models_dir() -> std::path::PathBuf {
+    std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("models")
+}
+
+/// Download a single repo file into ~/models, returning the saved path.
+pub fn market_download(repo_id: &str, rfilename: &str) -> anyhow::Result<String> {
+    let dest = deck_feeds::download_file(repo_id, rfilename, &models_dir())?;
+    Ok(dest.display().to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

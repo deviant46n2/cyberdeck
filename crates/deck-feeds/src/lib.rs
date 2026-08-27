@@ -161,6 +161,151 @@ pub fn check(conn: &rusqlite::Connection, limit: usize) -> Result<Vec<HfModel>> 
     Ok(news)
 }
 
+// ---------------------------------------------------------------- MARKET
+
+#[derive(Debug, Clone)]
+pub struct SearchHit {
+    pub id: String,
+    pub downloads: u64,
+    pub likes: u64,
+    pub pipeline_tag: Option<String>,
+    pub tags: Vec<String>,
+    pub created_at: String,
+}
+
+#[derive(Deserialize)]
+struct SearchRow {
+    id: String,
+    #[serde(default)]
+    downloads: u64,
+    #[serde(default)]
+    likes: u64,
+    #[serde(default)]
+    pipeline_tag: Option<String>,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    created_at: Option<String>,
+}
+
+/// Parse the HF `/api/models?search=` JSON array (pure, testable).
+pub fn parse_search(json: &str) -> Result<Vec<SearchHit>> {
+    let rows: Vec<SearchRow> = serde_json::from_str(json)?;
+    Ok(rows
+        .into_iter()
+        .map(|r| SearchHit {
+            id: r.id,
+            downloads: r.downloads,
+            likes: r.likes,
+            pipeline_tag: r.pipeline_tag,
+            tags: r.tags,
+            created_at: r.created_at.unwrap_or_default(),
+        })
+        .collect())
+}
+
+pub fn search_models(query: &str, limit: usize) -> Result<Vec<SearchHit>> {
+    let url = format!(
+        "https://huggingface.co/api/models?search={}&sort=downloads&direction=-1&limit={}",
+        simple_encode(query),
+        limit
+    );
+    let agent = ureq::config::Config::builder()
+        .timeout_global(Some(Duration::from_secs(20)))
+        .build()
+        .new_agent();
+    let resp = agent
+        .get(&url)
+        .call()
+        .with_context(|| format!("HF search for '{query}' failed (offline?)"))?;
+    let body = resp.into_body().read_to_string()?;
+    parse_search(&body)
+}
+
+#[derive(Debug, Clone)]
+pub struct MarketFile {
+    pub rfilename: String,
+    pub size: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct ModelDetail {
+    #[serde(default)]
+    siblings: Vec<Sibling>,
+}
+
+#[derive(Deserialize)]
+struct Sibling {
+    rfilename: String,
+}
+
+/// Parse a single-model detail JSON into its sibling filenames (pure).
+pub fn parse_siblings(json: &str) -> Result<Vec<String>> {
+    let d: ModelDetail = serde_json::from_str(json)?;
+    Ok(d.siblings.into_iter().map(|s| s.rfilename).collect())
+}
+
+fn head_size(url: &str) -> Option<u64> {
+    let agent = ureq::config::Config::builder()
+        .timeout_global(Some(Duration::from_secs(20)))
+        .build()
+        .new_agent();
+    let resp = agent.head(url).call().ok()?;
+    resp.headers()
+        .get("content-length")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse().ok())
+}
+
+/// List GGUF files in a repo, resolving each file's size via a HEAD request.
+pub fn model_files(repo_id: &str) -> Result<Vec<MarketFile>> {
+    let url = format!("https://huggingface.co/api/models/{repo_id}");
+    let agent = ureq::config::Config::builder()
+        .timeout_global(Some(Duration::from_secs(20)))
+        .build()
+        .new_agent();
+    let resp = agent
+        .get(&url)
+        .call()
+        .with_context(|| format!("HF model lookup for '{repo_id}' failed (offline?)"))?;
+    let body = resp.into_body().read_to_string()?;
+    let names = parse_siblings(&body)?;
+    let mut out = Vec::new();
+    for name in names {
+        if name.to_lowercase().ends_with(".gguf") {
+            let size = head_size(&format!(
+                "https://huggingface.co/{repo_id}/resolve/main/{name}"
+            ));
+            out.push(MarketFile { rfilename: name, size });
+        }
+    }
+    Ok(out)
+}
+
+/// Stream a single repo file to `dest_dir`, returning the saved path.
+pub fn download_file(repo_id: &str, rfilename: &str, dest_dir: &std::path::Path) -> Result<std::path::PathBuf> {
+    std::fs::create_dir_all(dest_dir)?;
+    let url = format!(
+        "https://huggingface.co/{repo_id}/resolve/main/{name}",
+        repo_id = repo_id,
+        name = simple_encode(rfilename)
+    );
+    let agent = ureq::config::Config::builder().build().new_agent();
+    let resp = agent
+        .get(&url)
+        .call()
+        .with_context(|| format!("download of '{repo_id}/{rfilename}' failed (offline?)"))?;
+    let name = std::path::Path::new(rfilename)
+        .file_name()
+        .map(|f| f.to_string_lossy().to_string())
+        .unwrap_or_else(|| rfilename.to_string());
+    let dest = dest_dir.join(name);
+    let mut f = std::fs::File::create(&dest)?;
+    let mut reader = resp.into_body().into_reader();
+    std::io::copy(&mut reader, &mut f)?;
+    Ok(dest)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,5 +332,38 @@ mod tests {
         let fresh = diff_new(&models, &seen);
         assert_eq!(fresh.len(), 1);
         assert_eq!(fresh[0].id, "unsloth/GLM-5.3-Flash-GGUF");
+    }
+
+    const SEARCH: &str = r#"[
+      {"id":"unsloth/Qwen3.8-27B-GGUF","likes":3010,"downloads":7638591,"pipeline_tag":"text-generation","tags":["gguf","qwen3_5"],"createdAt":"2026-08-13T08:28:40Z"},
+      {"id":"Qwen/Qwen3.8-27B-FP8","likes":705,"downloads":3797538,"tags":["transformers"]}
+    ]"#;
+
+    #[test]
+    fn parses_search() {
+        let hits = parse_search(SEARCH).unwrap();
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].id, "unsloth/Qwen3.8-27B-GGUF");
+        assert_eq!(hits[0].downloads, 7_638_591);
+        assert_eq!(hits[0].pipeline_tag.as_deref(), Some("text-generation"));
+        assert!(hits[1].pipeline_tag.is_none());
+    }
+
+    const DETAIL: &str = r#"{"id":"x/Y-GGUF","siblings":[
+      {"rfilename":"README.md"},
+      {"rfilename":"UD-IQ1_M/Y-UD-IQ1_M-00001-of-00003.gguf","size":123},
+      {"rfilename":"UD-IQ1_M/Y-UD-IQ1_M-00002-of-00003.gguf"}
+    ]}"#;
+
+    #[test]
+    fn parses_siblings_and_filters_gguf() {
+        let names = parse_siblings(DETAIL).unwrap();
+        let gguf: Vec<_> = names
+            .iter()
+            .filter(|n| n.to_lowercase().ends_with(".gguf"))
+            .cloned()
+            .collect();
+        assert_eq!(gguf.len(), 2);
+        assert!(gguf[0].contains("00001"));
     }
 }

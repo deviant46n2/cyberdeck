@@ -62,6 +62,21 @@ fn watch_remove(org: String) -> Result<(), String> {
     deck_tauri::watch_remove(&org).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn market_search(query: String, limit: usize) -> Result<Vec<deck_tauri::MarketHit>, String> {
+    deck_tauri::market_search(&query, limit).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn market_files(repo_id: String) -> Result<Vec<deck_tauri::MarketFileRow>, String> {
+    deck_tauri::market_files(&repo_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn market_download(repo_id: String, rfilename: String) -> Result<String, String> {
+    deck_tauri::market_download(&repo_id, &rfilename).map_err(|e| e.to_string())
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -74,7 +89,10 @@ fn main() {
             signals_check,
             watchlist,
             watch_add,
-            watch_remove
+            watch_remove,
+            market_search,
+            market_files,
+            market_download
         ])
         .run(tauri::generate_context!())
         .expect("error while running cyberdeck");

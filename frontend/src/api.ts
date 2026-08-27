@@ -80,3 +80,24 @@ export const signalsCheck = (limit: number) =>
 export const watchlist = () => invoke<string[]>("watchlist");
 export const watchAdd = (org: string) => invoke<void>("watch_add", { org });
 export const watchRemove = (org: string) => invoke<void>("watch_remove", { org });
+
+export interface MarketHit {
+  id: string;
+  downloads: number;
+  likes: number;
+  pipeline_tag: string | null;
+  tags: string[];
+  created_at: string;
+}
+
+export interface MarketFileRow {
+  rfilename: string;
+  size: number | null;
+}
+
+export const marketSearch = (query: string, limit: number) =>
+  invoke<MarketHit[]>("market_search", { query, limit });
+export const marketFiles = (repoId: string) =>
+  invoke<MarketFileRow[]>("market_files", { repoId });
+export const marketDownload = (repoId: string, rfilename: string) =>
+  invoke<string>("market_download", { repoId, rfilename });
