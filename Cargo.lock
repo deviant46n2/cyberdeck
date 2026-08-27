@@ -688,6 +688,14 @@ dependencies = [
 [[package]]
 name = "deck-feeds"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "deck-core",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "ureq",
+]
 
 [[package]]
 name = "deck-tauri"
@@ -696,6 +704,7 @@ dependencies = [
  "anyhow",
  "deck-core",
  "deck-engines",
+ "deck-feeds",
  "serde",
 ]
 

@@ -42,6 +42,26 @@ fn use_profile(name: String, dry_run: bool) -> Result<UseResult, String> {
     deck_tauri::use_profile(&name, dry_run).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn signals_check(limit: usize) -> Result<Vec<deck_tauri::SignalRow>, String> {
+    deck_tauri::signals_check(limit).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn watchlist() -> Result<Vec<String>, String> {
+    deck_tauri::watchlist().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn watch_add(org: String) -> Result<(), String> {
+    deck_tauri::watch_add(&org).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn watch_remove(org: String) -> Result<(), String> {
+    deck_tauri::watch_remove(&org).map_err(|e| e.to_string())
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -50,7 +70,11 @@ fn main() {
             list_profiles,
             dedup,
             fit,
-            use_profile
+            use_profile,
+            signals_check,
+            watchlist,
+            watch_add,
+            watch_remove
         ])
         .run(tauri::generate_context!())
         .expect("error while running cyberdeck");

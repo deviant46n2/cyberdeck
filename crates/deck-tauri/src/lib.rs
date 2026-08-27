@@ -199,6 +199,52 @@ pub fn use_profile(name: &str, dry_run: bool) -> anyhow::Result<UseResult> {
     Ok(UseResult { name: name.to_string(), applied: !dry_run, dry_run, unit })
 }
 
+#[derive(Serialize)]
+pub struct SignalRow {
+    pub id: String,
+    pub author: String,
+    pub created_at: String,
+    pub downloads: u64,
+    pub likes: u64,
+    pub pipeline_tag: Option<String>,
+    pub tags: Vec<String>,
+}
+
+/// Run a SIGNALS check: poll watched orgs and return only new models.
+pub fn signals_check(limit: usize) -> anyhow::Result<Vec<SignalRow>> {
+    let conn = deck_feeds::open()?;
+    deck_feeds::ensure_seeds(&conn)?;
+    let news = deck_feeds::check(&conn, limit)?;
+    Ok(news
+        .into_iter()
+        .map(|m| SignalRow {
+            id: m.id,
+            author: m.author,
+            created_at: m.created_at,
+            downloads: m.downloads,
+            likes: m.likes,
+            pipeline_tag: m.pipeline_tag,
+            tags: m.tags,
+        })
+        .collect())
+}
+
+pub fn watchlist() -> anyhow::Result<Vec<String>> {
+    let conn = deck_feeds::open()?;
+    deck_feeds::ensure_seeds(&conn)?;
+    deck_feeds::list_watchlist(&conn)
+}
+
+pub fn watch_add(org: &str) -> anyhow::Result<()> {
+    let conn = deck_feeds::open()?;
+    deck_feeds::add_org(&conn, org)
+}
+
+pub fn watch_remove(org: &str) -> anyhow::Result<()> {
+    let conn = deck_feeds::open()?;
+    deck_feeds::remove_org(&conn, org)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

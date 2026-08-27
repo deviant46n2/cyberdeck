@@ -50,6 +50,16 @@ export interface UseResult {
   unit: string;
 }
 
+export interface SignalRow {
+  id: string;
+  author: string;
+  created_at: string;
+  downloads: number;
+  likes: number;
+  pipeline_tag: string | null;
+  tags: string[];
+}
+
 export const scan = () => invoke<ScanResult>("scan");
 export const listModels = () => invoke<ModelRow[]>("list_models");
 export const listProfiles = () => invoke<ProfileRow[]>("list_profiles");
@@ -64,3 +74,9 @@ export const fit = (p: {
 }) => invoke<FitRow>("fit", p);
 export const useProfile = (name: string, dryRun: boolean) =>
   invoke<UseResult>("use_profile", { name, dryRun });
+
+export const signalsCheck = (limit: number) =>
+  invoke<SignalRow[]>("signals_check", { limit });
+export const watchlist = () => invoke<string[]>("watchlist");
+export const watchAdd = (org: string) => invoke<void>("watch_add", { org });
+export const watchRemove = (org: string) => invoke<void>("watch_remove", { org });

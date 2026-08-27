@@ -29,7 +29,7 @@ Named for what it is: a personal machine for loading capability shards.
 | 1 | Vault | scanner, dedup report, fit estimator, wrapper-script importer |
 | 2 | Loadouts | systemd takeover, one-command swaps, OOM ladder walk |
 | 3 | HUD | Tauri app: live gauges, console pane, tray |
-| 4 | Signals | watchlists, engine staleness, filtered notifications |
+| 4 | Signals | HF watchlist + new-release detection (filtered, deduped) |
 | 5 | Market | discovery + downloads |
 | 6 | FreeToken | full integration, bench history |
 
