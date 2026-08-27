@@ -4,3 +4,6 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+deck-core = { workspace = true }
+anyhow = "1"
+ureq = { version = "3", features = ["json"] }

@@ -37,6 +37,32 @@ Named for what it is: a personal machine for loading capability shards.
 
 ```sh
 cargo build                 # workspace
-cargo test -p deck-core     # parser tests
+cargo test                  # parser + engine + importer tests
 cargo run -p deck-cli -- --help
 ```
+
+## CLI
+
+```sh
+deck scan                                  # refresh model index + report dupes
+deck list [--json]                         # indexed models
+deck fit --model <path> --ctx 32768 \      # VRAM fit verdict (PASS/WARN/OOM)
+    [--kv-bytes 0.5] [--ngl 1.0] [--kv-layers N] [--reserve 1600]
+
+deck profile import --engine llamacpp \    # seed a loadout from a launch script
+    --script ~/.local/share/llama-server/run-llama-server.sh --name qwen
+deck profile import --engine freetoken \   # FreeToken wrapper -> loadout
+    --script ~/.local/share/freetoken/run-freetoken.sh --name qwen-ft
+deck profile new --model <path> --engine llamacpp --name custom \   # from flags
+    [--port 18000] [--alias qwen3.8-27b] [--ctx 32768] [--ngl 64] [--draft <gguf>]
+deck profile list [--json]
+
+deck use <name> [--dry-run]                # render+install unit (.bak first),
+                                           # restart service, health-wait, ctx ladder
+```
+
+`deck use` preserves the alias+port contract so clients (opencode, dsh) keep
+working. On a failed load it walks `ctx_size` → the profile's `ctx_ladder`,
+then restores the last-good `.bak`. `--dry-run` prints the generated unit
+without touching the live service.
+

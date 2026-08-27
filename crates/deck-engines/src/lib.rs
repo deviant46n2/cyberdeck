@@ -1,5 +1,393 @@
-//! deck-engines: Engine trait (llama.cpp / FreeToken), systemd unit
-//! rendering + control, health-wait, ctx fallback ladder, client-config
-//! rewriter (~/.dsh/settings.yaml, opencode llamacpp port).
+//! Engine control: render systemd units from a Profile, install them with
+//! timestamped backups of whatever was there before, and supervise the live
+//! service (start/stop/health-wait, context fallback ladder).
 //!
-//! Implemented in phase 2. Nothing to see yet.
+//! Safety discipline (from the cyberdeck contract):
+//!   - never overwrite a unit without first writing `<unit>.bak.<timestamp>`
+//!   - `use` preserves the alias+port contract so clients don't reconfigure
+//!   - on a failed load, walk the profile's ctx ladder, then restore last-good
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::{Duration, Instant};
+
+use anyhow::{Context, Result};
+use deck_core::profile::{Engine, Profile};
+
+fn systemd_dir() -> PathBuf {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+        .unwrap_or_else(|| PathBuf::from(".config"))
+        .join("systemd/user")
+}
+
+fn generated_dir() -> PathBuf {
+    std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
+        .unwrap_or_else(|| PathBuf::from(".local/share"))
+        .join("cyberdeck/generated")
+}
+
+/// Builds the `ExecStart` argument list for an engine from a profile.
+pub fn build_args(p: &Profile) -> Vec<String> {
+    match p.engine {
+        Engine::LlamaCpp => {
+            let mut a = vec![
+                "-m".into(),
+                p.model.clone(),
+                "--alias".into(),
+                p.alias.clone(),
+                "--ctx-size".into(),
+                p.ctx_size.to_string(),
+                "--n-gpu-layers".into(),
+                p.n_gpu_layers.to_string(),
+                "--ubatch-size".into(),
+                p.ubatch_size.to_string(),
+                "--parallel".into(),
+                p.parallel.to_string(),
+                "--temp".into(),
+                p.temperature.to_string(),
+                "--top-p".into(),
+                p.top_p.to_string(),
+                "--top-k".into(),
+                p.top_k.to_string(),
+                "--port".into(),
+                p.port.to_string(),
+                "--host".into(),
+                p.host.clone(),
+            ];
+            if p.metrics {
+                a.push("--metrics".into());
+            }
+            if p.flash_attn {
+                a.push("--flash-attn".into());
+                a.push("on".into());
+            }
+            if let Some(k) = &p.kv_cache_type_k {
+                a.push("--cache-type-k".into());
+                a.push(k.clone());
+            }
+            if let Some(v) = &p.kv_cache_type_v {
+                a.push("--cache-type-v".into());
+                a.push(v.clone());
+            }
+            if let Some(lm) = &p.load_mode {
+                a.push("--load-mode".into());
+                a.push(lm.clone());
+            }
+            if let Some(s) = &p.spec_type {
+                a.push("--spec-type".into());
+                a.push(s.clone());
+            }
+            if let Some(d) = &p.draft_model {
+                a.push("--draft-model".into());
+                a.push(d.display().to_string());
+            }
+            for (flag, val) in [
+                ("reasoning", &p.reasoning),
+                ("reasoning-format", &p.reasoning_format),
+                ("reasoning-effort", &p.reasoning_effort),
+            ] {
+                if let Some(v) = val {
+                    a.push(format!("--{flag}"));
+                    a.push(v.clone());
+                }
+            }
+            if let Some(b) = p.reasoning_budget {
+                a.push("--reasoning-budget".into());
+                a.push(b.to_string());
+            }
+            a
+        }
+        Engine::FreeToken => {
+            let mut a = vec![
+                "serve".into(),
+                "--model".into(),
+                p.model.clone(),
+                "--host".into(),
+                p.host.clone(),
+                "--port".into(),
+                p.port.to_string(),
+            ];
+            if let Some(b) = &p.ft_backend {
+                a.push("--moe-backend".into());
+                a.push(b.clone());
+            }
+            if let Some(c) = p.ft_moe_cache_size {
+                a.push("--moe-cache-size".into());
+                a.push(c.to_string());
+            }
+            a
+        }
+    }
+}
+
+/// Renders the full systemd unit file content.
+pub fn render_unit(p: &Profile) -> String {
+    let args = build_args(p);
+    let exec = format!("{} {}", p.bin.display(), shell_join(&args));
+    let mut s = String::new();
+    s.push_str(&format!("# generated by cyberdeck — profile '{}'\n", p.name));
+    s.push_str("[Unit]\n");
+    s.push_str(&format!(
+        "Description=cyberdeck: {} ({})\n",
+        p.name,
+        match p.engine {
+            Engine::LlamaCpp => "llama.cpp",
+            Engine::FreeToken => "FreeToken",
+        }
+    ));
+    s.push_str("After=network.target\n\n");
+    s.push_str("[Service]\n");
+    s.push_str("Type=simple\n");
+    s.push_str(&format!("ExecStart={exec}\n"));
+    s.push_str("Restart=on-failure\n");
+    s.push_str("RestartSec=5\n");
+    if p.engine == Engine::LlamaCpp {
+        s.push_str("Environment=LLAMACPP_API_KEY=llamacpp-local\n");
+    }
+    if let Some(m) = p.mem_max_mb {
+        s.push_str(&format!("MemoryMax={}M\n", m));
+    }
+    if let Some(m) = p.mem_swap_max_mb {
+        s.push_str(&format!("MemorySwapMax={}M\n", m));
+    }
+    s.push_str("\n[Install]\n");
+    s.push_str("WantedBy=default.target\n");
+    s
+}
+
+fn shell_join(args: &[String]) -> String {
+    args.iter()
+        .map(|a| {
+            if a.contains(' ') || a.contains('"') {
+                format!("\"{}\"", a.replace('"', "\\\""))
+            } else {
+                a.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Copies an existing unit to `<unit>.bak.<timestamp>` before overwriting.
+/// Returns the backup path, or None if there was nothing to back up.
+pub fn backup_existing(unit_path: &Path) -> Result<Option<PathBuf>> {
+    if !unit_path.exists() {
+        return Ok(None);
+    }
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let bak = unit_path.with_extension(format!("service.bak.{ts}"));
+    std::fs::copy(unit_path, &bak)
+        .with_context(|| format!("backing up {}", unit_path.display()))?;
+    Ok(Some(bak))
+}
+
+/// Restores the most recent `.bak` backup of a unit, if any exist.
+pub fn restore_last_good(dir: &Path, unit_name: &str) -> Result<bool> {
+    let mut candidates: Vec<PathBuf> = std::fs::read_dir(dir)?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with(unit_name) && n.contains(".bak."))
+                .unwrap_or(false)
+        })
+        .collect();
+    candidates.sort();
+    if let Some(latest) = candidates.last() {
+        let target = dir.join(unit_name);
+        std::fs::copy(latest, &target)?;
+        eprintln!("restored last-good unit from {}", latest.display());
+        reload_daemon()?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+/// Installs the rendered unit (and a LimitMEMLOCK drop-in for llama.cpp),
+/// backing up any prior unit first. Returns the paths written.
+pub fn install(p: &Profile, dry_run: bool) -> Result<Vec<PathBuf>> {
+    let unit_name = p.engine.systemd_unit();
+    let dir = systemd_dir();
+    std::fs::create_dir_all(&dir)?;
+    let gen_dir = generated_dir();
+    std::fs::create_dir_all(&gen_dir)?;
+
+    let unit_path = dir.join(unit_name);
+    let content = render_unit(p);
+
+    if dry_run {
+        println!("--- {unit_name} (dry-run, not written) ---");
+        println!("{content}");
+        return Ok(vec![unit_path]);
+    }
+
+    if let Some(bak) = backup_existing(&unit_path)? {
+        eprintln!("backed up prior unit -> {}", bak.display());
+    }
+    std::fs::write(&unit_path, &content)
+        .with_context(|| format!("writing {}", unit_path.display()))?;
+
+    let gen_dir = generated_dir();
+    let gen_path = gen_dir.join(unit_name);
+    std::fs::write(&gen_path, &content)?;
+
+    if p.engine == Engine::LlamaCpp {
+        let dropin_dir = dir.join(format!("{}.d", unit_name.trim_end_matches(".service")));
+        std::fs::create_dir_all(&dropin_dir)?;
+        std::fs::write(dropin_dir.join("memlock.conf"), "[Service]\nLimitMEMLOCK=infinity\n")?;
+    }
+
+    reload_daemon()?;
+    Ok(vec![unit_path, gen_path])
+}
+
+pub fn reload_daemon() -> Result<()> {
+    Command::new("systemctl")
+        .args(["--user", "daemon-reload"])
+        .status()
+        .with_context(|| "systemctl daemon-reload")?;
+    Ok(())
+}
+
+pub fn start(unit: &str) -> Result<()> {
+    Command::new("systemctl")
+        .args(["--user", "restart", unit])
+        .status()
+        .with_context(|| format!("systemctl restart {unit}"))?;
+    Ok(())
+}
+
+pub fn stop(unit: &str) -> Result<()> {
+    let _ = Command::new("systemctl")
+        .args(["--user", "stop", unit])
+        .status();
+    Ok(())
+}
+
+/// Waits for the engine's OpenAI-compatible /health endpoint to come up.
+pub fn health_wait(host: &str, port: u16, timeout: Duration) -> bool {
+    let url = format!("http://{host}:{port}/health");
+    let config = ureq::config::Config::builder()
+        .timeout_global(Some(Duration::from_secs(2)))
+        .build();
+    let agent = config.new_agent();
+    let start = Instant::now();
+    while start.elapsed() < timeout {
+        if let Ok(r) = agent.get(&url).call() {
+            if r.status() == 200 {
+                return true;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    false
+}
+
+/// Applies a profile: renders + installs + starts + health-waits. On failure,
+/// walks the ctx ladder (rewriting --ctx-size) and retries. Final fallback
+/// restores the previously-active unit from its .bak if present.
+pub fn apply(p: &Profile, dry_run: bool) -> Result<()> {
+    let unit = p.engine.systemd_unit();
+    install(p, dry_run)?;
+    if dry_run {
+        return Ok(());
+    }
+    start(unit)?;
+    if health_wait(&p.host, p.port, Duration::from_secs(60)) {
+        return Ok(());
+    }
+    eprintln!("health check failed for '{}', walking ctx ladder", p.name);
+    for ctx in p.ctx_ladder.iter().copied() {
+        let mut reduced = p.clone();
+        reduced.ctx_size = ctx;
+        eprintln!("retry with ctx-size={ctx}");
+        install(&reduced, false)?;
+        start(unit)?;
+        if health_wait(&reduced.host, reduced.port, Duration::from_secs(60)) {
+            return Ok(());
+        }
+    }
+    eprintln!("all ctx steps failed; attempting last-good restore");
+    let dir = systemd_dir();
+    if restore_last_good(&dir, unit).unwrap_or(false) {
+        let _ = start(unit);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_llamacpp() -> Profile {
+        let mut p = Profile::default();
+        p.name = "qwen".into();
+        p.engine = Engine::LlamaCpp;
+        p.bin = PathBuf::from("/opt/llama.cpp/build/bin/llama-server");
+        p.model = "/home/deviant/models/qwen.gguf".into();
+        p.alias = "qwen3.8-27b".into();
+        p.port = 18000;
+        p.ctx_size = 32768;
+        p.n_gpu_layers = 64;
+        p.draft_model = Some(PathBuf::from("/home/deviant/models/mtp.gguf"));
+        p.mem_max_mb = Some(26_624);
+        p
+    }
+
+    #[test]
+    fn render_contains_flags() {
+        let u = render_unit(&sample_llamacpp());
+        assert!(u.contains("--ctx-size 32768"));
+        assert!(u.contains("--n-gpu-layers 64"));
+        assert!(u.contains("--alias qwen3.8-27b"));
+        assert!(u.contains("--port 18000"));
+        assert!(u.contains("LLAMACPP_API_KEY=llamacpp-local"));
+        assert!(u.contains("MemoryMax=26624M"));
+        // MTP draft companion
+        assert!(u.contains("--draft-model"));
+        assert!(u.contains("mtp.gguf"));
+        // reasoning defaults present
+        assert!(u.contains("--reasoning on"));
+    }
+
+    #[test]
+    fn build_args_freetoken() {
+        let mut p = Profile::default();
+        p.engine = Engine::FreeToken;
+        p.model = "nvidia/Qwen3.6-35B-A3B-NVFP4".into();
+        p.port = 1919;
+        p.ft_backend = Some("offload".into());
+        p.ft_moe_cache_size = Some(3000);
+        let a = build_args(&p);
+        assert_eq!(a[0], "serve");
+        assert!(a.contains(&"--moe-backend".into()));
+        assert!(a.contains(&"offload".into()));
+        assert!(a.contains(&"--moe-cache-size".into()));
+        assert!(a.contains(&"3000".into()));
+        assert!(a.contains(&"--port".into()));
+        assert!(a.contains(&"1919".into()));
+    }
+
+    #[test]
+    fn backup_existing_writes_bak() {
+        let tmp = std::env::temp_dir().join(format!("cyberdeck-bak-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let unit = tmp.join("llama-server.service");
+        std::fs::write(&unit, "[Service]\nExecStart=/old\n").unwrap();
+        let bak = backup_existing(&unit).unwrap().unwrap();
+        assert!(bak.exists());
+        assert!(bak.to_string_lossy().contains(".bak."));
+        // second backup distinct
+        let bak2 = backup_existing(&unit).unwrap().unwrap();
+        assert_ne!(bak, bak2);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+}

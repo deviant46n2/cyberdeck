@@ -41,6 +41,56 @@ enum Commands {
         #[arg(long, default_value_t = 1600)]
         reserve: u64,
     },
+    /// Manage loadout profiles (engine launch specs)
+    Profile {
+        #[command(subcommand)]
+        action: ProfileCmd,
+    },
+    /// Apply a loadout: render+install unit (with .bak), restart, health-wait
+    Use {
+        name: String,
+        /// Render + show the unit but do NOT restart the live service
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ProfileCmd {
+    /// Create a new loadout from flags
+    New {
+        name: String,
+        #[arg(long)]
+        model: String,
+        #[arg(long, default_value = "llamacpp")]
+        engine: String,
+        #[arg(long)]
+        bin: Option<PathBuf>,
+        #[arg(long, default_value = "qwen3.8-27b")]
+        alias: String,
+        #[arg(long, default_value_t = 18000)]
+        port: u16,
+        #[arg(long, default_value_t = 32768)]
+        ctx: u32,
+        #[arg(long, default_value_t = 64)]
+        ngl: u32,
+        #[arg(long)]
+        draft: Option<PathBuf>,
+    },
+    /// Import an existing launch script into a loadout
+    Import {
+        #[arg(long, default_value = "llamacpp")]
+        engine: String,
+        #[arg(long)]
+        script: PathBuf,
+        #[arg(long, default_value = "imported")]
+        name: String,
+    },
+    /// List saved loadouts
+    List {
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 use std::path::PathBuf;
@@ -53,7 +103,124 @@ fn main() -> Result<()> {
         Commands::Fit { model, ctx, kv_bytes, ngl, kv_layers, reserve } => {
             cmd_fit(model, ctx, kv_bytes, ngl, kv_layers, reserve)
         }
+        Commands::Profile { action } => match action {
+            ProfileCmd::New { name, model, engine, bin, alias, port, ctx, ngl, draft } => {
+                cmd_profile_new(name, model, engine, bin, alias, port, ctx, ngl, draft)
+            }
+            ProfileCmd::Import { engine, script, name } => cmd_profile_import(engine, script, name),
+            ProfileCmd::List { json } => cmd_profile_list(json),
+        },
+        Commands::Use { name, dry_run } => cmd_use(name, dry_run),
     }
+}
+
+fn parse_engine(s: &str) -> anyhow::Result<deck_core::profile::Engine> {
+    match s {
+        "llamacpp" | "llama" | "llama.cpp" => Ok(deck_core::profile::Engine::LlamaCpp),
+        "freetoken" | "ft" => Ok(deck_core::profile::Engine::FreeToken),
+        other => anyhow::bail!("unknown engine '{other}' (llamacpp|freetoken)"),
+    }
+}
+
+fn with_profiles_db() -> Result<(PathBuf, rusqlite::Connection)> {
+    let db = deck_core::store::default_db_path();
+    let conn = deck_core::store::open(&db)?;
+    deck_core::store::ensure_profile_schema(&conn)?;
+    Ok((db, conn))
+}
+
+fn cmd_profile_new(
+    name: String,
+    model: String,
+    engine: String,
+    bin: Option<PathBuf>,
+    alias: String,
+    port: u16,
+    ctx: u32,
+    ngl: u32,
+    draft: Option<PathBuf>,
+) -> Result<()> {
+    let mut p = deck_core::profile::Profile::default();
+    p.name = name.clone();
+    p.engine = parse_engine(&engine)?;
+    p.model = model;
+    p.alias = alias;
+    p.port = port;
+    p.ctx_size = ctx;
+    p.n_gpu_layers = ngl;
+    p.draft_model = draft;
+    if let Some(b) = bin {
+        p.bin = b;
+    } else if p.engine == deck_core::profile::Engine::FreeToken {
+        p.bin = PathBuf::from("ft");
+    }
+    let (_db, mut conn) = with_profiles_db()?;
+    deck_core::store::upsert_profile(&mut conn, &p)?;
+    println!("saved loadout '{name}' ({engine}, alias={}, port={})", p.alias, p.port);
+    Ok(())
+}
+
+fn cmd_profile_import(engine: String, script: PathBuf, name: String) -> Result<()> {
+    let eng = parse_engine(&engine)?;
+    let p = match eng {
+        deck_core::profile::Engine::LlamaCpp => {
+            deck_core::importer::import_llamacpp_script(&script, &name)?
+        }
+        deck_core::profile::Engine::FreeToken => {
+            deck_core::importer::import_freetoken_script(&script, &name)?
+        }
+    };
+    let (_db, mut conn) = with_profiles_db()?;
+    deck_core::store::upsert_profile(&mut conn, &p)?;
+    println!(
+        "imported loadout '{}' from {} (alias={}, port={}, ctx={})",
+        p.name,
+        script.display(),
+        p.alias,
+        p.port,
+        p.ctx_size
+    );
+    Ok(())
+}
+
+fn cmd_profile_list(json: bool) -> Result<()> {
+    let (_db, conn) = with_profiles_db()?;
+    let profiles = deck_core::store::list_profiles(&conn)?;
+    let active = deck_core::store::active_profile(&conn)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&profiles)?);
+    } else if profiles.is_empty() {
+        println!("no loadouts saved. use `deck profile import` or `deck profile new`.");
+    } else {
+        for p in &profiles {
+            let mark = if active.as_deref() == Some(&p.name) { "*" } else { " " };
+            println!(
+                "{mark} {:<14} {:<10} alias={:<12} port={:<6} ctx={}",
+                p.name,
+                format!("{:?}", p.engine),
+                p.alias,
+                p.port,
+                p.ctx_size
+            );
+        }
+    }
+    Ok(())
+}
+
+fn cmd_use(name: String, dry_run: bool) -> Result<()> {
+    let (_db, conn) = with_profiles_db()?;
+    let p = deck_core::store::get_profile(&conn, &name)?
+        .ok_or_else(|| anyhow::anyhow!("no loadout named '{name}'"))?;
+    deck_core::store::set_active(&conn, &name)?;
+    println!(
+        "applying loadout '{}' (alias={}, port={}){}",
+        name,
+        p.alias,
+        p.port,
+        if dry_run { " [dry-run]" } else { "" }
+    );
+    deck_engines::apply(&p, dry_run)?;
+    Ok(())
 }
 
 fn cmd_scan() -> Result<()> {
