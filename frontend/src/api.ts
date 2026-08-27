@@ -48,6 +48,40 @@ export interface BenchRow {
   at: number;
 }
 
+/** Full editable loadout shape — mirrors deck_core::profile::Profile. */
+export interface Profile {
+  name: string;
+  engine: "LlamaCpp" | "FreeToken";
+  bin: string;
+  model: string;
+  alias: string;
+  host: string;
+  port: number;
+  metrics: boolean;
+  ctx_size: number;
+  ctx_ladder: number[];
+  n_gpu_layers: number;
+  ubatch_size: number;
+  flash_attn: boolean;
+  kv_cache_type_k: string | null;
+  kv_cache_type_v: string | null;
+  load_mode: string | null;
+  spec_type: string | null;
+  draft_model: string | null;
+  temperature: number;
+  top_p: number;
+  top_k: number;
+  parallel: number;
+  reasoning: string | null;
+  reasoning_format: string | null;
+  reasoning_effort: string | null;
+  reasoning_budget: number | null;
+  ft_backend: string | null;
+  ft_moe_cache_size: number | null;
+  mem_max_mb: number | null;
+  mem_swap_max_mb: number | null;
+}
+
 export interface EngineStatus {
   engine: string;
   host: string;
@@ -87,7 +121,7 @@ export const fit = (p: {
   model: string;
   ctx: number;
   kv_bytes: number;
-  ngl: number;
+  n_gpu_layers: number;
   kv_layers: number | null;
   reserve: number;
   offload: boolean;
@@ -141,3 +175,18 @@ export const opencodeRun = (p: {
 }) => invoke<void>("opencode_run", p);
 export const opencodeStop = (id: string) =>
   invoke<void>("opencode_stop", { id });
+
+// --- loadout editing ---
+export const saveProfile = (p: Profile) => invoke<void>("save_profile", { profile: p });
+export const deleteProfile = (name: string) =>
+  invoke<void>("delete_profile", { name });
+export const renderProfileUnit = (p: Profile) =>
+  invoke<string>("render_profile_unit", { profile: p });
+
+export const TEST_PORTS: Record<Profile["engine"], number> = {
+  LlamaCpp: 18999,
+  FreeToken: 18998,
+};
+export const testLoadout = (p: Profile, testPort: number) =>
+  invoke<void>("test_loadout", { profile: p, testPort });
+export const testStop = () => invoke<void>("test_stop");

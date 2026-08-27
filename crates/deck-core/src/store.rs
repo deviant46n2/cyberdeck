@@ -195,6 +195,11 @@ pub fn get_profile(conn: &Connection, name: &str) -> Result<Option<crate::profil
     Ok(None)
 }
 
+pub fn delete_profile(conn: &Connection, name: &str) -> Result<()> {
+    conn.execute("DELETE FROM profiles WHERE name = ?1", [name])?;
+    Ok(())
+}
+
 pub fn set_active(conn: &Connection, name: &str) -> Result<()> {
     conn.execute(
         "INSERT INTO meta (key, value) VALUES ('active_profile', ?1)

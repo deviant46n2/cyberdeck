@@ -73,7 +73,7 @@ export default function App() {
         {view === "SIGNALS" && <Signals />}
         {view === "MARKET" && <Market />}
         {view === "LOADOUTS" && (
-          <Loadouts profiles={profiles} onUnit={setUnit} />
+          <Loadouts profiles={profiles} onUnit={setUnit} onChanged={refresh} />
         )}
         {view === "CONSOLE" && <Console unit={unit} />}
       </main>

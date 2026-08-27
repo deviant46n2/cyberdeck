@@ -323,6 +323,23 @@ pub fn health_ok(host: &str, port: u16) -> bool {
     matches!(agent.get(&url).call(), Ok(r) if r.status() == 200)
 }
 
+/// Liveness check that accepts whichever endpoint the engine happens to expose
+/// (/health for llama.cpp, /v1/models for FreeToken). Used by the loadout test
+/// harness so a healthy engine isn't misread as a timeout.
+pub fn health_ok_any(host: &str, port: u16) -> bool {
+    let config = ureq::config::Config::builder()
+        .timeout_global(Some(Duration::from_secs(2)))
+        .build();
+    let agent = config.new_agent();
+    for path in ["/health", "/v1/models"] {
+        let url = format!("http://{host}:{port}{path}");
+        if matches!(agent.get(&url).call(), Ok(r) if r.status() == 200) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Pulls the raw Prometheus text from a running engine's /metrics endpoint.
 pub fn fetch_metrics(host: &str, port: u16) -> anyhow::Result<String> {
     let url = format!("http://{host}:{port}/metrics");

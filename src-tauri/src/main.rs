@@ -29,7 +29,7 @@ fn fit(
     model: String,
     ctx: u32,
     kv_bytes: f64,
-    ngl: f64,
+    n_gpu_layers: u32,
     kv_layers: Option<u64>,
     reserve: u64,
     offload: bool,
@@ -38,12 +38,41 @@ fn fit(
         PathBuf::from(model),
         ctx,
         kv_bytes,
-        ngl,
+        n_gpu_layers,
         kv_layers,
         reserve,
         offload,
     )
     .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn save_profile(profile: deck_tauri::Profile) -> Result<(), String> {
+    deck_tauri::save_profile(profile).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_profile(name: String) -> Result<(), String> {
+    deck_tauri::delete_profile(&name).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn render_profile_unit(profile: deck_tauri::Profile) -> String {
+    deck_tauri::render_profile_unit(profile)
+}
+
+#[tauri::command]
+fn test_loadout(
+    profile: deck_tauri::Profile,
+    test_port: u16,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    deck_tauri::test_profile(&app, profile, test_port).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn test_stop() -> Result<(), String> {
+    deck_tauri::test_stop().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -132,6 +161,11 @@ fn main() {
             list_profiles,
             dedup,
             fit,
+            save_profile,
+            delete_profile,
+            render_profile_unit,
+            test_loadout,
+            test_stop,
             use_profile,
             signals_check,
             watchlist,

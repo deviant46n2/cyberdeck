@@ -6,7 +6,12 @@
 
 use std::io::BufRead;
 use std::path::PathBuf;
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
+pub use deck_core::profile::Profile;
 use serde::Serialize;
 use tauri::Emitter;
 
@@ -140,6 +145,27 @@ pub fn list_profiles() -> anyhow::Result<Vec<ProfileRow>> {
         .collect())
 }
 
+/// Persist a loadout (created or edited in the UI) to the index.
+pub fn save_profile(p: Profile) -> anyhow::Result<()> {
+    let db = deck_core::store::default_db_path();
+    let mut conn = deck_core::store::open(&db)?;
+    deck_core::store::ensure_profile_schema(&conn)?;
+    deck_core::store::upsert_profile(&mut conn, &p)
+}
+
+/// Remove a saved loadout by name.
+pub fn delete_profile(name: &str) -> anyhow::Result<()> {
+    let db = deck_core::store::default_db_path();
+    let mut conn = deck_core::store::open(&db)?;
+    deck_core::store::delete_profile(&mut conn, name)
+}
+
+/// Render the systemd unit for an arbitrary (possibly unsaved) profile so the
+/// editor can preview exactly what `apply` would write.
+pub fn render_profile_unit(p: Profile) -> String {
+    deck_engines::render_unit(&p)
+}
+
 pub fn dedup() -> anyhow::Result<Vec<DupRow>> {
     let db = deck_core::store::default_db_path();
     let conn = deck_core::store::open(&db)?;
@@ -157,7 +183,7 @@ pub fn fit(
     model: PathBuf,
     ctx: u32,
     kv_bytes: f64,
-    ngl: f64,
+    n_gpu_layers: u32,
     kv_layers: Option<u64>,
     reserve: u64,
     offload: bool,
@@ -167,10 +193,18 @@ pub fn fit(
     } else {
         deck_core::gguf::GgufMeta::read(&model)?.to_meta(&model)
     };
+    // Translate an absolute layer count into the estimator's fraction. 0 means
+    // "all layers on GPU" — used by the quick HUD estimate.
+    let ngl_frac = if n_gpu_layers == 0 {
+        1.0
+    } else {
+        let total = meta.n_layers.unwrap_or(0).max(1) as f64;
+        (n_gpu_layers as f64 / total).clamp(0.0, 1.0)
+    };
     let req = deck_core::fit::FitRequest {
         ctx: ctx as u64,
         kv_bytes,
-        ngl_frac: ngl,
+        ngl_frac,
         kv_layers,
         reserved_mb: reserve,
         offload,
@@ -413,6 +447,204 @@ pub fn engine_status(engine: &str, host: &str, port: u16) -> EngineStatus {
     }
 }
 
+// ------------------------------------------------------- loadout test harness
+
+#[derive(Clone, serde::Serialize)]
+pub struct TestPhase {
+    pub phase: String,
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct TestLine {
+    pub stream: String,
+    pub text: String,
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct TestResult {
+    pub verdict: String,
+    pub summary: String,
+}
+
+/// At most one loadout test runs at a time; holds the spawned engine child so it
+/// can be killed from `test_stop` or on teardown.
+static TEST_CHILD: Mutex<Option<std::process::Child>> = Mutex::new(None);
+
+/// Keywords that indicate the engine failed to allocate VRAM rather than a clean
+/// exit or a logic error. Scanned from the engine's stderr/stdout.
+const OOM_MARKERS: &[&str] = &[
+    "out of memory",
+    "cuda out of memory",
+    "allocation failed",
+    "cannot allocate",
+    "cudamalloc",
+    "illegal memory",
+    "std::bad_alloc",
+    "failed to allocate",
+    "oom",
+    "vkerror",
+];
+
+/// Launch the draft loadout directly (no systemd writes) on a dedicated test
+/// port, watch it boot, and report whether it OOMs, crashes, or serves. Per the
+/// user's choice this STOPS the live service of the same engine first so the
+/// test gets isolated VRAM, then RESTARTS it before returning — the frontend is
+/// expected to show a warning before calling this.
+///
+/// The function returns immediately; the actual run happens on a background
+/// thread and streams `test-phase` / `test-output` / `test-result` events.
+pub fn test_profile(app: &tauri::AppHandle, profile: Profile, test_port: u16) -> anyhow::Result<()> {
+    {
+        let guard = TEST_CHILD.lock().unwrap();
+        if guard.is_some() {
+            anyhow::bail!("a loadout test is already running");
+        }
+    }
+
+    let unit = profile.engine.systemd_unit().to_string();
+    let mut draft = profile.clone();
+    draft.port = test_port;
+    let host = draft.host.clone();
+
+    let app2 = app.clone();
+    std::thread::spawn(move || {
+        let emit_phase = |p: &str| {
+            let _ = app2.emit("test-phase", TestPhase { phase: p.into() });
+        };
+        let emit_result = |verdict: &str, summary: &str| {
+            let _ = app2.emit(
+                "test-result",
+                TestResult {
+                    verdict: verdict.into(),
+                    summary: summary.into(),
+                },
+            );
+        };
+        let restart_live = || {
+            emit_phase("restarting-live");
+            let _ = deck_engines::start(&unit);
+        };
+
+        emit_phase("stopping-live");
+        let _ = deck_engines::stop(&unit);
+        // Give systemd a moment to actually free VRAM.
+        std::thread::sleep(Duration::from_secs(3));
+
+        emit_phase("spawning");
+        let mut cmd = Command::new(&draft.bin);
+        cmd.args(deck_engines::build_args(&draft));
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+        let mut child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                emit_phase("error");
+                emit_result("ERROR", &format!("failed to spawn {}: {}", draft.bin.display(), e));
+                restart_live();
+                emit_phase("done");
+                return;
+            }
+        };
+
+        let stdout = child
+            .stdout
+            .take()
+            .expect("test engine stdout unavailable");
+        let stderr = child
+            .stderr
+            .take()
+            .expect("test engine stderr unavailable");
+
+        *TEST_CHILD.lock().unwrap() = Some(child);
+
+        let oom = std::sync::Arc::new(AtomicBool::new(false));
+        let healthy = std::sync::Arc::new(AtomicBool::new(false));
+
+        let app_o = app2.clone();
+        let oom_o = oom.clone();
+        std::thread::spawn(move || {
+            let reader = std::io::BufReader::new(stdout);
+            for line in reader.lines().map_while(Result::ok) {
+                let low = line.to_lowercase();
+                if OOM_MARKERS.iter().any(|m| low.contains(m)) {
+                    oom_o.store(true, Ordering::SeqCst);
+                }
+                let _ = app_o.emit("test-output", TestLine { stream: "stdout".into(), text: line });
+            }
+        });
+        let app_e = app2.clone();
+        let oom_e = oom.clone();
+        std::thread::spawn(move || {
+            let reader = std::io::BufReader::new(stderr);
+            for line in reader.lines().map_while(Result::ok) {
+                let low = line.to_lowercase();
+                if OOM_MARKERS.iter().any(|m| low.contains(m)) {
+                    oom_e.store(true, Ordering::SeqCst);
+                }
+                let _ = app_e.emit("test-output", TestLine { stream: "stderr".into(), text: line });
+            }
+        });
+
+        // Watch: OOM keyword, process exit, then health endpoint. The child lives
+        // in TEST_CHILD so test_stop can kill it; we operate on that slot here.
+        let start = Instant::now();
+        let timeout = Duration::from_secs(180);
+        let mut verdict = ("TIMEOUT", "engine never reported healthy within the timeout".to_string());
+        loop {
+            if oom.load(Ordering::SeqCst) {
+                verdict = ("OOM", "engine logged an out-of-memory / allocation failure".into());
+                break;
+            }
+            let status = {
+                let mut g = TEST_CHILD.lock().unwrap();
+                match g.as_mut() {
+                    Some(c) => c.try_wait().ok().flatten(),
+                    // None means test_stop already reaped it.
+                    None => Some(std::process::ExitStatus::default()),
+                }
+            };
+            if let Some(s) = status {
+                verdict = if healthy.load(Ordering::SeqCst) {
+                    ("RUNNING", "engine loaded and served before exiting".into())
+                } else {
+                    ("CRASH", format!("engine exited early with status {s}"))
+                };
+                break;
+            }
+            if deck_engines::health_ok_any(&host, test_port) {
+                healthy.store(true, Ordering::SeqCst);
+                verdict = (
+                    "RUNNING",
+                    "engine loaded the model and is serving on the test port".into(),
+                );
+                break;
+            }
+            if start.elapsed() > timeout {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+
+        // Tear down the test process, then restore the live service.
+        if let Some(mut c) = TEST_CHILD.lock().unwrap().take() {
+            let _ = c.kill();
+        }
+        restart_live();
+        emit_phase("done");
+        emit_result(&verdict.0, &verdict.1);
+    });
+
+    Ok(())
+}
+
+/// Abort a running loadout test (also restarts the live service).
+pub fn test_stop() -> anyhow::Result<()> {
+    if let Some(mut c) = TEST_CHILD.lock().unwrap().take() {
+        let _ = c.kill();
+    }
+    Ok(())
+}
+
 // ----------------------------------------------------------- agentic console
 
 /// Emitted when a session starts, so the UI can open a tab before output flows.
@@ -595,7 +827,7 @@ mod tests {
             PathBuf::from("/home/deviant/Qwen3.8-27B-UD-Q3_K_XL.gguf"),
             32768,
             0.5,
-            1.0,
+            0,
             None,
             1600,
             false,
@@ -609,7 +841,7 @@ mod tests {
     fn fit_offload_spills_weights_to_ram() {
         let dir = PathBuf::from("/home/deviant/Qwen3.6-35B-A3B-NVFP4");
         if dir.exists() {
-            let f = fit(dir, 32768, 1.0, 1.0, None, 1600, true).expect("fit");
+            let f = fit(dir, 32768, 1.0, 0, None, 1600, true).expect("fit");
             assert!(f.weights_ram_mb > 0, "offload should report RAM-spilled weights");
             assert!(
                 f.model_vram_mb < f.weights_mb + f.weights_ram_mb,

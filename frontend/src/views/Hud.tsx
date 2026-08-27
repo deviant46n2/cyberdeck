@@ -58,7 +58,7 @@ export default function Hud({
       model,
       ctx,
       kv_bytes: 0.5,
-      ngl: 1.0,
+      n_gpu_layers: 0,
       kv_layers: null,
       reserve: 1600,
       offload,
