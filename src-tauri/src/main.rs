@@ -47,8 +47,8 @@ fn fit(
 }
 
 #[tauri::command]
-fn use_profile(name: String, dry_run: bool) -> Result<UseResult, String> {
-    deck_tauri::use_profile(&name, dry_run).map_err(|e| e.to_string())
+fn use_profile(name: String, dry_run: bool, managed: bool) -> Result<UseResult, String> {
+    deck_tauri::use_profile(&name, dry_run, managed).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

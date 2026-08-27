@@ -43,21 +43,29 @@ export default function Vault({
             </tr>
           </thead>
           <tbody>
-            {models.map((m) => {
-              const dup = dupIds.has(m.path);
-              return (
-                <tr key={m.path} style={dup ? { background: "rgba(255,59,59,0.06)" } : undefined}>
-                  <td>{m.name}</td>
-                  <td>{m.quant ?? "—"}</td>
-                  <td>{m.arch ?? "—"}</td>
-                  <td className="mono">{m.ctx_train ? m.ctx_train.toLocaleString() : "—"}</td>
-                  <td className="mono">{m.footprint_gib.toFixed(2)} GiB</td>
-                  <td className="dim" style={{ maxWidth: 320, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {m.path}
-                  </td>
-                </tr>
-              );
-            })}
+            {models.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="dim">
+                  no models indexed — run a SCAN from HUD
+                </td>
+              </tr>
+            ) : (
+              models.map((m) => {
+                const dup = dupIds.has(m.path);
+                return (
+                  <tr key={m.path} style={dup ? { background: "rgba(255,59,59,0.06)" } : undefined}>
+                    <td>{m.name}</td>
+                    <td>{m.quant ?? "—"}</td>
+                    <td>{m.arch ?? "—"}</td>
+                    <td className="mono">{m.ctx_train ? m.ctx_train.toLocaleString() : "—"}</td>
+                    <td className="mono">{m.footprint_gib.toFixed(2)} GiB</td>
+                    <td className="dim" style={{ maxWidth: 320, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {m.path}
+                    </td>
+                  </tr>
+                );
+              })
+            )}
           </tbody>
         </table>
       </div>

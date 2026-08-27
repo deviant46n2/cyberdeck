@@ -188,6 +188,26 @@ pub fn backup_existing(unit_path: &Path) -> Result<Option<PathBuf>> {
     Ok(Some(bak))
 }
 
+/// Generic `.bak.<nanos>` backup that preserves the original file extension
+/// (e.g. `settings.yaml` -> `settings.yaml.bak.<ts>`). Used for non-unit files
+/// like client configs.
+pub fn backup_file(path: &Path) -> Result<Option<PathBuf>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+    let bak = path.with_extension(format!("{ext}.bak.{ts}"));
+    std::fs::copy(path, &bak).with_context(|| format!("backing up {}", path.display()))?;
+    Ok(Some(bak))
+}
+
 /// Restores the most recent `.bak` backup of a unit, if any exist.
 pub fn restore_last_good(dir: &Path, unit_name: &str) -> Result<bool> {
     let mut candidates: Vec<PathBuf> = std::fs::read_dir(dir)?
@@ -381,6 +401,8 @@ pub fn apply(p: &Profile, dry_run: bool) -> Result<()> {
     }
     Ok(())
 }
+
+pub mod rewire;
 
 #[cfg(test)]
 mod tests {

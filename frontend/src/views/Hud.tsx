@@ -47,6 +47,7 @@ export default function Hud({
 
   const selectModel = (p: string) => {
     setModel(p);
+    setFit(null); // drop any stale verdict for the previous model
     // Safetensors model-dirs (FreeToken) are offload-backed; GGUF files are not.
     setOffload(!p.toLowerCase().endsWith(".gguf"));
   };
@@ -156,7 +157,10 @@ export default function Hud({
                 <input
                   type="checkbox"
                   checked={offload}
-                  onChange={(e) => setOffload(e.target.checked)}
+                  onChange={(e) => {
+                    setOffload(e.target.checked);
+                    setFit(null);
+                  }}
                 />
                 FreeToken offload (RAM spill)
               </label>

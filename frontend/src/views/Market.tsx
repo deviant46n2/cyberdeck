@@ -76,7 +76,15 @@ export default function Market() {
         )}
       </div>
 
-      {hits && (
+      {hits && hits.length === 0 && (
+        <div className="card">
+          <div className="dim" style={{ fontSize: 11 }}>
+            no results — try a broader query
+          </div>
+        </div>
+      )}
+
+      {hits && hits.length > 0 && (
         <div className="card">
           <h3>RESULTS</h3>
           <table>

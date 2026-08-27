@@ -67,6 +67,8 @@ pub struct UseResult {
     pub applied: bool,
     pub dry_run: bool,
     pub unit: String,
+    /// MANAGED-mode client rewiring outcomes (empty unless --managed).
+    pub rewired: Vec<String>,
 }
 
 fn gib(bytes: u64) -> f64 {
@@ -191,7 +193,11 @@ pub fn fit(
 
 /// Render (dry_run) or apply a loadout. `dry_run` returns the unit without
 /// touching the live service.
-pub fn use_profile(name: &str, dry_run: bool) -> anyhow::Result<UseResult> {
+///
+/// `managed` (opt-in) additionally repoints dsh + opencode at the applied
+/// engine's port so the rest of the stack follows the swap. Off by default:
+/// the Advisory contract preserves the alias+port so clients don't reconfigure.
+pub fn use_profile(name: &str, dry_run: bool, managed: bool) -> anyhow::Result<UseResult> {
     let db = deck_core::store::default_db_path();
     let mut conn = deck_core::store::open(&db)?;
     deck_core::store::ensure_profile_schema(&conn)?;
@@ -199,10 +205,22 @@ pub fn use_profile(name: &str, dry_run: bool) -> anyhow::Result<UseResult> {
         .ok_or_else(|| anyhow::anyhow!("no loadout named '{name}'"))?;
     deck_core::store::set_active(&mut conn, name)?;
     let unit = deck_engines::render_unit(&p);
+    let mut rewired = Vec::new();
     if !dry_run {
         deck_engines::apply(&p, false)?;
+        if managed {
+            for r in deck_engines::rewire::rewire_clients(p.port) {
+                rewired.push(format!("[{}] {} — {}", r.client, r.path, r.status));
+            }
+        }
     }
-    Ok(UseResult { name: name.to_string(), applied: !dry_run, dry_run, unit })
+    Ok(UseResult {
+        name: name.to_string(),
+        applied: !dry_run,
+        dry_run,
+        unit,
+        rewired,
+    })
 }
 
 #[derive(Serialize)]

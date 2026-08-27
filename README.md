@@ -41,9 +41,9 @@ cargo build                 # workspace (incl. Tauri app binary)
 cargo test                  # parser + engine + importer + command-API tests
 cargo run -p deck-cli -- --help
 
-# desktop app (Tauri 2 + React)
-cd frontend && npm install && npm run build   # bundle the UI
-npm run tauri dev            # vite dev server + Rust app (needs a display)
+# desktop app (Tauri 2 + React) — run `tauri` from the REPO ROOT, not frontend/
+cd frontend && npm install && npm run build   # bundle the UI (or `npm run dev` for HMR)
+cd .. && npm run tauri dev                    # vite dev server + Rust app (needs a display)
 # if npm blocked esbuild's postinstall: `npm rebuild esbuild`
 ```
 
@@ -77,4 +77,54 @@ deck use <name> [--dry-run]                # render+install unit (.bak first),
 working. On a failed load it walks `ctx_size` → the profile's `ctx_ladder`,
 then restores the last-good `.bak`. `--dry-run` prints the generated unit
 without touching the live service.
+
+```sh
+deck bench record [--engine llamacpp] [--host 127.0.0.1] [--port 18000] \
+    [--model ?] [--ctx 0]        # probe /metrics, store generation tok/s
+deck bench list                  # recent readings (shared with the app)
+```
+
+`deck bench` and the app's CONSOLE **BENCH** button write to the same
+`cyberdeck.db` table, so a reading taken on either side shows up on both. Both
+require the engine to be launched with `--metrics` (the generated loadout units
+do this automatically; a hand-started server may not).
+
+## Views (desktop app)
+
+- **HUD** — models-on-disk, wasted-dupe GiB, live engine status dots for
+  llamacpp `:18000` / freetoken `:1919`, and the **fit estimator** (context
+  slider + a FreeToken-offload toggle that spills weights to RAM so NVFP4 models
+  stop false-OOMing). One-click **APPLY** swaps the active loadout.
+- **VAULT** — full inventory table; duplicate shards are flagged red.
+- **SIGNALS** — HF org watchlist + "CHECK NOW" that surfaces new releases
+  (deduped against what you've already seen).
+- **MARKET** — search HuggingFace, expand a repo to list its GGUF files with
+  real sizes (resolved via `HEAD`), and download straight to `~/models`.
+- **LOADOUTS** — preview or apply a generated systemd unit (with confirm;
+  always takes a `.bak` first).
+- **CONSOLE** — engine telemetry + **BENCH tok/s** history, the last rendered
+  unit, and the **agent panel**.
+
+## Agentic CONSOLE
+
+The CONSOLE agent panel runs `opencode run` as a real coding session: type a
+task, pick a project dir, optionally pin a model, and hit **RUN AGENT**. Output
+streams live into the terminal pane; **STOP** kills the session.
+
+- **`--auto` (the "danger" checkbox)** maps to opencode's `--auto`: it
+  auto-approves permissions so the agent can modify files headlessly. Leave it
+  **off** unless you intend the agent to write changes unprompted.
+- Plain (non-TTY) output is streamed, so you see the agent's actual text, not a
+  TUI.
+
+## MANAGED rewiring
+
+By default `deck use` is **Advisory**: it preserves the alias+port contract, so
+clients like opencode/dsh keep pointing where they were. Pass `--managed`
+(CLI) or flip the managed toggle (app LOADOUTS/use) to also **repoint dsh and
+opencode at the applied engine's port** — so the rest of your stack follows the
+swap. Every config file touched gets a timestamped `.bak` first
+(`settings.yaml.bak.<ns>`, `opencode.json.bak.<ns>`), mirroring the unit
+discipline. This is opt-in precisely because it rewrites files outside
+cyberdeck's own control.
 
