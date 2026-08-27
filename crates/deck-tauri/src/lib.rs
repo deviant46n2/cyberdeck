@@ -45,6 +45,7 @@ pub struct FitRow {
     pub kv_mb: u64,
     pub buffers_mb: u64,
     pub model_vram_mb: u64,
+    pub weights_ram_mb: u64,
     pub overhead_mb: u64,
     pub available_for_model_mb: u64,
     pub verdict: String,
@@ -155,6 +156,7 @@ pub fn fit(
     ngl: f64,
     kv_layers: Option<u64>,
     reserve: u64,
+    offload: bool,
 ) -> anyhow::Result<FitRow> {
     let meta = if model.is_dir() {
         deck_core::safetensors::open_dir(&model)?
@@ -167,6 +169,7 @@ pub fn fit(
         ngl_frac: ngl,
         kv_layers,
         reserved_mb: reserve,
+        offload,
     };
     let available = deck_core::fit::available_vram_mb(16_303);
     let b = deck_core::fit::estimate(&meta, &req, available);
@@ -177,6 +180,7 @@ pub fn fit(
         kv_mb: b.kv_mb,
         buffers_mb: b.buffers_mb,
         model_vram_mb: b.model_vram_mb,
+        weights_ram_mb: b.weights_ram_mb,
         overhead_mb: b.overhead_mb,
         available_for_model_mb: b.available_for_model_mb,
         verdict: b.verdict.tag().to_string(),
@@ -297,6 +301,98 @@ pub fn market_download(repo_id: &str, rfilename: &str) -> anyhow::Result<String>
     Ok(dest.display().to_string())
 }
 
+#[derive(Serialize)]
+pub struct BenchRow {
+    pub id: i64,
+    pub engine: String,
+    pub host: String,
+    pub port: u16,
+    pub model: String,
+    pub ctx: u32,
+    pub tps: f64,
+    pub at: i64,
+}
+
+#[derive(Serialize)]
+pub struct EngineStatus {
+    pub engine: String,
+    pub host: String,
+    pub port: u16,
+    pub up: bool,
+}
+
+/// Query a running engine's /metrics, parse generation tokens/sec, and store
+/// the reading in the bench history table.
+pub fn bench_now(
+    engine: &str,
+    host: &str,
+    port: u16,
+    model: &str,
+    ctx: u32,
+) -> anyhow::Result<BenchRow> {
+    let text = deck_engines::fetch_metrics(host, port)?;
+    let tps = deck_engines::parse_tps(&text)
+        .ok_or_else(|| anyhow::anyhow!("no tokens/sec gauge exposed by {host}:{port}"))?;
+    let at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let row = deck_core::store::BenchRow {
+        id: 0,
+        engine: engine.to_string(),
+        host: host.to_string(),
+        port,
+        model: model.to_string(),
+        ctx,
+        tps,
+        at,
+    };
+    let db = deck_core::store::default_db_path();
+    let conn = deck_core::store::open(&db)?;
+    deck_core::store::ensure_bench_schema(&conn)?;
+    let id = deck_core::store::insert_bench(&conn, &row)?;
+    Ok(BenchRow {
+        id,
+        engine: row.engine,
+        host: row.host,
+        port: row.port,
+        model: row.model,
+        ctx: row.ctx,
+        tps: row.tps,
+        at: row.at,
+    })
+}
+
+/// Return recent bench readings (newest first).
+pub fn bench_history() -> anyhow::Result<Vec<BenchRow>> {
+    let db = deck_core::store::default_db_path();
+    let conn = deck_core::store::open(&db)?;
+    deck_core::store::ensure_bench_schema(&conn)?;
+    Ok(deck_core::store::recent_bench(&conn, 20)?
+        .into_iter()
+        .map(|r| BenchRow {
+            id: r.id,
+            engine: r.engine,
+            host: r.host,
+            port: r.port,
+            model: r.model,
+            ctx: r.ctx,
+            tps: r.tps,
+            at: r.at,
+        })
+        .collect())
+}
+
+/// Liveness of a single engine endpoint.
+pub fn engine_status(engine: &str, host: &str, port: u16) -> EngineStatus {
+    EngineStatus {
+        engine: engine.to_string(),
+        host: host.to_string(),
+        port,
+        up: deck_engines::health_ok(host, port),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -321,10 +417,24 @@ mod tests {
             1.0,
             None,
             1600,
+            false,
         )
         .expect("fit");
         assert!(!f.verdict.is_empty());
         assert!(f.model_vram_mb > 0);
+    }
+
+    #[test]
+    fn fit_offload_spills_weights_to_ram() {
+        let dir = PathBuf::from("/home/deviant/Qwen3.6-35B-A3B-NVFP4");
+        if dir.exists() {
+            let f = fit(dir, 32768, 1.0, 1.0, None, 1600, true).expect("fit");
+            assert!(f.weights_ram_mb > 0, "offload should report RAM-spilled weights");
+            assert!(
+                f.model_vram_mb < f.weights_mb + f.weights_ram_mb,
+                "offload VRAM should be far below total weights"
+            );
+        }
     }
 
     #[test]

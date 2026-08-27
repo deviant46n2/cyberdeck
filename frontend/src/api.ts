@@ -31,9 +31,28 @@ export interface FitRow {
   kv_mb: number;
   buffers_mb: number;
   model_vram_mb: number;
+  weights_ram_mb: number;
   overhead_mb: number;
   available_for_model_mb: number;
   verdict: string;
+}
+
+export interface BenchRow {
+  id: number;
+  engine: string;
+  host: string;
+  port: number;
+  model: string;
+  ctx: number;
+  tps: number;
+  at: number;
+}
+
+export interface EngineStatus {
+  engine: string;
+  host: string;
+  port: number;
+  up: boolean;
 }
 
 export interface ScanResult {
@@ -71,6 +90,7 @@ export const fit = (p: {
   ngl: number;
   kv_layers: number | null;
   reserve: number;
+  offload: boolean;
 }) => invoke<FitRow>("fit", p);
 export const useProfile = (name: string, dryRun: boolean) =>
   invoke<UseResult>("use_profile", { name, dryRun });
@@ -101,3 +121,14 @@ export const marketFiles = (repoId: string) =>
   invoke<MarketFileRow[]>("market_files", { repoId });
 export const marketDownload = (repoId: string, rfilename: string) =>
   invoke<string>("market_download", { repoId, rfilename });
+
+export const benchNow = (p: {
+  engine: string;
+  host: string;
+  port: number;
+  model: string;
+  ctx: number;
+}) => invoke<BenchRow>("bench_now", p);
+export const benchHistory = () => invoke<BenchRow[]>("bench_history");
+export const engineStatus = (engine: string, host: string, port: number) =>
+  invoke<EngineStatus>("engine_status", { engine, host, port });

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import * as api from "../api";
 
 function verdictClass(v: string): string {
@@ -6,6 +6,11 @@ function verdictClass(v: string): string {
   if (v === "WARN") return "warn";
   return "oom";
 }
+
+const ENGINE_NODES: { engine: string; host: string; port: number }[] = [
+  { engine: "LlamaCpp", host: "127.0.0.1", port: 18000 },
+  { engine: "FreeToken", host: "127.0.0.1", port: 1919 },
+];
 
 export default function Hud({
   models,
@@ -22,10 +27,29 @@ export default function Hud({
 }) {
   const [model, setModel] = useState("");
   const [ctx, setCtx] = useState(32768);
+  const [offload, setOffload] = useState(false);
   const [fit, setFit] = useState<api.FitRow | null>(null);
+  const [status, setStatus] = useState<api.EngineStatus[]>([]);
 
   const wasted = dups.reduce((a, d) => a + d.wasted_gib, 0);
   const active = profiles[0];
+
+  // Probe both engines' liveness on mount.
+  useEffect(() => {
+    Promise.all(
+      ENGINE_NODES.map((n) =>
+        api
+          .engineStatus(n.engine, n.host, n.port)
+          .catch(() => null)
+      )
+    ).then((res) => setStatus(res.filter(Boolean) as api.EngineStatus[]));
+  }, []);
+
+  const selectModel = (p: string) => {
+    setModel(p);
+    // Safetensors model-dirs (FreeToken) are offload-backed; GGUF files are not.
+    setOffload(!p.toLowerCase().endsWith(".gguf"));
+  };
 
   const runFit = async () => {
     if (!model) return;
@@ -36,6 +60,7 @@ export default function Hud({
       ngl: 1.0,
       kv_layers: null,
       reserve: 1600,
+      offload,
     });
     setFit(f);
   };
@@ -69,9 +94,22 @@ export default function Hud({
           <div className="big">{profiles.length}</div>
         </div>
         <div className="card">
-          <h3>ACTIVE ENGINE</h3>
-          <div className="big" style={{ fontSize: 18 }}>
-            {active ? `${active.alias} @ :${active.port}` : "—"}
+          <h3>ENGINE STATUS</h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 4 }}>
+            {ENGINE_NODES.map((n) => {
+              const s = status.find((x) => x.engine === n.engine);
+              return (
+                <div key={n.engine} className="row" style={{ gap: 8 }}>
+                  <span className={`dot ${s?.up ? "up" : "down"}`} />
+                  <span className="mono" style={{ fontSize: 12 }}>
+                    {n.engine === "LlamaCpp" ? "llamacpp" : "freetoken"} :{n.port}
+                  </span>
+                  <span className="dim" style={{ fontSize: 11 }}>
+                    {s ? (s.up ? "ONLINE" : "offline") : "…"}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -91,7 +129,7 @@ export default function Hud({
           <div className="row">
             <div style={{ flex: 1, minWidth: 260 }}>
               <label className="field">MODEL</label>
-              <select value={model} onChange={(e) => setModel(e.target.value)}>
+              <select value={model} onChange={(e) => selectModel(e.target.value)}>
                 <option value="">— select —</option>
                 {models.map((m) => (
                   <option key={m.path} value={m.path}>
@@ -113,7 +151,15 @@ export default function Hud({
                 onChange={(e) => setCtx(parseInt(e.target.value))}
               />
             </div>
-            <div style={{ alignSelf: "flex-end" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 160 }}>
+              <label className="row" style={{ gap: 8, fontSize: 12 }}>
+                <input
+                  type="checkbox"
+                  checked={offload}
+                  onChange={(e) => setOffload(e.target.checked)}
+                />
+                FreeToken offload (RAM spill)
+              </label>
               <button className="action" onClick={runFit}>
                 ESTIMATE
               </button>
@@ -130,7 +176,13 @@ export default function Hud({
               </div>
               <table style={{ marginTop: 10 }}>
                 <tbody>
-                  <tr><td>weights</td><td className="mono">{fit.weights_mb} MiB</td></tr>
+                  <tr><td>weights (VRAM)</td><td className="mono">{fit.weights_mb} MiB</td></tr>
+                  {fit.weights_ram_mb > 0 && (
+                    <tr>
+                      <td>weights (RAM spill)</td>
+                      <td className="mono">{fit.weights_ram_mb} MiB</td>
+                    </tr>
+                  )}
                   <tr><td>kv cache</td><td className="mono">{fit.kv_mb} MiB</td></tr>
                   <tr><td>buffers</td><td className="mono">{fit.buffers_mb} MiB</td></tr>
                   <tr><td>model VRAM</td><td className="mono">{fit.model_vram_mb} MiB</td></tr>

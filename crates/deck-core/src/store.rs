@@ -228,3 +228,72 @@ pub fn prune(conn: &Connection, keep: &[String]) -> Result<usize> {
     }
     Ok(removed)
 }
+
+// ---------------------------------------------------------------- benchmark
+
+/// A single live throughput measurement pulled from a running engine's
+/// Prometheus `/metrics` endpoint.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BenchRow {
+    pub id: i64,
+    pub engine: String,
+    pub host: String,
+    pub port: u16,
+    pub model: String,
+    pub ctx: u32,
+    /// Measured tokens/second (generation).
+    pub tps: f64,
+    /// Unix epoch seconds.
+    pub at: i64,
+}
+
+pub fn ensure_bench_schema(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS bench (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            engine TEXT NOT NULL,
+            host TEXT NOT NULL,
+            port INTEGER NOT NULL,
+            model TEXT NOT NULL,
+            ctx INTEGER NOT NULL,
+            tps REAL NOT NULL,
+            at INTEGER NOT NULL
+        )",
+    )?;
+    Ok(())
+}
+
+pub fn insert_bench(conn: &Connection, row: &BenchRow) -> Result<i64> {
+    conn.execute(
+        "INSERT INTO bench (engine, host, port, model, ctx, tps, at)
+         VALUES (?1,?2,?3,?4,?5,?6,?7)",
+        rusqlite::params![
+            row.engine, row.host, row.port, row.model, row.ctx, row.tps, row.at
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+pub fn recent_bench(conn: &Connection, n: usize) -> Result<Vec<BenchRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, engine, host, port, model, ctx, tps, at
+         FROM bench ORDER BY at DESC LIMIT ?1",
+    )?;
+    let rows = stmt.query_map([n as i64], |r| {
+        Ok(BenchRow {
+            id: r.get(0)?,
+            engine: r.get(1)?,
+            host: r.get(2)?,
+            port: r.get(3)?,
+            model: r.get(4)?,
+            ctx: r.get(5)?,
+            tps: r.get(6)?,
+            at: r.get(7)?,
+        })
+    })?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}

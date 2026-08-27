@@ -291,6 +291,65 @@ pub fn health_wait(host: &str, port: u16, timeout: Duration) -> bool {
     false
 }
 
+/// Fast liveness check against the engine's /health endpoint. Returns false on
+/// any error or non-200 (including connection refused). Used by the HUD status
+/// pills so the UI can show which engines are live without blocking.
+pub fn health_ok(host: &str, port: u16) -> bool {
+    let url = format!("http://{host}:{port}/health");
+    let config = ureq::config::Config::builder()
+        .timeout_global(Some(Duration::from_secs(2)))
+        .build();
+    let agent = config.new_agent();
+    matches!(agent.get(&url).call(), Ok(r) if r.status() == 200)
+}
+
+/// Pulls the raw Prometheus text from a running engine's /metrics endpoint.
+pub fn fetch_metrics(host: &str, port: u16) -> anyhow::Result<String> {
+    let url = format!("http://{host}:{port}/metrics");
+    let config = ureq::config::Config::builder()
+        .timeout_global(Some(Duration::from_secs(5)))
+        .build();
+    let agent = config.new_agent();
+    let resp = agent
+        .get(&url)
+        .call()
+        .map_err(|e| anyhow::anyhow!("metrics fetch failed: {e}"))?;
+    let body = resp
+        .into_body()
+        .read_to_string()
+        .map_err(|e| anyhow::anyhow!("reading metrics body: {e}"))?;
+    Ok(body)
+}
+
+/// Extracts a generation throughput (tokens/sec) gauge from Prometheus text.
+/// Prefers `generation_tokens_per_second`; falls back to any `*_tokens_per_second`
+/// line. Returns None if the endpoint exposes no usable gauge.
+pub fn parse_tps(text: &str) -> Option<f64> {
+    let lines: Vec<&str> = text.lines().collect();
+    // Pass 1: an explicit generation throughput gauge.
+    for line in &lines {
+        let l = line.trim();
+        if l.starts_with('#') || !(l.contains("generation") && l.contains("tok") && l.contains("per_sec")) {
+            continue;
+        }
+        if let Some(v) = l.split_whitespace().last().and_then(|s| s.parse::<f64>().ok()) {
+            return Some(v);
+        }
+    }
+    // Pass 2: any tokens/sec gauge (llama.cpp exports
+    // `*_tokens_per_second`; FreeToken exports `tok_per_sec`).
+    for line in &lines {
+        let l = line.trim();
+        if l.starts_with('#') || !(l.contains("tok") && l.contains("per_sec")) {
+            continue;
+        }
+        if let Some(v) = l.split_whitespace().last().and_then(|s| s.parse::<f64>().ok()) {
+            return Some(v);
+        }
+    }
+    None
+}
+
 /// Applies a profile: renders + installs + starts + health-waits. On failure,
 /// walks the ctx ladder (rewriting --ctx-size) and retries. Final fallback
 /// restores the previously-active unit from its .bak if present.
@@ -389,5 +448,25 @@ mod tests {
         let bak2 = backup_existing(&unit).unwrap().unwrap();
         assert_ne!(bak, bak2);
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn parses_generation_tps() {
+        let text = "# TYPE llamacpp:generation_tokens_per_second gauge
+llamacpp:generation_tokens_per_second 42.7
+llamacpp:prompt_processing_tokens_per_second 1234.5";
+        assert_eq!(parse_tps(text), Some(42.7));
+    }
+
+    #[test]
+    fn parses_tps_without_generation_line() {
+        let text = "# HELP ft:tok_per_sec tokens/sec
+ft:tok_per_sec 9.5";
+        assert_eq!(parse_tps(text), Some(9.5));
+    }
+
+    #[test]
+    fn no_tps_returns_none() {
+        assert_eq!(parse_tps("up 1\ngo_process_cpu_seconds_total 0.1"), None);
     }
 }

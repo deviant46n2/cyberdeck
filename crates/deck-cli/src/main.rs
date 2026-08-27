@@ -40,6 +40,9 @@ enum Commands {
         /// Desktop VRAM reserve (compositor + ckb-next etc), MiB
         #[arg(long, default_value_t = 1600)]
         reserve: u64,
+        /// FreeToken offload backend: weights spill to RAM, VRAM holds KV + buffers
+        #[arg(long, default_value_t = false)]
+        offload: bool,
     },
     /// Manage loadout profiles (engine launch specs)
     Profile {
@@ -100,8 +103,8 @@ fn main() -> Result<()> {
     match cli.command {
         Commands::Scan => cmd_scan(),
         Commands::List { json } => cmd_list(json),
-        Commands::Fit { model, ctx, kv_bytes, ngl, kv_layers, reserve } => {
-            cmd_fit(model, ctx, kv_bytes, ngl, kv_layers, reserve)
+        Commands::Fit { model, ctx, kv_bytes, ngl, kv_layers, reserve, offload } => {
+            cmd_fit(model, ctx, kv_bytes, ngl, kv_layers, reserve, offload)
         }
         Commands::Profile { action } => match action {
             ProfileCmd::New { name, model, engine, bin, alias, port, ctx, ngl, draft } => {
@@ -292,6 +295,7 @@ fn cmd_fit(
     ngl: f64,
     kv_layers: Option<u64>,
     reserve: u64,
+    offload: bool,
 ) -> Result<()> {
     let meta = load_model(&model)?;
     let req = deck_core::fit::FitRequest {
@@ -300,17 +304,21 @@ fn cmd_fit(
         ngl_frac: ngl,
         kv_layers,
         reserved_mb: reserve,
+        offload,
     };
     let available = deck_core::fit::available_vram_mb(16303);
     let b = deck_core::fit::estimate(&meta, &req, available);
 
     println!("model : {}", meta.path.display());
     println!(
-        "ctx   : {}  kv_bytes={}  ngl={}  kv_layers={:?}",
-        req.ctx, req.kv_bytes, req.ngl_frac, req.kv_layers
+        "ctx   : {}  kv_bytes={}  ngl={}  kv_layers={:?}  offload={}",
+        req.ctx, req.kv_bytes, req.ngl_frac, req.kv_layers, req.offload
     );
     println!("--------------------------------------------------");
     println!("weights            {:>6} MiB", b.weights_mb);
+    if b.weights_ram_mb > 0 {
+        println!("  (offload: {} MiB spilled to RAM)", b.weights_ram_mb);
+    }
     println!("kv cache           {:>6} MiB", b.kv_mb);
     println!("buffers            {:>6} MiB", b.buffers_mb);
     println!("model VRAM         {:>6} MiB", b.model_vram_mb);

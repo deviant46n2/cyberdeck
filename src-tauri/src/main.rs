@@ -32,9 +32,18 @@ fn fit(
     ngl: f64,
     kv_layers: Option<u64>,
     reserve: u64,
+    offload: bool,
 ) -> Result<FitRow, String> {
-    deck_tauri::fit(PathBuf::from(model), ctx, kv_bytes, ngl, kv_layers, reserve)
-        .map_err(|e| e.to_string())
+    deck_tauri::fit(
+        PathBuf::from(model),
+        ctx,
+        kv_bytes,
+        ngl,
+        kv_layers,
+        reserve,
+        offload,
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -77,6 +86,27 @@ fn market_download(repo_id: String, rfilename: String) -> Result<String, String>
     deck_tauri::market_download(&repo_id, &rfilename).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn bench_now(
+    engine: String,
+    host: String,
+    port: u16,
+    model: String,
+    ctx: u32,
+) -> Result<deck_tauri::BenchRow, String> {
+    deck_tauri::bench_now(&engine, &host, port, &model, ctx).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn bench_history() -> Result<Vec<deck_tauri::BenchRow>, String> {
+    deck_tauri::bench_history().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn engine_status(engine: String, host: String, port: u16) -> deck_tauri::EngineStatus {
+    deck_tauri::engine_status(&engine, &host, port)
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -92,7 +122,10 @@ fn main() {
             watch_remove,
             market_search,
             market_files,
-            market_download
+            market_download,
+            bench_now,
+            bench_history,
+            engine_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running cyberdeck");
