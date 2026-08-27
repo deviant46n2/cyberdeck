@@ -4,9 +4,11 @@
 //! command returns a serializable DTO so the same logic is unit-tested headless
 //! here and consumed by both the desktop app and (eventually) the CLI.
 
+use std::io::BufRead;
 use std::path::PathBuf;
 
 use serde::Serialize;
+use tauri::Emitter;
 
 pub use deck_core::profile::Engine;
 
@@ -391,6 +393,121 @@ pub fn engine_status(engine: &str, host: &str, port: u16) -> EngineStatus {
         port,
         up: deck_engines::health_ok(host, port),
     }
+}
+
+// ----------------------------------------------------------- agentic console
+
+#[derive(Clone, serde::Serialize)]
+pub struct OpLine {
+    pub stream: String,
+    pub text: String,
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct OpDone {
+    pub code: i32,
+}
+
+/// A single opencode session, kept so it can be killed from the UI.
+static OP_CHILD: std::sync::Mutex<Option<std::process::Child>> = std::sync::Mutex::new(None);
+
+/// Spawn `opencode run` in `dir` and stream its stdout/stderr to the frontend
+/// as `opencode-output` events, finishing with a single `opencode-done`.
+///
+/// `auto` maps to opencode's `--auto` (auto-approve permissions) — required for
+/// a headless coding session, but it WILL let the agent modify files without
+/// prompting. The UI must surface that trade-off.
+pub fn opencode_run(
+    app: &tauri::AppHandle,
+    prompt: &str,
+    dir: &str,
+    auto: bool,
+    model: Option<&str>,
+) -> anyhow::Result<()> {
+    {
+        let guard = OP_CHILD.lock().unwrap();
+        if guard.is_some() {
+            anyhow::bail!("an opencode session is already running");
+        }
+    }
+
+    let mut cmd = std::process::Command::new("opencode");
+    cmd.arg("run").arg("--dir").arg(dir);
+    if auto {
+        cmd.arg("--auto");
+    }
+    if let Some(m) = model.filter(|s| !s.is_empty()) {
+        cmd.arg("-m").arg(m);
+    }
+    cmd.arg(prompt);
+    cmd.stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("failed to spawn opencode: {e}"))?;
+
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("opencode stdout unavailable"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("opencode stderr unavailable"))?;
+
+    *OP_CHILD.lock().unwrap() = Some(child);
+
+    let app_o = app.clone();
+    std::thread::spawn(move || {
+        let reader = std::io::BufReader::new(stdout);
+        for line in reader.lines().map_while(Result::ok) {
+            let _ = app_o.emit(
+                "opencode-output",
+                OpLine {
+                    stream: "stdout".into(),
+                    text: line,
+                },
+            );
+        }
+    });
+
+    let app_e = app.clone();
+    std::thread::spawn(move || {
+        let reader = std::io::BufReader::new(stderr);
+        for line in reader.lines().map_while(Result::ok) {
+            let _ = app_e.emit(
+                "opencode-output",
+                OpLine {
+                    stream: "stderr".into(),
+                    text: line,
+                },
+            );
+        }
+    });
+
+    let app_done = app.clone();
+    std::thread::spawn(move || {
+        let code = {
+            let mut guard = OP_CHILD.lock().unwrap();
+            match guard.as_mut() {
+                Some(c) => c.wait().map(|s| s.code().unwrap_or(-1)).unwrap_or(-1),
+                None => -1,
+            }
+        };
+        let _ = app_done.emit("opencode-done", OpDone { code });
+    });
+
+    Ok(())
+}
+
+/// Kill a running opencode session, if any.
+pub fn opencode_stop() -> anyhow::Result<()> {
+    let mut guard = OP_CHILD.lock().unwrap();
+    if let Some(mut c) = guard.take() {
+        let _ = c.kill();
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -132,3 +132,11 @@ export const benchNow = (p: {
 export const benchHistory = () => invoke<BenchRow[]>("bench_history");
 export const engineStatus = (engine: string, host: string, port: number) =>
   invoke<EngineStatus>("engine_status", { engine, host, port });
+
+export const opencodeRun = (p: {
+  prompt: string;
+  dir: string;
+  auto: boolean;
+  model: string;
+}) => invoke<void>("opencode_run", p);
+export const opencodeStop = () => invoke<void>("opencode_stop");

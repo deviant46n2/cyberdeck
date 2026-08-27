@@ -107,6 +107,23 @@ fn engine_status(engine: String, host: String, port: u16) -> deck_tauri::EngineS
     deck_tauri::engine_status(&engine, &host, port)
 }
 
+#[tauri::command]
+fn opencode_run(
+    prompt: String,
+    dir: String,
+    auto: bool,
+    model: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let model_opt = if model.is_empty() { None } else { Some(model.as_str()) };
+    deck_tauri::opencode_run(&app, &prompt, &dir, auto, model_opt).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn opencode_stop() -> Result<(), String> {
+    deck_tauri::opencode_stop().map_err(|e| e.to_string())
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -125,7 +142,9 @@ fn main() {
             market_download,
             bench_now,
             bench_history,
-            engine_status
+            engine_status,
+            opencode_run,
+            opencode_stop
         ])
         .run(tauri::generate_context!())
         .expect("error while running cyberdeck");

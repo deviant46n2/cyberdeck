@@ -706,6 +706,7 @@ dependencies = [
  "deck-engines",
  "deck-feeds",
  "serde",
+ "tauri",
 ]
 
 [[package]]

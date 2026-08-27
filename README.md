@@ -32,6 +32,7 @@ Named for what it is: a personal machine for loading capability shards.
 | 4 | Signals | HF watchlist + new-release detection (filtered, deduped) |
 | 5 | Market | HF search + GGUF discovery + one-click download to ~/models |
 | 6 | FreeToken | offload VRAM fit (RAM spill) + live bench history + engine status |
+| 7 | Agent | CONSOLE runs `opencode run` as a streaming agent (live output) |
 
 ## Dev loop
 

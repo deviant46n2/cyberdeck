@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import * as api from "../api";
 
 const ENGINE_NODES: { engine: string; host: string; port: number }[] = [
@@ -18,6 +19,15 @@ export default function Console({ unit }: { unit: string }) {
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // --- agent session state ---
+  const [prompt, setPrompt] = useState("");
+  const [dir, setDir] = useState("/home/deviant/Projects/cyberdeck");
+  const [auto, setAuto] = useState(false);
+  const [model, setModel] = useState("");
+  const [running, setRunning] = useState(false);
+  const [log, setLog] = useState<string[]>([]);
+  const logRef = useRef<HTMLDivElement>(null);
+
   const refresh = () => {
     api.benchHistory().then(setHistory).catch(() => {});
     Promise.all(
@@ -28,6 +38,25 @@ export default function Console({ unit }: { unit: string }) {
   };
 
   useEffect(refresh, []);
+
+  // Stream opencode output into the log.
+  useEffect(() => {
+    const un = listen<{ stream: string; text: string }>("opencode-output", (e) => {
+      setLog((l) => [...l, e.payload.text]);
+    });
+    const done = listen<{ code: number }>("opencode-done", () => {
+      setRunning(false);
+    });
+    return () => {
+      un.then((f) => f());
+      done.then((f) => f());
+    };
+  }, []);
+
+  // Auto-scroll the log.
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [log]);
 
   const bench = async (node: { engine: string; host: string; port: number }) => {
     setBusy(true);
@@ -48,6 +77,24 @@ export default function Console({ unit }: { unit: string }) {
     setBusy(false);
   };
 
+  const runAgent = async () => {
+    if (!prompt.trim() || running) return;
+    setLog([]);
+    setRunning(true);
+    try {
+      await api.opencodeRun({ prompt, dir, auto, model });
+    } catch (e) {
+      setLog((l) => [...l, `✗ ${String(e)}`]);
+      setRunning(false);
+    }
+  };
+
+  const stopAgent = async () => {
+    await api.opencodeStop();
+    setLog((l) => [...l, "— interrupted —"]);
+    setRunning(false);
+  };
+
   const copy = () => {
     if (unit) navigator.clipboard?.writeText(unit);
   };
@@ -55,6 +102,51 @@ export default function Console({ unit }: { unit: string }) {
   return (
     <>
       <div className="view-title">CONSOLE</div>
+
+      <div className="card" style={{ marginBottom: 16 }}>
+        <h3>AGENT (opencode)</h3>
+        <div className="field" style={{ marginBottom: 6 }}>TASK</div>
+        <textarea
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          placeholder="e.g. add a CLI flag to deck fit that prints the KV cache size in GiB"
+          rows={3}
+          style={{ width: "100%", fontFamily: "inherit", background: "#0a0a12", color: "#e8e8f0" }}
+        />
+        <div className="row" style={{ gap: 12, marginTop: 8, flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 240 }}>
+            <div className="field" style={{ marginBottom: 4 }}>PROJECT DIR</div>
+            <input type="text" value={dir} onChange={(e) => setDir(e.target.value)} />
+          </div>
+          <div style={{ width: 160 }}>
+            <div className="field" style={{ marginBottom: 4 }}>MODEL (optional)</div>
+            <input type="text" value={model} onChange={(e) => setModel(e.target.value)} placeholder="provider/model" />
+          </div>
+        </div>
+        <label className="row" style={{ gap: 8, marginTop: 8, fontSize: 12 }}>
+          <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} />
+          <span>
+            auto-approve permissions (<span style={{ color: "var(--oom)" }}>--auto: agent may modify files unprompted</span>)
+          </span>
+        </label>
+        <div className="row" style={{ gap: 10, marginTop: 10 }}>
+          <button className="action" onClick={runAgent} disabled={running}>
+            {running ? "RUNNING…" : "RUN AGENT"}
+          </button>
+          {running && (
+            <button className="ghost" onClick={stopAgent}>
+              STOP
+            </button>
+          )}
+        </div>
+        <div className="term" ref={logRef}>
+          {log.length === 0 ? (
+            <span className="dim">agent output streams here…</span>
+          ) : (
+            log.map((l, i) => <div key={i}>{l}</div>)
+          )}
+        </div>
+      </div>
 
       <div className="card" style={{ marginBottom: 16 }}>
         <h3>ENGINE TELEMETRY</h3>
