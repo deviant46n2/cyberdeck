@@ -12,6 +12,8 @@
   --oom: #ff3b3b;
   --cyan: #36e6ff;
   font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+  /* Render native form controls (select popups, option lists, scrollbars) dark. */
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -146,9 +148,20 @@ button.ghost:hover { color: var(--text); border-color: var(--muted); }
 button.danger { border-color: var(--oom); color: var(--oom); background: rgba(255,59,59,0.08); }
 
 label.field { display: block; margin: 8px 0; font-size: 11px; color: var(--muted); letter-spacing: 1px; }
-input[type="text"], input[type="number"], select {
+input[type="text"], input[type="number"], input[type="password"], select, textarea {
   width: 100%; background: var(--panel-2); border: 1px solid var(--line);
   color: var(--text); padding: 7px 9px; border-radius: 6px; font-family: inherit; font-size: 12px;
+}
+/* Dropdown popup + each option: keep the dark box with light letters. */
+select {
+  appearance: none; -webkit-appearance: none;
+  padding-right: 26px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%23d7d7e6'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+}
+select option, select optgroup {
+  background: var(--panel-2); color: var(--text);
 }
 input[type="range"] { width: 100%; accent-color: var(--magenta); }
 
