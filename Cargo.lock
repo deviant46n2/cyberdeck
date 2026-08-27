@@ -660,6 +660,7 @@ dependencies = [
  "clap",
  "deck-core",
  "deck-engines",
+ "deck-feeds",
  "rusqlite",
  "serde_json",
 ]
@@ -695,7 +696,6 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
- "ureq",
 ]
 
 [[package]]

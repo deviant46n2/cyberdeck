@@ -119,6 +119,9 @@ pub struct GgufMeta {
     pub tensor_count: u64,
     pub file_size: u64,
     pub kv: BTreeMap<String, Value>,
+    /// True if parsing stopped early due to a truncated read (e.g. HTTP Range
+    /// response that covers scalar KVs but not the full tokenizer array).
+    pub truncated: bool,
 }
 
 impl GgufMeta {
@@ -130,6 +133,18 @@ impl GgufMeta {
         let mut r = BufReader::new(file);
         let mut meta = parse(&mut r)?;
         meta.file_size = file_size;
+        Ok(meta)
+    }
+
+    /// Parse from an in-memory reader (e.g. a Range-fetched GGUF header).
+    /// `total_size` is the full file size on the remote server. Parsing is
+    /// best-effort: all scalar KVs are read, but a large tokenizer array may
+    /// exceed the buffer — in that case `truncated` is set and the remaining
+    /// KVs are skipped. The critical fit fields (arch, block_count,
+    /// embedding_length, file_type) are always scalars and will be present.
+    pub fn from_reader(mut reader: impl Read + Seek, total_size: u64) -> Result<Self, GgufError> {
+        let mut meta = parse(&mut reader)?;
+        meta.file_size = total_size;
         Ok(meta)
     }
 
@@ -148,9 +163,7 @@ impl GgufMeta {
 
     pub fn ctx_train(&self) -> Option<i64> {
         let arch = self.arch()?;
-        self.kv
-            .get(&format!("{arch}.context_length"))?
-            .as_int()
+        self.kv.get(&format!("{arch}.context_length"))?.as_int()
     }
 
     /// Vocab size if present, via tokenizer array element count (array
@@ -164,7 +177,10 @@ impl GgufMeta {
 
     pub fn n_layers(&self) -> Option<u64> {
         let arch = self.arch()?;
-        self.kv.get(&format!("{arch}.block_count")).and_then(Value::as_int).map(|v| v as u64)
+        self.kv
+            .get(&format!("{arch}.block_count"))
+            .and_then(Value::as_int)
+            .map(|v| v as u64)
     }
 
     pub fn n_embd(&self) -> Option<u64> {
@@ -250,11 +266,24 @@ fn parse<R: Read + Seek>(r: &mut R) -> Result<GgufMeta, GgufError> {
     };
 
     let mut kv = BTreeMap::new();
+    let mut truncated = false;
     for _ in 0..kv_count {
-        let key = read_string(r, legacy, &mut b4, &mut b8)?;
+        let key = match read_string(r, legacy, &mut b4, &mut b8) {
+            Ok(k) => k,
+            Err(_) => {
+                truncated = true;
+                break;
+            }
+        };
         r.read_exact(&mut b4).map_err(trunc("value_type"))?;
         let vt = ValueType::from_id(u32::from_le_bytes(b4))?;
-        let val = read_value(r, vt, legacy, &mut b4, &mut b8)?;
+        let val = match read_value(r, vt, legacy, &mut b4, &mut b8) {
+            Ok(v) => v,
+            Err(_) => {
+                truncated = true;
+                break;
+            }
+        };
         kv.insert(key, val);
     }
 
@@ -263,6 +292,7 @@ fn parse<R: Read + Seek>(r: &mut R) -> Result<GgufMeta, GgufError> {
         tensor_count,
         file_size: 0,
         kv,
+        truncated,
     })
 }
 
@@ -289,8 +319,7 @@ fn read_string<R: Read + Seek>(
         });
     }
     let mut bytes = vec![0u8; len as usize];
-    r.read_exact(&mut bytes)
-        .map_err(trunc("string_bytes"))?;
+    r.read_exact(&mut bytes).map_err(trunc("string_bytes"))?;
     String::from_utf8(bytes).map_err(|_| GgufError::Truncated {
         where_: "string utf8",
     })
@@ -454,6 +483,7 @@ pub fn file_type_name(code: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
 
     struct Buf(Vec<u8>);
 
@@ -611,6 +641,43 @@ mod tests {
         assert_eq!(meta.file_size, fixture.metadata().unwrap().len());
     }
 
+    #[test]
+    fn from_reader_parses_clean_buffer() {
+        let bytes = build_test_gguf(3);
+        let total = bytes.len() as u64 * 3; // pretend full file is larger
+        let mut cursor = Cursor::new(bytes);
+        let meta = GgufMeta::from_reader(&mut cursor, total).unwrap();
+        assert_eq!(meta.arch(), Some("qwen3"));
+        assert_eq!(meta.quant_name().as_deref(), Some("Q4_K_M"));
+        assert_eq!(meta.n_layers(), None); // not in test fixture
+        assert_eq!(meta.file_size, total);
+        assert!(!meta.truncated, "no truncation when all data fits");
+    }
+
+    #[test]
+    fn from_reader_tolerates_truncated_array() {
+        // Build a GGUF with 6 KVs, then truncate after the scalar KVs
+        // (before the tokenizer array data), simulating a Range header fetch.
+        let full = build_test_gguf(3);
+        // Find the start of the tokenizer array: after test.f + F32 value.
+        // The F32 value for "test.f" is 4 bytes. Everything after is the
+        // tokenizer array key + type + array header + data.
+        // We want to cut right at the array element_type byte (start of array).
+        // Simpler: cut at 70% of the buffer — well past the scalars, mid-array.
+        let cut = (full.len() as f64 * 0.7) as usize;
+        let truncated_buf: Vec<u8> = full[..cut].to_vec();
+        let total = full.len() as u64;
+        let mut cursor = Cursor::new(truncated_buf);
+        let meta = GgufMeta::from_reader(&mut cursor, total).unwrap();
+        assert!(meta.truncated, "should detect truncation");
+        assert_eq!(meta.arch(), Some("qwen3"));
+        assert_eq!(
+            meta.kv.get("general.file_type").and_then(Value::as_int),
+            Some(15)
+        );
+        assert_eq!(meta.ctx_train(), Some(262144));
+    }
+
     fn shellexpand_home(p: &str) -> String {
         if let Some(rest) = p.strip_prefix("~/") {
             if let Some(home) = std::env::var_os("HOME") {
@@ -621,10 +688,7 @@ mod tests {
     }
 
     fn tempdir(label: &str) -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!(
-            "deck-core-test-{}-{label}",
-            std::process::id()
-        ));
+        let d = std::env::temp_dir().join(format!("deck-core-test-{}-{label}", std::process::id()));
         let _ = std::fs::create_dir_all(&d);
         d
     }

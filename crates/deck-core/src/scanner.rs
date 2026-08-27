@@ -21,7 +21,9 @@ const SKIP_DIRS: &[&str] = &[
 ];
 
 pub fn default_roots() -> Vec<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
     vec![
         home.clone(),
         home.join("models"),

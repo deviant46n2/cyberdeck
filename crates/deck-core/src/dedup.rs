@@ -20,10 +20,7 @@ pub struct DupGroup {
 pub fn find_duplicates(models: &[ModelMeta]) -> Vec<DupGroup> {
     let mut by_identity: HashMap<String, Vec<ModelMeta>> = HashMap::new();
     for m in models {
-        by_identity
-            .entry(m.identity())
-            .or_default()
-            .push(m.clone());
+        by_identity.entry(m.identity()).or_default().push(m.clone());
     }
 
     let mut groups = Vec::new();

@@ -80,7 +80,6 @@ export default function LoadoutEditor({
   const [unit, setUnit] = useState("");
   const [msg, setMsg] = useState("");
 
-  // --- test harness state ---
   const [phase, setPhase] = useState("");
   const [log, setLog] = useState<string[]>([]);
   const [result, setResult] = useState<{ verdict: string; summary: string } | null>(null);
@@ -90,7 +89,6 @@ export default function LoadoutEditor({
   const set = <K extends keyof api.Profile>(k: K, v: api.Profile[K]) =>
     setP((prev) => {
       const next = { ...prev, [k]: v };
-      // Engine swap toggles the FreeToken offload relationship.
       if (k === "engine") {
         next.ft_backend = v === "FreeToken" ? "offload" : null;
         if (v === "FreeToken") next.bin = "/usr/local/bin/ft";
@@ -100,7 +98,6 @@ export default function LoadoutEditor({
 
   const offload = p.engine === "FreeToken" && p.ft_backend === "offload";
 
-  // Live fit + unit preview (debounced).
   useEffect(() => {
     setResult(null);
     const t = setTimeout(async () => {
@@ -129,13 +126,12 @@ export default function LoadoutEditor({
       try {
         setUnit(await api.renderProfileUnit(p));
       } catch {
-        /* unit preview is best-effort */
+        /* best-effort */
       }
     }, 300);
     return () => clearTimeout(t);
   }, [p, offload]);
 
-  // Test event stream.
   const testRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const ph = listen<{ phase: string }>("test-phase", (e) => setPhase(e.payload.phase));
@@ -184,14 +180,18 @@ export default function LoadoutEditor({
       )
     )
       return;
-    setLog([]);
+    setLog([`[deck] TEST LOAD → ${p.engine} on :${api.TEST_PORTS[p.engine]} — stopping live service (3s delay for VRAM free)…`]);
     setResult(null);
     setPhase("starting");
     setTesting(true);
+    setMsg("");
     try {
       await api.testLoadout(p, api.TEST_PORTS[p.engine]);
     } catch (e) {
-      setResult({ verdict: "ERROR", summary: String(e) });
+      const m = String(e);
+      setLog((l) => [...l, `[deck] invoke failed: ${m}`]);
+      setResult({ verdict: "ERROR", summary: m });
+      setMsg(m);
       setTesting(false);
     }
   };
@@ -202,445 +202,311 @@ export default function LoadoutEditor({
   return (
     <div className="editor-backdrop" onClick={onClose}>
       <div className="editor" onClick={(e) => e.stopPropagation()}>
-        <div className="view-title">
-          {initial.name ? `EDIT — ${initial.name}` : "NEW LOADOUT"}
+        <div className="editor-chrome">
+          <span className="dots"><i /><i /><i /></span>
+          <span className="title"><b>deck</b> — agent:{initial.name ? ` ${initial.name}` : " new"} — {p.engine === "FreeToken" ? "freetoken" : "llama.cpp"} <span className="dim">[{advanced ? "advanced" : "basic"}]</span></span>
+          <span style={{marginLeft:"auto", fontSize:10, color:"var(--dim2)"}}>ESC to close</span>
         </div>
 
-        {/* Engine toggle */}
-        <div className="row" style={{ gap: 10, margin: "8px 0 14px" }}>
-          {(["LlamaCpp", "FreeToken"] as const).map((e) => (
-            <button
-              key={e}
-              className={p.engine === e ? "action" : "ghost"}
-              onClick={() => set("engine", e)}
-            >
-              {e === "LlamaCpp" ? "llama.cpp" : "FreeToken"}
+        <div className="tty">
+          {/* fake command line */}
+          <div style={{color:"var(--muted)", fontSize:11, marginBottom:8}}>
+            <span className="tty-prompt">deck@local</span>:<span style={{color:"var(--cyan)"}}>~/agents</span>$ deck agent {initial.name ? "edit" : "init"} <span className="tty-cmd">{p.name ? `"${p.name}"` : ""}</span> --engine {p.engine.toLowerCase()} {p.model ? `--model "${p.model}"` : ""} <span className="cursor" style={{height:10, width:7, verticalAlign:"-1px"}} />
+          </div>
+          <div className="tty-dim" style={{fontSize:10, marginBottom:10, letterSpacing:"0.5px"}}>
+            every flag editable · live fit estimate · <span style={{color:"var(--warn)"}}>TEST LOAD</span> probes for OOM on a test port
+          </div>
+
+          {/* engine switch + advanced */}
+          <div className="row" style={{gap:8, marginBottom:10}}>
+            {(["LlamaCpp", "FreeToken"] as const).map((e) => (
+              <button
+                key={e}
+                className={p.engine === e ? "action" : "ghost"}
+                style={{fontSize:11, padding:"5px 10px"}}
+                onClick={() => set("engine", e)}
+              >
+                {p.engine === e ? "● " : "○ "}{e === "LlamaCpp" ? "llama.cpp" : "freetoken"}
+              </button>
+            ))}
+            <span className="dim" style={{fontSize:10, maxWidth:340}}>
+              {isFt ? "offload: weights spill to RAM, VRAM holds KV+buffers" : "full VRAM map via n_gpu_layers (0 = all)"}
+            </span>
+            <button className="ghost" style={{marginLeft:"auto", fontSize:10}} onClick={() => setAdvanced((a) => !a)}>
+              {advanced ? "[−] BASIC" : "[+] ADVANCED"}
             </button>
-          ))}
-          <span className="dim" style={{ fontSize: 11 }}>
-            {isFt
-              ? "offload backend spills weights to RAM; VRAM holds KV + buffers"
-              : "full weights mapped to VRAM via n_gpu_layers"}
-          </span>
-          <button
-            className="ghost"
-            style={{ marginLeft: "auto" }}
-            onClick={() => setAdvanced((a) => !a)}
-          >
-            {advanced ? "HIDE ADVANCED ▴" : "ADVANCED ▾"}
-          </button>
-        </div>
-
-        <div className="editor-grid">
-          {/* Identity */}
-          <div className="card">
-            <h3>IDENTITY</h3>
-            <Field label="name">
-              <input value={p.name} onChange={(e) => set("name", e.target.value)} />
-            </Field>
-            {advanced && (
-              <Field label="binary">
-                <input value={p.bin} onChange={(e) => set("bin", e.target.value)} />
-              </Field>
-            )}
-            <Field label="model (path or HF id)">
-              <input
-                list="model-paths"
-                value={p.model}
-                onChange={(e) => set("model", e.target.value)}
-              />
-              <datalist id="model-paths">
-                {modelPaths.map((m) => (
-                  <option key={m} value={m} />
-                ))}
-              </datalist>
-            </Field>
-            <div className="row" style={{ gap: 10 }}>
-              <Field label="alias" half>
-                <input value={p.alias} onChange={(e) => set("alias", e.target.value)} />
-              </Field>
-              <Field label="port" half>
-                <input
-                  type="number"
-                  value={p.port}
-                  onChange={(e) => set("port", Number(e.target.value))}
-                />
-              </Field>
-            </div>
-            <Field label="host">
-              <input value={p.host} onChange={(e) => set("host", e.target.value)} />
-            </Field>
-            {advanced && (
-              <label className="row" style={{ gap: 8, fontSize: 12 }}>
-                <input
-                  type="checkbox"
-                  checked={p.metrics}
-                  onChange={(e) => set("metrics", e.target.checked)}
-                />
-                <span>expose /metrics (for BENCH tok/s)</span>
-              </label>
-            )}
           </div>
 
-          {/* Context / offload */}
-          <div className="card">
-            <h3>CONTEXT / OFFLOAD</h3>
-            <div className="row" style={{ gap: 10 }}>
-              <Field label="ctx size" half>
+          <div className="tty-grid">
+            {/* IDENTITY */}
+            <div className="tty-block" data-label="IDENTITY">
+              <div className="tty-field">
+                <div className="tty-label">name</div>
+                <input className="tty-input" value={p.name} placeholder="my-qwen3-agent" onChange={(e) => set("name", e.target.value)} />
+              </div>
+              {advanced && (
+                <div className="tty-field">
+                  <div className="tty-label">binary <span className="tty-dim">--bin</span></div>
+                  <input className="tty-input" value={p.bin} onChange={(e) => set("bin", e.target.value)} />
+                </div>
+              )}
+              <div className="tty-field">
+                <div className="tty-label">model <span className="tty-dim">path or HF id</span></div>
                 <input
-                  type="number"
-                  value={p.ctx_size}
-                  onChange={(e) => set("ctx_size", Number(e.target.value))}
+                  className="tty-input"
+                  list="model-paths"
+                  value={p.model}
+                  placeholder="/models/qwen3-8b.gguf"
+                  onChange={(e) => set("model", e.target.value)}
                 />
-              </Field>
-              <Field label="n_gpu_layers (0=all)" half>
-                <input
-                  type="number"
-                  value={p.n_gpu_layers}
-                  onChange={(e) => set("n_gpu_layers", Number(e.target.value))}
-                />
-              </Field>
-            </div>
-            {advanced && (
-              <Field label="ctx ladder (comma sep)">
-                <input
-                  value={p.ctx_ladder.join(",")}
-                  onChange={(e) =>
-                    set(
-                      "ctx_ladder",
-                      e.target.value
-                        .split(",")
-                        .map((s) => s.trim())
-                        .filter(Boolean)
-                        .map(Number)
-                    )
-                  }
-                />
-              </Field>
-            )}
-            <div className="row" style={{ gap: 10 }}>
-              <Field label="kv cache K" half>
-                <select
-                  value={p.kv_cache_type_k || ""}
-                  onChange={(e) => set("kv_cache_type_k", e.target.value || null)}
-                >
-                  <option value="">(default)</option>
-                  {KV_TYPES.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
+                <datalist id="model-paths">
+                  {modelPaths.map((m) => (
+                    <option key={m} value={m} />
                   ))}
-                </select>
-              </Field>
-              <Field label="kv cache V" half>
-                <select
-                  value={p.kv_cache_type_v || ""}
-                  onChange={(e) => set("kv_cache_type_v", e.target.value || null)}
-                >
-                  <option value="">(default)</option>
-                  {KV_TYPES.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </select>
-              </Field>
+                </datalist>
+              </div>
+              <div className="row" style={{gap:8}}>
+                <div className="tty-field" style={{flex:1}}>
+                  <div className="tty-label">alias</div>
+                  <input className="tty-input" value={p.alias} onChange={(e) => set("alias", e.target.value)} />
+                </div>
+                <div className="tty-field" style={{flex:1}}>
+                  <div className="tty-label">port</div>
+                  <input className="tty-input" type="number" value={p.port} onChange={(e) => set("port", Number(e.target.value))} />
+                </div>
+              </div>
+              <div className="tty-field">
+                <div className="tty-label">host</div>
+                <input className="tty-input" value={p.host} onChange={(e) => set("host", e.target.value)} />
+              </div>
+              {advanced && (
+                <label className="row" style={{gap:6, fontSize:11, color:"var(--muted)", marginTop:4}}>
+                  <input type="checkbox" checked={p.metrics} onChange={(e) => set("metrics", e.target.checked)} />
+                  <span>expose <span className="mono" style={{color:"var(--cyan)"}}>/metrics</span> (BENCH tok/s)</span>
+                </label>
+              )}
             </div>
-            {advanced && (
-              <Field label="load mode">
-                <input
-                  value={p.load_mode || ""}
-                  placeholder="e.g. mmap+mlock"
-                  onChange={(e) => set("load_mode", e.target.value || null)}
-                />
-              </Field>
-            )}
-            <label className="row" style={{ gap: 8, fontSize: 12 }}>
-              <input
-                type="checkbox"
-                checked={p.flash_attn}
-                onChange={(e) => set("flash_attn", e.target.checked)}
-              />
-              <span>flash attention</span>
-            </label>
-          </div>
 
-          {/* Engine-specific */}
-          <div className="card">
-            <h3>{isFt ? "FREETOKEN" : "SPECULATIVE / REASONING"}</h3>
-            {isFt ? (
-              <>
-                <Field label="moe backend">
-                  <select
-                    value={p.ft_backend || ""}
-                    onChange={(e) => set("ft_backend", e.target.value || null)}
-                  >
-                    <option value="">(default)</option>
-                    <option value="offload">offload</option>
-                    <option value="flashinfer">flashinfer</option>
-                  </select>
-                </Field>
-                <Field label="moe cache size">
+            {/* CONTEXT */}
+            <div className="tty-block" data-label="CONTEXT / OFFLOAD">
+              <div className="row" style={{gap:8}}>
+                <div className="tty-field" style={{flex:1}}>
+                  <div className="tty-label">ctx_size</div>
+                  <input className="tty-input" type="number" value={p.ctx_size} onChange={(e) => set("ctx_size", Number(e.target.value))} />
+                </div>
+                <div className="tty-field" style={{flex:1}}>
+                  <div className="tty-label">n_gpu_layers <span className="tty-dim">0=all</span></div>
+                  <input className="tty-input" type="number" value={p.n_gpu_layers} onChange={(e) => set("n_gpu_layers", Number(e.target.value))} />
+                </div>
+              </div>
+              {advanced && (
+                <div className="tty-field">
+                  <div className="tty-label">ctx_ladder <span className="tty-dim">comma sep</span></div>
                   <input
-                    type="number"
-                    value={p.ft_moe_cache_size ?? ""}
-                    placeholder="e.g. 3000"
+                    className="tty-input"
+                    value={p.ctx_ladder.join(",")}
                     onChange={(e) =>
-                      set("ft_moe_cache_size", num(e.target.value) as never)
+                      set(
+                        "ctx_ladder",
+                        e.target.value.split(",").map((s) => s.trim()).filter(Boolean).map(Number)
+                      )
                     }
                   />
-                </Field>
-              </>
-            ) : (
-              <>
-                <Field label="spec type">
-                  <input
-                    value={p.spec_type || ""}
-                    placeholder="e.g. mtp"
-                    onChange={(e) => set("spec_type", e.target.value || null)}
-                  />
-                </Field>
-                <Field label="draft model">
-                  <input
-                    value={p.draft_model || ""}
-                    placeholder="path or HF id"
-                    onChange={(e) => set("draft_model", e.target.value || null)}
-                  />
-                </Field>
-                {advanced && (
-                  <>
-                    <Field label="reasoning">
-                      <input
-                        value={p.reasoning || ""}
-                        onChange={(e) => set("reasoning", e.target.value || null)}
-                      />
-                    </Field>
-                    <div className="row" style={{ gap: 10 }}>
-                      <Field label="reason format" half>
-                        <input
-                          value={p.reasoning_format || ""}
-                          onChange={(e) => set("reasoning_format", e.target.value || null)}
-                        />
-                      </Field>
-                      <Field label="reason effort" half>
-                        <input
-                          value={p.reasoning_effort || ""}
-                          onChange={(e) => set("reasoning_effort", e.target.value || null)}
-                        />
-                      </Field>
-                    </div>
-                    <Field label="reasoning budget">
-                      <input
-                        type="number"
-                        value={p.reasoning_budget ?? ""}
-                        onChange={(e) =>
-                          set("reasoning_budget", num(e.target.value) as never)
-                        }
-                      />
-                    </Field>
-                  </>
-                )}
-              </>
-            )}
-          </div>
-
-          {/* Sampling + resources */}
-          {advanced && (
-          <div className="card">
-            <h3>SAMPLING / RESOURCES</h3>
-            <div className="row" style={{ gap: 10 }}>
-              <Field label="temperature" half>
-                <input
-                  type="number"
-                  step="0.05"
-                  value={p.temperature}
-                  onChange={(e) => set("temperature", Number(e.target.value))}
-                />
-              </Field>
-              <Field label="top_p" half>
-                <input
-                  type="number"
-                  step="0.05"
-                  value={p.top_p}
-                  onChange={(e) => set("top_p", Number(e.target.value))}
-                />
-              </Field>
-            </div>
-            <div className="row" style={{ gap: 10 }}>
-              <Field label="top_k" half>
-                <input
-                  type="number"
-                  value={p.top_k}
-                  onChange={(e) => set("top_k", Number(e.target.value))}
-                />
-              </Field>
-              <Field label="parallel" half>
-                <input
-                  type="number"
-                  value={p.parallel}
-                  onChange={(e) => set("parallel", Number(e.target.value))}
-                />
-              </Field>
-            </div>
-            <Field label="mem max (MiB)">
-              <input
-                type="number"
-                value={p.mem_max_mb ?? ""}
-                placeholder="cgroup MemoryMax"
-                onChange={(e) => set("mem_max_mb", num(e.target.value) as never)}
-              />
-            </Field>
-            <Field label="mem swap max (MiB)">
-              <input
-                type="number"
-                value={p.mem_swap_max_mb ?? ""}
-                placeholder="cgroup MemorySwapMax"
-                onChange={(e) =>
-                  set("mem_swap_max_mb", num(e.target.value) as never)
-                }
-              />
-            </Field>
-            <Field label="ubatch size">
-              <input
-                type="number"
-                value={p.ubatch_size}
-                onChange={(e) => set("ubatch_size", Number(e.target.value))}
-              />
-            </Field>
-          </div>
-          )}
-
-          {/* Live fit */}
-          <div className="card">
-            <h3>LIVE FIT ESTIMATE</h3>
-            {fitErr && <div className="dim" style={{ fontSize: 11 }}>{fitErr}</div>}
-            {!fit && !fitErr && (
-              <div className="dim" style={{ fontSize: 11 }}>editing…</div>
-            )}
-            {fit && (
-              <>
-                <div className="row" style={{ justifyContent: "space-between" }}>
-                  <span className="badge mag">{fit.verdict}</span>
-                  <span className={`badge ${verdictClass(fit.verdict)}`}>
-                    {fit.verdict}
-                  </span>
                 </div>
-                <table style={{ marginTop: 10 }}>
-                  <tbody>
-                    <tr>
-                      <td>weights (VRAM)</td>
-                      <td className="mono">{fit.weights_mb} MiB</td>
-                    </tr>
-                    {fit.weights_ram_mb > 0 && (
-                      <tr>
-                        <td>weights (RAM spilled)</td>
-                        <td className="mono">{fit.weights_ram_mb} MiB</td>
-                      </tr>
-                    )}
-                    <tr>
-                      <td>kv cache</td>
-                      <td className="mono">{fit.kv_mb} MiB</td>
-                    </tr>
-                    <tr>
-                      <td>buffers</td>
-                      <td className="mono">{fit.buffers_mb} MiB</td>
-                    </tr>
-                    <tr>
-                      <td>model VRAM</td>
-                      <td className="mono magenta">{fit.model_vram_mb} MiB</td>
-                    </tr>
-                    <tr>
-                      <td>desktop reserve</td>
-                      <td className="mono">{fit.overhead_mb} MiB</td>
-                    </tr>
-                    <tr>
-                      <td>available for model</td>
-                      <td className="mono">{fit.available_for_model_mb} MiB</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </>
-            )}
-          </div>
+              )}
+              <div className="row" style={{gap:8}}>
+                <div className="tty-field" style={{flex:1}}>
+                  <div className="tty-label">kv K</div>
+                  <select className="tty-input" value={p.kv_cache_type_k || ""} onChange={(e) => set("kv_cache_type_k", e.target.value || null)}>
+                    <option value="">(default)</option>
+                    {KV_TYPES.map((t) => (<option key={t} value={t}>{t}</option>))}
+                  </select>
+                </div>
+                <div className="tty-field" style={{flex:1}}>
+                  <div className="tty-label">kv V</div>
+                  <select className="tty-input" value={p.kv_cache_type_v || ""} onChange={(e) => set("kv_cache_type_v", e.target.value || null)}>
+                    <option value="">(default)</option>
+                    {KV_TYPES.map((t) => (<option key={t} value={t}>{t}</option>))}
+                  </select>
+                </div>
+              </div>
+              {advanced && (
+                <div className="tty-field">
+                  <div className="tty-label">load_mode</div>
+                  <input className="tty-input" value={p.load_mode || ""} placeholder="mmap+mlock" onChange={(e) => set("load_mode", e.target.value || null)} />
+                </div>
+              )}
+              <label className="row" style={{gap:6, fontSize:11, color:"var(--muted)", marginTop:4}}>
+                <input type="checkbox" checked={p.flash_attn} onChange={(e) => set("flash_attn", e.target.checked)} />
+                <span>flash_attn</span>
+              </label>
+            </div>
 
-          {/* Test */}
-          <div className="card">
-            <h3>TEST LOAD</h3>
-            <div className="dim" style={{ fontSize: 11, marginBottom: 8 }}>
-              launches the loadout on a test port (live service paused), watching for
-              OOM / crash / serve.
-            </div>
-            <div className="row" style={{ gap: 10 }}>
-              <button className="action" onClick={runTest} disabled={testing}>
-                {testing ? "TESTING…" : "TEST LOAD"}
-              </button>
-              {testing && (
-                <button className="ghost" onClick={() => api.testStop()}>
-                  STOP
-                </button>
-              )}
-            </div>
-            <div className="dim" style={{ fontSize: 11, margin: "8px 0 4px" }}>
-              phase: {phase || "idle"}
-            </div>
-            <div className="term" ref={testRef} style={{ maxHeight: 200 }}>
-              {log.length === 0 ? (
-                <span className="dim">test output streams here…</span>
+            {/* ENGINE SPECIFIC */}
+            <div className="tty-block" data-label={isFt ? "FREETOKEN" : "SPEC / REASON"}>
+              {isFt ? (
+                <>
+                  <div className="tty-field">
+                    <div className="tty-label">moe backend</div>
+                    <select className="tty-input" value={p.ft_backend || ""} onChange={(e) => set("ft_backend", e.target.value || null)}>
+                      <option value="">(default)</option>
+                      <option value="offload">offload</option>
+                      <option value="flashinfer">flashinfer</option>
+                    </select>
+                  </div>
+                  <div className="tty-field">
+                    <div className="tty-label">moe_cache_size</div>
+                    <input className="tty-input" type="number" value={p.ft_moe_cache_size ?? ""} placeholder="3000" onChange={(e) => set("ft_moe_cache_size", num(e.target.value) as never)} />
+                  </div>
+                  <div className="tty-hint">offload spills expert weights to RAM; VRAM keeps KV+buffers.</div>
+                </>
               ) : (
-                log.map((l, i) => <div key={i}>{l}</div>)
+                <>
+                  <div className="tty-field">
+                    <div className="tty-label">spec_type</div>
+                    <input className="tty-input" value={p.spec_type || ""} placeholder="mtp" onChange={(e) => set("spec_type", e.target.value || null)} />
+                  </div>
+                  <div className="tty-field">
+                    <div className="tty-label">draft_model</div>
+                    <input className="tty-input" value={p.draft_model || ""} placeholder="path or HF id" onChange={(e) => set("draft_model", e.target.value || null)} />
+                  </div>
+                  {advanced && (
+                    <>
+                      <div className="tty-field">
+                        <div className="tty-label">reasoning</div>
+                        <input className="tty-input" value={p.reasoning || ""} onChange={(e) => set("reasoning", e.target.value || null)} />
+                      </div>
+                      <div className="row" style={{gap:8}}>
+                        <div className="tty-field" style={{flex:1}}>
+                          <div className="tty-label">reason_format</div>
+                          <input className="tty-input" value={p.reasoning_format || ""} onChange={(e) => set("reasoning_format", e.target.value || null)} />
+                        </div>
+                        <div className="tty-field" style={{flex:1}}>
+                          <div className="tty-label">reason_effort</div>
+                          <input className="tty-input" value={p.reasoning_effort || ""} onChange={(e) => set("reasoning_effort", e.target.value || null)} />
+                        </div>
+                      </div>
+                      <div className="tty-field">
+                        <div className="tty-label">reasoning_budget</div>
+                        <input className="tty-input" type="number" value={p.reasoning_budget ?? ""} onChange={(e) => set("reasoning_budget", num(e.target.value) as never)} />
+                      </div>
+                    </>
+                  )}
+                </>
               )}
             </div>
-            {result && (
-              <div
-                className={`badge ${verdictClass(result.verdict)}`}
-                style={{ marginTop: 8 }}
-              >
-                {result.verdict} — {result.summary}
+
+            {/* SAMPLING */}
+            {advanced ? (
+              <div className="tty-block" data-label="SAMPLING / RESOURCES">
+                <div className="row" style={{gap:8}}>
+                  <div className="tty-field" style={{flex:1}}>
+                    <div className="tty-label">temperature</div>
+                    <input className="tty-input" type="number" step="0.05" value={p.temperature} onChange={(e) => set("temperature", Number(e.target.value))} />
+                  </div>
+                  <div className="tty-field" style={{flex:1}}>
+                    <div className="tty-label">top_p</div>
+                    <input className="tty-input" type="number" step="0.05" value={p.top_p} onChange={(e) => set("top_p", Number(e.target.value))} />
+                  </div>
+                </div>
+                <div className="row" style={{gap:8}}>
+                  <div className="tty-field" style={{flex:1}}>
+                    <div className="tty-label">top_k</div>
+                    <input className="tty-input" type="number" value={p.top_k} onChange={(e) => set("top_k", Number(e.target.value))} />
+                  </div>
+                  <div className="tty-field" style={{flex:1}}>
+                    <div className="tty-label">parallel</div>
+                    <input className="tty-input" type="number" value={p.parallel} onChange={(e) => set("parallel", Number(e.target.value))} />
+                  </div>
+                </div>
+                <div className="tty-field">
+                  <div className="tty-label">mem_max <span className="tty-dim">MiB · cgroup MemoryMax</span></div>
+                  <input className="tty-input" type="number" value={p.mem_max_mb ?? ""} placeholder="—" onChange={(e) => set("mem_max_mb", num(e.target.value) as never)} />
+                </div>
+                <div className="tty-field">
+                  <div className="tty-label">mem_swap_max <span className="tty-dim">MiB</span></div>
+                  <input className="tty-input" type="number" value={p.mem_swap_max_mb ?? ""} placeholder="—" onChange={(e) => set("mem_swap_max_mb", num(e.target.value) as never)} />
+                </div>
+                <div className="tty-field">
+                  <div className="tty-label">ubatch_size</div>
+                  <input className="tty-input" type="number" value={p.ubatch_size} onChange={(e) => set("ubatch_size", Number(e.target.value))} />
+                </div>
+              </div>
+            ) : (
+              <div className="tty-block" data-label="SAMPLING">
+                <div className="tty-dim" style={{fontSize:10, marginBottom:8}}>hidden — toggle ADVANCED for temp/top_p/top_k/parallel + cgroup limits</div>
+                <div className="row" style={{gap:8}}>
+                  <div className="tty-field" style={{flex:1}}>
+                    <div className="tty-label">temperature</div>
+                    <input className="tty-input" type="number" step="0.05" value={p.temperature} onChange={(e) => set("temperature", Number(e.target.value))} />
+                  </div>
+                  <div className="tty-field" style={{flex:1}}>
+                    <div className="tty-label">top_p</div>
+                    <input className="tty-input" type="number" step="0.05" value={p.top_p} onChange={(e) => set("top_p", Number(e.target.value))} />
+                  </div>
+                </div>
               </div>
             )}
+
+            {/* LIVE FIT */}
+            <div className="tty-block" data-label="LIVE FIT">
+              <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:6}}>
+                <span className="tty-dim" style={{fontSize:10}}>estimate</span>
+                {fit && <span className={`badge ${verdictClass(fit.verdict)}`} style={{fontSize:10}}>{fit.verdict}</span>}
+                {fit && <span className="mono" style={{fontSize:10, color:"var(--muted)"}}>{fit.model_vram_mb.toLocaleString()} MiB VRAM</span>}
+              </div>
+              {fitErr && <div className="tty-warn" style={{fontSize:11}}>{fitErr}</div>}
+              {!fit && !fitErr && <div className="tty-dim" style={{fontSize:11}}><span className="tty-prompt">$</span> deck fit --model "{p.model || "…"}" … waiting for model</div>}
+              {fit && (
+                <div className="tty-fit mono" style={{fontSize:11, lineHeight:1.6}}>
+                  <div>weights (VRAM) <span style={{float:"right", color:"var(--text)"}}>{fit.weights_mb} MiB</span></div>
+                  {fit.weights_ram_mb > 0 && <div>weights (RAM) <span style={{float:"right"}}>{fit.weights_ram_mb} MiB</span></div>}
+                  <div>kv_cache <span style={{float:"right"}}>{fit.kv_mb} MiB</span></div>
+                  <div>buffers <span style={{float:"right"}}>{fit.buffers_mb} MiB</span></div>
+                  <div style={{borderTop:"1px solid #1e1e2e", margin:"6px 0 4px", paddingTop:4}}>model VRAM <span style={{float:"right", color:"var(--magenta)"}}>{fit.model_vram_mb} MiB</span></div>
+                  <div>desktop reserve <span style={{float:"right"}}>{fit.overhead_mb} MiB</span></div>
+                  <div>available <span style={{float:"right", color: fit.verdict==="PASS"? "var(--pass)" : fit.verdict==="WARN"?"var(--warn)":"var(--oom)"}}>{fit.available_for_model_mb} MiB</span></div>
+                </div>
+              )}
+            </div>
+
+            {/* TEST */}
+            <div className="tty-block" data-label="TEST LOAD">
+              <div className="tty-dim" style={{fontSize:10, marginBottom:6}}>launches on test port — live service paused, watches for OOM/crash</div>
+              <div className="row" style={{gap:8, marginBottom:8}}>
+                <button className="action" onClick={runTest} disabled={testing} style={{fontSize:11}}>
+                  {testing ? "● TESTING…" : "▸ TEST LOAD"}
+                </button>
+                {testing && <button className="ghost" onClick={() => api.testStop()}>STOP</button>}
+                <span className="mono" style={{fontSize:10, color: phase==="idle"||!phase? "var(--dim2)" : "var(--cyan)"}}>phase: {phase || "idle"}</span>
+              </div>
+              <div className="tty-log" ref={testRef}>
+                {log.length === 0 ? <span className="tty-dim">$ waiting for test output…</span> : log.map((l, i) => <div key={i}>{l}</div>)}
+              </div>
+              {result && (
+                <div style={{marginTop:8, display:"flex", gap:8, alignItems:"center"}}>
+                  <span className={`badge ${verdictClass(result.verdict)}`}>{result.verdict}</span>
+                  <span className="dim" style={{fontSize:11}}>{result.summary}</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {unit && (
+            <div style={{marginTop:12}}>
+              <div style={{fontSize:10, letterSpacing:"1.5px", color:"var(--muted)", marginBottom:6}}>┌─ RENDERED UNIT ──────────────────────────────────────┐</div>
+              <pre className="unit" style={{marginTop:0}}>{unit}</pre>
+            </div>
+          )}
+
+          <div className="row" style={{gap:8, marginTop:14, borderTop:"1px solid #1a1a2e", paddingTop:12}}>
+            <span className="tty-prompt" style={{fontSize:12}}>deck@local:~$</span>
+            <button className="action" onClick={save}>SAVE</button>
+            <button className="ghost" onClick={onClose}>CLOSE</button>
+            <span className="mono" style={{fontSize:11, color: msg.includes("failed")||msg.includes("required") ? "var(--oom)" : "var(--pass)"}}>{msg && `› ${msg}`}</span>
           </div>
         </div>
-
-        {/* Unit preview */}
-        {unit && (
-          <div style={{ marginTop: 14 }}>
-            <div className="view-title">RENDERED UNIT</div>
-            <pre className="unit">{unit}</pre>
-          </div>
-        )}
-
-        <div className="row" style={{ gap: 10, marginTop: 16 }}>
-          <button className="action" onClick={save}>
-            SAVE
-          </button>
-          <button className="ghost" onClick={onClose}>
-            CLOSE
-          </button>
-          {msg && <span className="dim" style={{ fontSize: 11 }}>{msg}</span>}
-        </div>
       </div>
-    </div>
-  );
-}
-
-function Field({
-  label,
-  half,
-  children,
-}: {
-  label: string;
-  half?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <div
-      className="field-wrap"
-      style={half ? { flex: 1, minWidth: 120 } : { width: "100%" }}
-    >
-      <div className="field" style={{ marginBottom: 4 }}>
-        {label}
-      </div>
-      {children}
     </div>
   );
 }

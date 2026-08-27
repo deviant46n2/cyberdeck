@@ -6,12 +6,15 @@ import Loadouts from "./views/Loadouts";
 import Signals from "./views/Signals";
 import Market from "./views/Market";
 import Console from "./views/Console";
+import Browse from "./views/Browse";
+import Downloads from "./views/Downloads";
+import Bringup from "./views/Bringup";
+import Dedup from "./views/Dedup";
 
-const VIEWS = ["HUD", "VAULT", "SIGNALS", "MARKET", "LOADOUTS", "CONSOLE"];
+const VIEWS = ["HUD", "VAULT", "DEDUP", "SIGNALS", "MARKET", "BROWSE", "LOADOUTS", "CONSOLE"];
 
 export default function App() {
   const [view, setView] = useState("HUD");
-  const [scanlines, setScanlines] = useState(true);
   const [booted, setBooted] = useState(false);
   const [models, setModels] = useState<api.ModelRow[]>([]);
   const [dups, setDups] = useState<api.DupRow[]>([]);
@@ -19,10 +22,21 @@ export default function App() {
   const [unit, setUnit] = useState<string>("");
 
   const refresh = async () => {
-    const r = await api.scan();
+    const r = await api.scanWithEvent();
     setModels(r.models);
     setDups(r.dups);
     setProfiles(await api.listProfiles());
+  };
+
+  const reload = async () => {
+    setModels(await api.listModels());
+    setDups(await api.dedup());
+    setProfiles(await api.listProfiles());
+  };
+
+  const refreshDedup = async () => {
+    const dups = await api.dedup();
+    setDups(dups);
   };
 
   useEffect(() => {
@@ -36,7 +50,7 @@ export default function App() {
     <div className="app">
       <aside className="sidebar">
         <div className="brand">CYBERDECK</div>
-        <div className="brand-sub">LOCAL LLM FLEET</div>
+        <div className="brand-sub">LOCAL LLM FLEET // deck v0.1</div>
         <nav className="nav">
           {VIEWS.map((v) => (
             <button
@@ -48,15 +62,15 @@ export default function App() {
             </button>
           ))}
         </nav>
+        <div className="nav-prompt">
+          <div><span className="mono" style={{color:"var(--pass)"}}>deck@local</span>:<span style={{color:"var(--cyan)"}}>~</span>$ ls ~/agents</div>
+          <div className="dim" style={{fontSize:10, marginTop:4}}>{profiles.length} loadout{profiles.length!==1?"s":""} · {models.length} model{models.length!==1?"s":""}</div>
+          <div style={{marginTop:8, display:"flex", gap:6, flexWrap:"wrap"}}>
+            <span className="mono" style={{fontSize:9, color:"var(--dim2)"}}>[{new Date().toLocaleTimeString([],{hour12:false})}]</span>
+            <span className="mono" style={{fontSize:9, color: models.length?"var(--pass)":"var(--warn)"}}>{models.length?"● indexed":"○ no models"}</span>
+          </div>
+        </div>
         <div className="spacer" />
-        <label className="toggle">
-          <input
-            type="checkbox"
-            checked={scanlines}
-            onChange={(e) => setScanlines(e.target.checked)}
-          />{" "}
-          SCANLINES
-        </label>
       </aside>
 
       <main className="main">
@@ -69,16 +83,20 @@ export default function App() {
             onChanged={refresh}
           />
         )}
-        {view === "VAULT" && <Vault models={models} dups={dups} />}
+        {view === "VAULT" && <Vault models={models} dups={dups} onRefresh={refresh} onReload={reload} />}
+        {view === "DEDUP" && <Dedup dups={dups} onRefresh={refreshDedup} />}
         {view === "SIGNALS" && <Signals />}
         {view === "MARKET" && <Market />}
+        {view === "BROWSE" && <Browse />}
         {view === "LOADOUTS" && (
           <Loadouts profiles={profiles} onUnit={setUnit} onChanged={refresh} />
         )}
         {view === "CONSOLE" && <Console unit={unit} />}
       </main>
 
-      {scanlines && <div className="scanlines" />}
+      <Downloads onChanged={refresh} />
+      <Bringup />
+
       <div
         className={"boot" + (booted ? " fade-out" : "")}
         style={{ pointerEvents: booted ? "none" : "auto" }}

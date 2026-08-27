@@ -13,7 +13,10 @@ fn main() -> ExitCode {
     match deck_core::gguf::GgufMeta::read(&path) {
         Ok(meta) => {
             println!("file      : {path}");
-            println!("size      : {:.2} GiB", meta.file_size as f64 / 1073741824.0);
+            println!(
+                "size      : {:.2} GiB",
+                meta.file_size as f64 / 1073741824.0
+            );
             println!("gguf ver  : {}", meta.version);
             println!("tensors   : {}", meta.tensor_count);
             println!("arch      : {:?}", meta.arch().unwrap_or("?"));

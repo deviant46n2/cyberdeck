@@ -126,20 +126,23 @@ pub fn estimate(model: &ModelMeta, req: &FitRequest, available_mb: u64) -> FitBr
 
 /// Total VRAM of the primary GPU, or `fallback_mb` if nvml/query fails.
 pub fn available_vram_mb(fallback_mb: u64) -> u64 {
+    hw_vram().unwrap_or(fallback_mb)
+}
+
+/// Detect total VRAM of the primary GPU via nvidia-smi. Returns `None` if
+/// detection fails (no NVIDIA driver, non-NVIDIA GPU, etc).
+pub fn hw_vram() -> Option<u64> {
     let out = std::process::Command::new("nvidia-smi")
-        .args([
-            "--query-gpu=memory.total",
-            "--format=csv,noheader,nounits",
-        ])
+        .args(["--query-gpu=memory.total", "--format=csv,noheader,nounits"])
         .output();
     if let Ok(o) = out {
         if let Ok(s) = String::from_utf8(o.stdout) {
             if let Some(line) = s.lines().next() {
                 if let Ok(v) = line.trim().parse::<u64>() {
-                    return v;
+                    return Some(v);
                 }
             }
         }
     }
-    fallback_mb
+    None
 }

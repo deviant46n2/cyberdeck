@@ -200,7 +200,10 @@ pub fn parse_freetoken_script_text(text: &str, name: &str) -> Profile {
 
     let body = text.split("ft serve").nth(1).unwrap_or(&text);
     if let Some(model) = body.split("--model").nth(1) {
-        p.model = resolve(&vars, &unquote(model.split_whitespace().next().unwrap_or("")));
+        p.model = resolve(
+            &vars,
+            &unquote(model.split_whitespace().next().unwrap_or("")),
+        );
     }
     if let Some(bin) = text.split("exec").nth(1).and_then(|s| s.split('"').nth(1)) {
         p.bin = std::path::PathBuf::from(resolve(&vars, bin));

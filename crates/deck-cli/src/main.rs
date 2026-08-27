@@ -64,6 +64,26 @@ enum Commands {
         #[command(subcommand)]
         action: BenchCmd,
     },
+    /// PLUG IN a model + engine and let cyberdeck derive the best-max-ctx
+    /// loadout, verify it headlessly on a test port (never touching the live
+    /// service), then install + start + bench it.
+    Bringup {
+        /// Path to a local GGUF model file
+        #[arg(long)]
+        model: PathBuf,
+        /// engine to load it through (llamacpp|freetoken)
+        #[arg(long, default_value = "llamacpp")]
+        engine: String,
+        /// SKIP the test-port verification and apply directly (faster, riskier)
+        #[arg(long, default_value_t = false)]
+        fast: bool,
+        /// DERIVE + print the loadout only; do NOT verify, install, or start
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+        /// Name to save the derived loadout under (default: from model name)
+        #[arg(long)]
+        name: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -130,23 +150,56 @@ fn main() -> Result<()> {
     match cli.command {
         Commands::Scan => cmd_scan(),
         Commands::List { json } => cmd_list(json),
-        Commands::Fit { model, ctx, kv_bytes, ngl, kv_layers, reserve, offload } => {
-            cmd_fit(model, ctx, kv_bytes, ngl, kv_layers, reserve, offload)
-        }
+        Commands::Fit {
+            model,
+            ctx,
+            kv_bytes,
+            ngl,
+            kv_layers,
+            reserve,
+            offload,
+        } => cmd_fit(model, ctx, kv_bytes, ngl, kv_layers, reserve, offload),
         Commands::Profile { action } => match action {
-            ProfileCmd::New { name, model, engine, bin, alias, port, ctx, ngl, draft } => {
-                cmd_profile_new(name, model, engine, bin, alias, port, ctx, ngl, draft)
-            }
-            ProfileCmd::Import { engine, script, name } => cmd_profile_import(engine, script, name),
+            ProfileCmd::New {
+                name,
+                model,
+                engine,
+                bin,
+                alias,
+                port,
+                ctx,
+                ngl,
+                draft,
+            } => cmd_profile_new(name, model, engine, bin, alias, port, ctx, ngl, draft),
+            ProfileCmd::Import {
+                engine,
+                script,
+                name,
+            } => cmd_profile_import(engine, script, name),
             ProfileCmd::List { json } => cmd_profile_list(json),
         },
-        Commands::Use { name, dry_run, managed } => cmd_use(name, dry_run, managed),
+        Commands::Use {
+            name,
+            dry_run,
+            managed,
+        } => cmd_use(name, dry_run, managed),
         Commands::Bench { action } => match action {
-            BenchCmd::Record { engine, host, port, model, ctx } => {
-                cmd_bench_record(engine, host, port, model, ctx)
-            }
+            BenchCmd::Record {
+                engine,
+                host,
+                port,
+                model,
+                ctx,
+            } => cmd_bench_record(engine, host, port, model, ctx),
             BenchCmd::List => cmd_bench_list(),
         },
+        Commands::Bringup {
+            model,
+            engine,
+            fast,
+            name,
+            dry_run,
+        } => cmd_bringup(model, engine, fast, name, dry_run),
     }
 }
 
@@ -192,7 +245,10 @@ fn cmd_profile_new(
     }
     let (_db, mut conn) = with_profiles_db()?;
     deck_core::store::upsert_profile(&mut conn, &p)?;
-    println!("saved loadout '{name}' ({engine}, alias={}, port={})", p.alias, p.port);
+    println!(
+        "saved loadout '{name}' ({engine}, alias={}, port={})",
+        p.alias, p.port
+    );
     Ok(())
 }
 
@@ -229,7 +285,11 @@ fn cmd_profile_list(json: bool) -> Result<()> {
         println!("no loadouts saved. use `deck profile import` or `deck profile new`.");
     } else {
         for p in &profiles {
-            let mark = if active.as_deref() == Some(&p.name) { "*" } else { " " };
+            let mark = if active.as_deref() == Some(&p.name) {
+                "*"
+            } else {
+                " "
+            };
             println!(
                 "{mark} {:<14} {:<10} alias={:<12} port={:<6} ctx={}",
                 p.name,
@@ -272,8 +332,11 @@ fn cmd_bench_record(
     model: String,
     ctx: u32,
 ) -> Result<()> {
-    let text = deck_engines::fetch_metrics(&host, port)
-        .map_err(|e| anyhow::anyhow!("could not reach {host}:{port}/metrics — is the engine running with --metrics? ({e})"))?;
+    let text = deck_engines::fetch_metrics(&host, port).map_err(|e| {
+        anyhow::anyhow!(
+            "could not reach {host}:{port}/metrics — is the engine running with --metrics? ({e})"
+        )
+    })?;
     let tps = deck_engines::parse_tps(&text)
         .ok_or_else(|| anyhow::anyhow!("no tokens/sec gauge exposed by {host}:{port}"))?;
     let at = std::time::SystemTime::now()
@@ -321,6 +384,122 @@ fn cmd_bench_list() -> Result<()> {
     Ok(())
 }
 
+fn cmd_bringup(
+    model: PathBuf,
+    engine: String,
+    fast: bool,
+    name: Option<String>,
+    dry_run: bool,
+) -> Result<()> {
+    let eng = parse_engine(&engine)?;
+    println!(
+        "[bringup] deriving loadout for {:?} via {eng:?}…",
+        model.file_name().unwrap_or_default()
+    );
+    let derived = deck_core::profile::derive_loadout(&model, eng).map_err(anyhow::Error::msg)?;
+    let mut p = derived.profile;
+
+    if let Some(n) = &name {
+        p.name = n.clone();
+    } else {
+        p.name = p.alias.clone();
+    }
+
+    println!(
+        "[bringup] derived: ctx={} (max {}) kv={}MiB weights(gpu={}MiB ram={}MiB) verdict={} port={}",
+        p.ctx_size,
+        derived.max_ctx,
+        derived.kv_mb,
+        derived.weights_gpu_mb,
+        derived.weights_ram_mb,
+        derived.verdict,
+        p.port,
+    );
+
+    if dry_run {
+        println!(
+            "[bringup] --dry-run: would save loadout '{}' (engine={:?} port={}) and apply it. nothing changed.",
+            p.name, p.engine, p.port
+        );
+        return Ok(());
+    }
+
+    // Option 1 (default): verify headlessly on a test port WITHOUT touching the
+    // live service, walking the ctx ladder if the max OOMs. Only then install.
+    if !fast {
+        let test_port = eng.test_port();
+        println!(
+            "[bringup] verifying on test port :{test_port} (live :{} untouched)…",
+            p.port
+        );
+        let outcome =
+            deck_engines::verify_on_test_port(&p, test_port, std::time::Duration::from_secs(120));
+        if outcome.verdict != "RUNNING" {
+            anyhow::bail!(
+                "[bringup] verification FAILED on the test port: {} ({}) — nothing was changed on the live service; use --fast to force",
+                outcome.summary,
+                outcome.verdict,
+            );
+        }
+        if outcome.ctx != p.ctx_size {
+            println!(
+                "[bringup] max ctx {} OOM'd; settled on ctx={}",
+                p.ctx_size, outcome.ctx
+            );
+            p.ctx_size = outcome.ctx;
+        }
+        println!(
+            "[bringup] verify OK: ctx={} serving{}",
+            outcome.ctx,
+            outcome
+                .tok_per_sec
+                .map(|t| format!(", {t:.1} tok/s"))
+                .unwrap_or_default(),
+        );
+    } else {
+        println!("[bringup] --fast: skipping test-port verification");
+    }
+
+    // Save the derived loadout, then apply (install + start + health-wait).
+    let (_db, mut conn) = with_profiles_db()?;
+    deck_core::store::upsert_profile(&mut conn, &p)?;
+    println!(
+        "[bringup] saved loadout '{}' (engine={:?} port={})",
+        p.name, p.engine, p.port
+    );
+
+    deck_engines::apply(&p, false)?;
+    println!("[bringup] applied '{}' on :{} — live.", p.name, p.port);
+
+    // Bench and record the result so the chat header has a fresh tok/s.
+    let text = deck_engines::fetch_metrics(&p.host, p.port)?;
+    if let Some(tps) = deck_engines::parse_tps(&text) {
+        let at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let db = deck_core::store::default_db_path();
+        let conn = deck_core::store::open(&db)?;
+        deck_core::store::ensure_bench_schema(&conn)?;
+        let row = deck_core::store::BenchRow {
+            id: 0,
+            engine: format!("{:?}", p.engine).to_lowercase(),
+            host: p.host.clone(),
+            port: p.port,
+            model: p.model.clone(),
+            ctx: p.ctx_size,
+            tps,
+            at,
+        };
+        let id = deck_core::store::insert_bench(&conn, &row)?;
+        println!("[bringup] bench recorded #{id}: {tps:.1} tok/s");
+    } else {
+        println!("[bringup] note: no /metrics tok/s gauge exposed (is --metrics on?)");
+    }
+
+    Ok(())
+}
+
 fn chrono_like(at: i64) -> String {
     if at <= 0 {
         return "—".into();
@@ -335,15 +514,58 @@ fn chrono_like(at: i64) -> String {
 
 fn cmd_scan() -> Result<()> {
     let roots = deck_core::scanner::default_roots();
-    let models = deck_core::scanner::scan(&roots)?;
+    let mut models = deck_core::scanner::scan(&roots)?;
+
+    // Also index ollama models.
+    if let Ok(ollama) = deck_feeds::ollama_models() {
+        for o in &ollama {
+            let existing: std::collections::HashSet<String> = models
+                .iter()
+                .map(|m| std::fs::canonicalize(&m.path).ok()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| m.path.display().to_string()))
+                .collect();
+            let canonical = std::fs::canonicalize(&o.path)
+                .ok()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| o.path.clone());
+            if !existing.contains(&canonical) {
+                let meta = if let Ok(gguf_meta) = deck_core::gguf::GgufMeta::read(&o.path) {
+                    gguf_meta.to_meta(&std::path::PathBuf::from(&o.path))
+                } else {
+                    deck_core::model::ModelMeta {
+                        path: std::path::PathBuf::from(o.path.clone()),
+                        format: deck_core::model::ModelFormat::Gguf,
+                        name: o.name.clone(),
+                        arch: None,
+                        quant: None,
+                        params: None,
+                        n_layers: None,
+                        n_embd: None,
+                        ctx_train: None,
+                        vocab: None,
+                        weight_size: o.size,
+                        footprint: o.size,
+                    }
+                };
+                models.push(meta);
+            }
+        }
+    }
 
     let db = deck_core::store::default_db_path();
     let mut conn = deck_core::store::open(&db)?;
     let n = deck_core::store::upsert_many(&mut conn, &models)?;
-    let keep: Vec<String> = models.iter().map(|m| m.path.display().to_string()).collect();
+    let keep: Vec<String> = models
+        .iter()
+        .map(|m| m.path.display().to_string())
+        .collect();
     let pruned = deck_core::store::prune(&conn, &keep)?;
 
-    println!("indexed {n} model(s), pruned {pruned} stale -> {}", db.display());
+    println!(
+        "indexed {n} model(s), pruned {pruned} stale -> {}",
+        db.display()
+    );
     for m in &models {
         println!(
             "  {:<10} {:<18} {:<8} {:.2} GiB  {}",

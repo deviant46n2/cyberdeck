@@ -151,10 +151,46 @@ export interface MarketFileRow {
 
 export const marketSearch = (query: string, limit: number) =>
   invoke<MarketHit[]>("market_search", { query, limit });
+export const browseOrg = (org: string, limit: number) =>
+  invoke<MarketHit[]>("browse_org", { org, limit });
 export const marketFiles = (repoId: string) =>
   invoke<MarketFileRow[]>("market_files", { repoId });
-export const marketDownload = (repoId: string, rfilename: string) =>
-  invoke<string>("market_download", { repoId, rfilename });
+
+// --- background downloads (progress via dl-* events, see lib/dl.ts) ---
+
+export const downloadStart = (repoId: string, rfilename: string) =>
+  invoke<{ key: string }>("download_start", { repoId, rfilename });
+export const downloadCancel = (key: string) =>
+  invoke<void>("download_cancel", { key });
+
+// --- bring-up (one-click load pipeline) ---
+
+export interface BringupResult {
+  ok: boolean;
+  summary: string;
+  name: string;
+  port: number;
+  ctx: number;
+  tps: number | null;
+  fit: FitBreakdown | null;
+}
+
+export interface FitBreakdown {
+  weights_mb: number;
+  weights_gpu_mb: number;
+  weights_ram_mb: number;
+  kv_mb: number;
+  buffers_mb: number;
+  model_vram_mb: number;
+  overhead_mb: number;
+  available_mb: number;
+  available_for_model_mb: number;
+  headroom_mb: number;
+  verdict: string;
+}
+
+export const bringupStart = (model: string, engine: string, fast = false) =>
+  invoke<void>("bringup_start", { model, engine, fast });
 
 export const benchNow = (p: {
   engine: string;
@@ -190,3 +226,69 @@ export const TEST_PORTS: Record<Profile["engine"], number> = {
 export const testLoadout = (p: Profile, testPort: number) =>
   invoke<void>("test_loadout", { profile: p, testPort });
 export const testStop = () => invoke<void>("test_stop");
+
+// --- browse / remote fit ---
+
+export interface HwInfo {
+  vram_mb: number | null;
+  detected: boolean;
+}
+
+export interface BrowseFitResult {
+  arch: string | null;
+  quant: string | null;
+  params: number | null;
+  n_layers: number | null;
+  n_embd: number | null;
+  truncated: boolean;
+  weights_mb: number;
+  kv_mb: number;
+  buffers_mb: number;
+  model_vram_mb: number;
+  weights_ram_mb: number;
+  overhead_mb: number;
+  available_for_model_mb: number;
+  verdict: string;
+}
+
+export const hwInfo = () => invoke<HwInfo>("hw_info");
+export const browseFitRemote = (p: {
+  repoId: string;
+  rfilename: string;
+  ctx: number;
+  kvBytes: number;
+  nGpuLayers: number;
+  kvLayers: number | null;
+  reserve: number;
+  offload: boolean;
+}) => invoke<BrowseFitResult>("browse_fit_remote", p);
+
+export const scanWithEvent = () =>
+  invoke<ScanResult>("scan_with_event");
+
+export const deleteModel = (path: string, deleteFile: boolean) =>
+  invoke<number>("delete_model", { path, deleteFile });
+
+export const dedupDelete = (identity: string, deleteFile: boolean) =>
+  invoke<number>("dedup_delete", { identity, deleteFile });
+
+export interface DupRow {
+  identity: string;
+  wasted_gib: number;
+  members: string[];
+}
+
+export const tweakProfile = (p: {
+  profile: Profile;
+  ctxOverride?: number;
+  kvBytesOverride?: number;
+  offloadOverride?: boolean;
+  nglOverride?: number;
+}) => invoke<TweakResult>("tweak_profile", p);
+
+export interface TweakResult {
+  ok: boolean;
+  summary: string;
+  ctx: number;
+  tps: number | null;
+}

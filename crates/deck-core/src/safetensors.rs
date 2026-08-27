@@ -49,24 +49,31 @@ impl SafetensorsModel {
             .and_then(|a| a.first())
             .and_then(|v| v.as_str())
             .map(str::to_string)
-            .or_else(|| self.config.get("model_type").and_then(|v| v.as_str()).map(str::to_string))
+            .or_else(|| {
+                self.config
+                    .get("model_type")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+            })
     }
 
     fn n_layers(&self) -> Option<u64> {
         int(&self.config, "num_hidden_layers")
+            .or_else(|| int_nested_text(&self.config, "num_hidden_layers"))
     }
 
     fn n_embd(&self) -> Option<u64> {
-        int(&self.config, "hidden_size").or_else(|| int(&self.config, "hidden_size"))
+        int(&self.config, "hidden_size").or_else(|| int_nested_text(&self.config, "hidden_size"))
     }
 
     fn ctx_train(&self) -> Option<u64> {
         int(&self.config, "max_position_embeddings")
+            .or_else(|| int_nested_text(&self.config, "max_position_embeddings"))
             .or_else(|| int(&self.config, "max_sequence_length"))
     }
 
     fn vocab(&self) -> Option<u64> {
-        int(&self.config, "vocab_size")
+        int(&self.config, "vocab_size").or_else(|| int_nested_text(&self.config, "vocab_size"))
     }
 
     fn quant(&self) -> Option<String> {
@@ -85,7 +92,11 @@ impl SafetensorsModel {
                     return Some(q.to_string());
                 }
             }
-            if let Some(p) = qc.get("producer").and_then(|p| p.get("name")).and_then(|v| v.as_str()) {
+            if let Some(p) = qc
+                .get("producer")
+                .and_then(|p| p.get("name"))
+                .and_then(|v| v.as_str())
+            {
                 return Some(p.to_string());
             }
         }
@@ -98,7 +109,11 @@ impl SafetensorsModel {
 
     fn weight_size(&self) -> u64 {
         if let Some(idx) = &self.index {
-            if let Some(total) = idx.get("metadata").and_then(|m| m.get("total_size")).and_then(|v| v.as_u64()) {
+            if let Some(total) = idx
+                .get("metadata")
+                .and_then(|m| m.get("total_size"))
+                .and_then(|v| v.as_u64())
+            {
                 return total;
             }
         }
@@ -134,13 +149,7 @@ impl SafetensorsModel {
     pub fn into_meta(self) -> ModelMeta {
         let arch = self.architecture();
         let weight_size = self.weight_size();
-        let name = self
-            .config
-            .get("model_type")
-            .and_then(|v| v.as_str())
-            .map(str::to_string)
-            .or_else(|| arch.clone())
-            .unwrap_or_else(|| "unknown".into());
+        let name = self.pretty_name();
 
         ModelMeta {
             path: self.dir.clone(),
@@ -157,6 +166,39 @@ impl SafetensorsModel {
             footprint: self.footprint(),
         }
     }
+
+    /// Prefer a human-facing name over a raw `model_type` token. Sources, in
+    /// order: `_name_or_path` basename, the directory's last component (for
+    /// e.g. `Qwen3.6-35B-A3B-NVFP4`), then `model_type`/arch as a last resort.
+    fn pretty_name(&self) -> String {
+        let mt = || {
+            self.config
+                .get("model_type")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        };
+        if let Some(n) = self
+            .config
+            .get("_name_or_path")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+        {
+            if let Some(base) = n.rsplit('/').next() {
+                let base = base.trim().to_string();
+                if !base.is_empty() && base.chars().any(|c| c.is_ascii_alphabetic()) {
+                    return base;
+                }
+            }
+        }
+        if let Some(dir) = self.dir.file_name().and_then(|s| s.to_str()) {
+            let dir = dir.trim().to_string();
+            if !dir.is_empty() && dir.chars().any(|c| c.is_ascii_alphabetic()) {
+                return dir;
+            }
+        }
+        mt().or_else(|| self.architecture())
+            .unwrap_or_else(|| "unknown".into())
+    }
 }
 
 pub fn open_dir(dir: impl AsRef<Path>) -> Result<ModelMeta> {
@@ -169,8 +211,9 @@ pub fn is_model_dir(dir: impl AsRef<Path>) -> bool {
         && (dir.join("model.safetensors.index.json").exists()
             || std::fs::read_dir(dir)
                 .map(|e| {
-                    e.flatten()
-                        .any(|x| x.path().extension().and_then(|s| s.to_str()) == Some("safetensors"))
+                    e.flatten().any(|x| {
+                        x.path().extension().and_then(|s| s.to_str()) == Some("safetensors")
+                    })
                 })
                 .unwrap_or(false))
 }
@@ -228,17 +271,31 @@ mod tests {
             return;
         }
         let meta = open_dir(&path).unwrap();
-        assert!(meta.quant.map(|q| q.contains("NVFP4")).unwrap_or(false), "should detect NVFP4");
-        assert!(meta.weight_size > 20_000_000_000, "should read ~22GB from index");
-        assert!(meta.footprint >= meta.weight_size, "footprint must include weights");
+        assert!(
+            meta.quant.map(|q| q.contains("NVFP4")).unwrap_or(false),
+            "should detect NVFP4"
+        );
+        assert!(
+            meta.weight_size > 20_000_000_000,
+            "should read ~22GB from index"
+        );
+        assert!(
+            meta.footprint >= meta.weight_size,
+            "footprint must include weights"
+        );
     }
 }
 
 fn int(value: &serde_json::Value, key: &str) -> Option<u64> {
-    value.get(key).and_then(|v| v.as_u64()).or_else(|| {
-        value
-            .get(key)
-            .and_then(|v| v.as_f64())
-            .map(|f| f as u64)
-    })
+    value
+        .get(key)
+        .and_then(|v| v.as_u64())
+        .or_else(|| value.get(key).and_then(|v| v.as_f64()).map(|f| f as u64))
+}
+
+/// Multimodal / MoE configs nest the text-LLM parameters under a `text_config`
+/// sub-object (e.g. `Qwen3_5MoeForConditionalGeneration`). Look there when the
+/// top-level key is absent so fit/KV arithmetic still has layers×embd.
+fn int_nested_text(value: &serde_json::Value, key: &str) -> Option<u64> {
+    value.get("text_config").and_then(|t| int(t, key))
 }

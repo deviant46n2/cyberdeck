@@ -19,7 +19,12 @@ pub struct RewireReport {
 /// Replace the port in the first `http://127.0.0.1:<port>/…` URL occurring at or
 /// after `block_anchor`, so the substitution is scoped to one provider block.
 /// Returns the rewritten text, or `None` if the anchor/URL wasn't found.
-fn set_port_in_block(text: &str, port: u16, block_anchor: &str, require_anchor: bool) -> Option<String> {
+fn set_port_in_block(
+    text: &str,
+    port: u16,
+    block_anchor: &str,
+    require_anchor: bool,
+) -> Option<String> {
     let search_from = if require_anchor {
         text.find(block_anchor)?
     } else {
@@ -61,7 +66,7 @@ fn rewire_file(client: &str, path: &std::path::Path, port: u16, anchor: &str) ->
                 client: client.into(),
                 path: path.display().to_string(),
                 status: format!("read error: {e}"),
-            }
+            };
         }
     };
     let rewritten = match set_port_in_block(&text, port, anchor, true) {

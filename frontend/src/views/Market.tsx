@@ -1,5 +1,6 @@
 import { Fragment, useState } from "react";
 import * as api from "../api";
+import * as dls from "../lib/dl";
 
 function gib(size: number | null): string {
   if (size == null) return "?";
@@ -40,13 +41,15 @@ export default function Market() {
     }
   };
 
-  const download = async (id: string, rfilename: string) => {
-    setMsg(`downloading ${rfilename} …`);
-    try {
-      const path = await api.marketDownload(id, rfilename);
-      setMsg(`saved → ${path}`);
-    } catch (e) {
-      setMsg(`download failed: ${String(e)}`);
+  /** Queue a download; auto-detects split-GGUF/safetensors shard sets. */
+  const startDl = (repoId: string, rfilename: string, allNames: string[]) => {
+    const parts = dls.shardSet(rfilename, allNames);
+    if (parts.length > 1) {
+      setMsg(`queued ${parts.length}-part set of ${rfilename} — watch DOWNLOADS`);
+      void dls.enqueueSequence(repoId, parts);
+    } else {
+      dls.enqueue(repoId, rfilename);
+      setMsg(`queued ${rfilename} — watch DOWNLOADS`);
     }
   };
 
@@ -129,7 +132,7 @@ export default function Market() {
                               </span>
                               <button
                                 className="ghost"
-                                onClick={() => download(h.id, f.rfilename)}
+                                onClick={() => startDl(h.id, f.rfilename, files.map((x) => x.rfilename))}
                               >
                                 DOWNLOAD
                               </button>
