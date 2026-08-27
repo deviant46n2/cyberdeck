@@ -36,10 +36,21 @@ Named for what it is: a personal machine for loading capability shards.
 ## Dev loop
 
 ```sh
-cargo build                 # workspace
-cargo test                  # parser + engine + importer tests
+cargo build                 # workspace (incl. Tauri app binary)
+cargo test                  # parser + engine + importer + command-API tests
 cargo run -p deck-cli -- --help
+
+# desktop app (Tauri 2 + React)
+cd frontend && npm install && npm run build   # bundle the UI
+npm run tauri dev            # vite dev server + Rust app (needs a display)
+# if npm blocked esbuild's postinstall: `npm rebuild esbuild`
 ```
+
+## Layout
+
+- `crates/deck-tauri` — serializable command API (the UI<->crate bridge, unit-tested)
+- `src-tauri` — the Tauri 2 binary; thin `#[tauri::command]` wrappers over deck-tauri
+- `frontend` — React + Vite UI (HUD / VAULT / SIGNALS / MARKET / LOADOUTS / CONSOLE)
 
 ## CLI
 

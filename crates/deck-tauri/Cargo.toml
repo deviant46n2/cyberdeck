@@ -1,0 +1,10 @@
+[package]
+name = "deck-tauri"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+deck-core = { workspace = true }
+deck-engines = { workspace = true }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }

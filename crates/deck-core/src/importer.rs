@@ -6,7 +6,7 @@
 //! (`MODEL=/path` ... `-m "$MODEL"`).
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Context, Result};
 
@@ -221,6 +221,7 @@ pub fn parse_freetoken_script_text(text: &str, name: &str) -> Profile {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     const SCRIPT: &str = r#"
 # header comment with --load-mode mmap+mlock should NOT confuse parsing
