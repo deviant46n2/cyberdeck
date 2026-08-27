@@ -19,14 +19,15 @@ export default function Console({ unit }: { unit: string }) {
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
 
-  // --- agent session state ---
+  // --- agent sessions (multiple concurrent) ---
   const [prompt, setPrompt] = useState("");
   const [dir, setDir] = useState("/home/deviant/Projects/cyberdeck");
   const [auto, setAuto] = useState(false);
   const [model, setModel] = useState("");
-  const [running, setRunning] = useState(false);
-  const [log, setLog] = useState<string[]>([]);
-  const logRef = useRef<HTMLDivElement>(null);
+  const [sessions, setSessions] = useState<
+    { id: string; prompt: string; log: string[]; running: boolean }[]
+  >([]);
+  const sessionsRef = useRef<HTMLDivElement>(null);
 
   const refresh = () => {
     api.benchHistory().then(setHistory).catch(() => {});
@@ -39,24 +40,49 @@ export default function Console({ unit }: { unit: string }) {
 
   useEffect(refresh, []);
 
-  // Stream opencode output into the log.
+  // Stream opencode output into the matching session log.
   useEffect(() => {
-    const un = listen<{ stream: string; text: string }>("opencode-output", (e) => {
-      setLog((l) => [...l, e.payload.text]);
-    });
-    const done = listen<{ code: number }>("opencode-done", () => {
-      setRunning(false);
-    });
+    const started = listen<{ id: string; prompt: string }>(
+      "opencode-started",
+      (e) =>
+        setSessions((s) => [
+          ...s,
+          { id: e.payload.id, prompt: e.payload.prompt, log: [], running: true },
+        ])
+    );
+    const out = listen<{ session: string; stream: string; text: string }>(
+      "opencode-output",
+      (e) =>
+        setSessions((s) =>
+          s.map((x) =>
+            x.id === e.payload.session
+              ? { ...x, log: [...x.log, e.payload.text] }
+              : x
+          )
+        )
+    );
+    const done = listen<{ session: string; code: number }>(
+      "opencode-done",
+      (e) =>
+        setSessions((s) =>
+          s.map((x) =>
+            x.id === e.payload.session ? { ...x, running: false } : x
+          )
+        )
+    );
     return () => {
-      un.then((f) => f());
+      started.then((f) => f());
+      out.then((f) => f());
       done.then((f) => f());
     };
   }, []);
 
-  // Auto-scroll the log.
+  // Auto-scroll every session terminal.
   useEffect(() => {
-    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [log]);
+    sessionsRef.current
+      ?.querySelectorAll<HTMLDivElement>(".term")
+      .forEach((el) => (el.scrollTop = el.scrollHeight));
+  }, [sessions]);
 
   const bench = async (node: { engine: string; host: string; port: number }) => {
     setBusy(true);
@@ -78,21 +104,20 @@ export default function Console({ unit }: { unit: string }) {
   };
 
   const runAgent = async () => {
-    if (!prompt.trim() || running) return;
-    setLog([]);
-    setRunning(true);
+    if (!prompt.trim()) return;
     try {
       await api.opencodeRun({ prompt, dir, auto, model });
     } catch (e) {
-      setLog((l) => [...l, `✗ ${String(e)}`]);
-      setRunning(false);
+      setMsg(`failed to start agent: ${String(e)}`);
     }
   };
 
-  const stopAgent = async () => {
-    await api.opencodeStop();
-    setLog((l) => [...l, "— interrupted —"]);
-    setRunning(false);
+  const stopAgent = async (id: string) => {
+    await api.opencodeStop(id);
+  };
+
+  const dismissAgent = (id: string) => {
+    setSessions((s) => s.filter((x) => x.id !== id));
   };
 
   const copy = () => {
@@ -130,21 +155,61 @@ export default function Console({ unit }: { unit: string }) {
           </span>
         </label>
         <div className="row" style={{ gap: 10, marginTop: 10 }}>
-          <button className="action" onClick={runAgent} disabled={running}>
-            {running ? "RUNNING…" : "RUN AGENT"}
+          <button className="action" onClick={runAgent} disabled={!prompt.trim()}>
+            RUN AGENT
           </button>
-          {running && (
-            <button className="ghost" onClick={stopAgent}>
-              STOP
-            </button>
-          )}
+          <span className="dim" style={{ fontSize: 11 }}>
+            {sessions.length > 0
+              ? `${sessions.length} session${sessions.length > 1 ? "s" : ""} · ${
+                  sessions.filter((s) => s.running).length
+                } running`
+              : "sessions run concurrently — each gets its own log"}
+          </span>
         </div>
-        <div className="term" ref={logRef}>
-          {log.length === 0 ? (
-            <span className="dim">agent output streams here…</span>
-          ) : (
-            log.map((l, i) => <div key={i}>{l}</div>)
+
+        <div ref={sessionsRef} style={{ marginTop: 12, display: "grid", gap: 12 }}>
+          {sessions.length === 0 && (
+            <div className="dim" style={{ fontSize: 11 }}>
+              no agent sessions yet — hit RUN AGENT
+            </div>
           )}
+          {sessions.map((s) => (
+            <div key={s.id} className="card" style={{ background: "#07070e" }}>
+              <div
+                className="row"
+                style={{ justifyContent: "space-between", gap: 10, marginBottom: 8 }}
+              >
+                <span
+                  className="mono"
+                  style={{ fontSize: 11, color: "var(--magenta)", flex: 1 }}
+                >
+                  {s.prompt.length > 80 ? s.prompt.slice(0, 80) + "…" : s.prompt}
+                </span>
+                <span className={`dot ${s.running ? "up" : "down"}`} />
+                <span className="dim" style={{ fontSize: 10 }}>
+                  {s.running ? "running" : "done"}
+                </span>
+              </div>
+              <div className="term" style={{ maxHeight: 220 }}>
+                {s.log.length === 0 ? (
+                  <span className="dim">starting…</span>
+                ) : (
+                  s.log.map((l, i) => <div key={i}>{l}</div>)
+                )}
+              </div>
+              <div className="row" style={{ gap: 8, marginTop: 8 }}>
+                {s.running ? (
+                  <button className="ghost" onClick={() => stopAgent(s.id)}>
+                    STOP
+                  </button>
+                ) : (
+                  <button className="ghost" onClick={() => dismissAgent(s.id)}>
+                    DISMISS
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 

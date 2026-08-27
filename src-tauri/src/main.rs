@@ -120,8 +120,8 @@ fn opencode_run(
 }
 
 #[tauri::command]
-fn opencode_stop() -> Result<(), String> {
-    deck_tauri::opencode_stop().map_err(|e| e.to_string())
+fn opencode_stop(id: String) -> Result<(), String> {
+    deck_tauri::opencode_stop(&id).map_err(|e| e.to_string())
 }
 
 fn main() {

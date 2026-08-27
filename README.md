@@ -108,8 +108,10 @@ do this automatically; a hand-started server may not).
 ## Agentic CONSOLE
 
 The CONSOLE agent panel runs `opencode run` as a real coding session: type a
-task, pick a project dir, optionally pin a model, and hit **RUN AGENT**. Output
-streams live into the terminal pane; **STOP** kills the session.
+task, pick a project dir, optionally pin a model, and hit **RUN AGENT**. Each
+run opens its own session card with a live terminal pane — **multiple sessions
+run concurrently**, so you can kick off several agents at once. **STOP** ends a
+single session by id; finished cards can be dismissed.
 
 - **`--auto` (the "danger" checkbox)** maps to opencode's `--auto`: it
   auto-approves permissions so the agent can modify files headlessly. Leave it
