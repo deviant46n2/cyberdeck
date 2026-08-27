@@ -1,0 +1,14 @@
+[package]
+name = "deck-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "deck"
+path = "src/main.rs"
+
+[dependencies]
+deck-core = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+serde_json = { workspace = true }

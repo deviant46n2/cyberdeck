@@ -1,0 +1,12 @@
+[package]
+name = "deck-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+thiserror = "2"
+anyhow = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+rusqlite = { workspace = true }
+walkdir = { workspace = true }

@@ -1,0 +1,6 @@
+[package]
+name = "deck-engines"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
