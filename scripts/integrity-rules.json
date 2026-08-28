@@ -1,0 +1,100 @@
+{
+  "lineLimit": 300,
+  "lineLimitPaths": [
+    "src-tauri/src",
+    "crates",
+    "frontend/src",
+    "scripts"
+  ],
+  "artifactDirs": [
+    "src-tauri",
+    "crates",
+    "frontend/src",
+    "frontend/public",
+    "scripts",
+    ".github"
+  ],
+  "allowlists": {
+    "line-limit": [
+      {
+        "path": "crates/deck-core/src/gguf.rs",
+        "lines": 699,
+        "reason": "pre-existing at tool introduction (2026-08-28); parked — revisit on next touching change"
+      },
+      {
+        "path": "crates/deck-tauri/src/bringup.rs",
+        "lines": 404,
+        "kind": "accepted",
+        "reason": "Single shared derive→verify→apply pipeline guarded by the single-flight BRINGUP_RUNNING lock; splitting would move derive_and_verify across a module boundary and couple bringup to test. AGENTS.md 'File & Function Size Limits' and 'COHESION > ARBITRARY LINE COUNT'"
+      },
+      {
+        "path": "src-tauri/src/main.rs",
+        "lines": 338,
+        "kind": "accepted",
+        "reason": "Thin #[tauri::command] adapter — each function is 3-8 lines of scaffold over a deck_tauri call; the adapter-layer shape is mandated by AGENTS.md 'src-tauri — thin binary entry'"
+      },
+      {
+        "path": "crates/deck-core/src/store.rs",
+        "lines": 347,
+        "kind": "accepted",
+        "reason": "Single-domain sqlite persistence module (model/profile/bench tables); splitting would scatter one store's invariants. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
+      },
+      {
+        "path": "crates/deck-core/src/profile.rs",
+        "lines": 420,
+        "kind": "accepted",
+        "reason": "Profile type + derive/parse logic is one cohesive domain module within the deck-core layering. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
+      },
+      {
+        "path": "crates/deck-core/src/safetensors.rs",
+        "lines": 301,
+        "kind": "accepted",
+        "reason": "safetensors model-dir reader — a single-purpose parser just over the soft heuristic. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
+      },
+      {
+        "path": "frontend/src/lib/dl.ts",
+        "lines": 450,
+        "kind": "accepted",
+        "reason": "The download-manager store is the single source of truth for download state (AGENTS.md: dl.ts is the voter store, mutations go through its methods, never ad-hoc). shardSet was extracted to lib/shards.ts; the remaining queue/event/pump core is one cohesive unit by contract."
+      },
+      {
+        "path": "frontend/src/api.ts",
+        "lines": 305,
+        "kind": "accepted",
+        "reason": "The single invoke door — views never shell out directly, they go through api.ts → Tauri invoke (AGENTS.md 'UI never shells out directly'). Each function is a 1-5 line wrapper; splitting would scatter the adapter contract."
+      },
+      {
+        "path": "frontend/src/styles.css",
+        "lines": 446,
+        "kind": "accepted",
+        "reason": "Flat stylesheet with no function seams; splitting into per-view CSS partials is cosmetic churn with import-order footguns and zero functional payoff. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
+      },
+      {
+        "path": "frontend/src/views/Browse.tsx",
+        "lines": 528,
+        "kind": "accepted",
+        "reason": "Single-screen marketplace page component; the only cross-view helper (verdictClass) was already extracted to lib/ui.ts and shardSet to lib/shards.ts. Further split is prop-drilling churn. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
+      },
+      {
+        "path": "frontend/src/views/LoadoutEditor.tsx",
+        "lines": 509,
+        "kind": "accepted",
+        "reason": "Single-screen loadout form component; shared verdictClass extracted to lib/ui.ts. Deep split would force prop drilling across one page. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
+      },
+      {
+        "path": "crates/deck-feeds/src/download.rs",
+        "lines": 301,
+        "kind": "accepted",
+        "reason": "Cohesive download concern: Cancel handle + .part resumable streaming + shard-set grouping share one state contract (the .part park/resume invariant). Splitting would separate files that MUST stay in step. 1 over the soft heuristic from dense doc, not a seam. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
+      },
+      {
+        "path": "crates/deck-tauri/src/test.rs",
+        "lines": 309,
+        "kind": "accepted",
+        "reason": "The loadout test harness: the single-flight TEST_CHILD slot (test_profile/test_stop both operate it) plus the boot-watch verdict policy. Reader threads were deduped into spawn_output_reader; the file is one lifecycle contract. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
+      }
+    ],
+    "artifact-hygiene": [],
+    "stale-binary": []
+  }
+}

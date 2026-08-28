@@ -1,0 +1,75 @@
+# verify.yml — CI verification matrix for cyberdeck.
+#
+# Ported from ModCanvas and simplified: cyberdeck is a Linux-first desktop tool
+# (systemd user units, curl transport, llama.cpp/freetoken/ollama drivers), so
+# a single ubuntu runner is the second witness. There is deliberately NO
+# Windows job — the app makes no Windows claim and CI should not manufacture
+# one.
+#
+# Scope (deliberately narrow — e2e model downloads/breaks need real hardware):
+#   * Checks: cargo test --workspace (the whole crate graph incl. Tauri),
+#     node tool tests, and the integrity gate (which includes build-smoke =
+#     the frontend's own `tsc && vite build`).
+#   * TESTING ONLY. No release artifacts, no CD.
+#
+# Platform facts (borrowed from the ModCanvas s65 matrix):
+#   * cargo test compiles the whole workspace including Tauri → Linux needs
+#     webkit2gtk-4.1 + friends (Tauri v2 official prerequisite list).
+#   * The integrity gate's build-smoke spawns `sh` — ubuntu-only is fine here.
+#   * stale-binary is CI-safe by design: no binary on a fresh clone → INFO,
+#     not violation.
+#   * The integrity scripts need no npm deps; npm ci only installs the
+#     frontend, which build-smoke needs.
+
+name: verify
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tauri system deps
+        run: |
+          sudo apt-get update &&
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Rust tests (whole workspace)
+        run: cargo test --workspace --locked
+
+      - name: Frontend build (independent of the gate, for clearer failure shards)
+        run: |
+          npm ci
+          npm run build
+        working-directory: frontend
+
+      - name: Tool self-tests
+        run: node --test scripts/integrity-select.test.mjs scripts/doc-sync-state.test.mjs
+
+      - name: Integrity gate (all sections; build-smoke re-runs the frontend build)
+        run: npm run integrity

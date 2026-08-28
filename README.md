@@ -45,7 +45,7 @@ cargo run -p deck-cli -- --help
 # desktop app (Tauri 2 + React) — run `tauri` from the REPO ROOT, not frontend/
 cd frontend && npm install && npm run build   # bundle the UI (or `npm run dev` for HMR)
 cd .. && npm run tauri dev                    # vite dev server + Rust app (needs a display)
-# if npm blocked esbuild's postinstall: `npm rebuild esbuild`
+# if esbuild's postinstall step was blocked, rebuild it: `npm rebuild esbuild`
 ```
 
 ## Layout

@@ -4,3 +4,8 @@ dist/
 *.local
 .env
 .DS_Store
+
+# Tooling state — the suite's own memory, ours not git's (see AGENTS.md
+# "Maintainer Tooling")
+.health-trend.json
+.doc-sync-state.json

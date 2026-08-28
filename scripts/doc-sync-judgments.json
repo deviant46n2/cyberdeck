@@ -1,0 +1,12 @@
+{
+  "judgments": [
+    {
+      "commit": "8af8671",
+      "reason": "fix(ui) dark dropdowns: purely visual styling pass (color-scheme + option styling) — no API/config/behavior surface to document"
+    },
+    {
+      "commit": "0ac4e9d",
+      "reason": "loadout-editor feature: the loadout machinery + fit estimate + choose-ladder/OOM behavior is documented in feature-parity.md (§Direction, ctx_ladder, bringup flow), consolidated in the 98447a6 docs commit"
+    }
+  ]
+}

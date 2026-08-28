@@ -1,0 +1,27 @@
+{
+  "weights": {
+    "violation": 10,
+    "candidate": 3,
+    "parked": 0.5
+  },
+  "parkedWeights": {
+    "line-limit": [
+      { "min": 301, "max": 400, "weight": 0.5 },
+      { "min": 401, "max": 600, "weight": 1 },
+      { "min": 601, "max": 1000, "weight": 2 },
+      { "min": 1001, "weight": 3 }
+    ]
+  },
+  "ledger": [
+    {
+      "id": "frontend-tests",
+      "priority": "P1",
+      "reason": "frontend/src has zero automated tests. The dl.ts store (queue/resume/priority state machine) and br.ts bringup store carry real logic with no coverage — add a runner (vitest) + tests for dl.ts transitions before the state machine grows further"
+    },
+    {
+      "id": "cli-parity-backlog",
+      "priority": "P2",
+      "reason": "deck-cli exists but the download-manager and bringup flows shipped UI-only (session 2026-08-26, deliberate). Track which CLI-parity gaps are intentional vs accidental here; revisit when the UI stabilizes"
+    }
+  ]
+}

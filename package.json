@@ -5,6 +5,9 @@
   "scripts": {
     "tauri": "cargo tauri",
     "dev": "npm --prefix frontend run dev",
-    "build": "npm --prefix frontend run build"
+    "build": "npm --prefix frontend run build",
+    "integrity": "node scripts/integrity-check.mjs",
+    "health": "node scripts/health-report.mjs",
+    "test:tools": "node --test scripts/integrity-select.test.mjs scripts/doc-sync-state.test.mjs"
   }
 }
