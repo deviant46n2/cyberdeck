@@ -179,6 +179,8 @@ pub fn browse_fit_remote(
         params: gguf_meta.params().map(|v| v as u64),
         n_layers: gguf_meta.n_layers(),
         n_embd: gguf_meta.n_embd(),
+        n_head: gguf_meta.n_head(),
+        n_head_kv: gguf_meta.n_head_kv(),
         ctx_train: gguf_meta.ctx_train().map(|v| v as u64),
         vocab: gguf_meta.vocab_size(),
         weight_size: total_size,

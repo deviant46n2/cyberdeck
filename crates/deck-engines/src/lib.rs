@@ -30,7 +30,8 @@ pub mod rewire;
 pub mod scoring;
 
 pub use health::{
-    BringupOutcome, OOM_MARKERS, fetch_metrics, health_ok, health_ok_any, health_wait, parse_tps,
+    BringupOutcome, OOM_MARKERS, fetch_metrics, health_ok, health_ok_any, health_wait,
+    measure_generation_tps, parse_tps,
     verify_on_test_port,
 };
 pub use inference::run_prompt;

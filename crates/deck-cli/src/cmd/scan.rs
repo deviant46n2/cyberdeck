@@ -35,6 +35,8 @@ pub(crate) fn run() -> Result<()> {
                         params: None,
                         n_layers: None,
                         n_embd: None,
+                        n_head: None,
+                        n_head_kv: None,
                         ctx_train: None,
                         vocab: None,
                         weight_size: o.size,

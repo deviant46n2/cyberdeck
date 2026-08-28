@@ -398,8 +398,10 @@ fn build_profile_from_derive(
         p.ft_moe_cache_size = Some(fb.weights_ram_mb.clamp(1024, 16 * 1024) as u32 / 1024);
         p.mem_max_mb = None;
     } else {
-        // llama.cpp: keep all layers on GPU if they fit.
-        p.n_gpu_layers = 0;
+        // llama.cpp: all layers on GPU. The fit above verified the weights at
+        // ngl_frac=1.0, and `--n-gpu-layers 0` means *zero* layers on GPU in
+        // llama.cpp — full offload is spelled 999 (= every layer).
+        p.n_gpu_layers = 999;
         p.load_mode = Some("mmap".into());
         // NVIDIA GPU present -> offer MTP speculative decoding if a draft
         // exists next to the model (draft_model left None here; caller may set).
@@ -506,6 +508,8 @@ mod tests {
             params: Some(8 * 1_000_000_000),
             n_layers: Some(n_layers),
             n_embd: Some(n_embd),
+            n_head: None,
+            n_head_kv: None,
             ctx_train: Some(131072),
             vocab: Some(151936),
             weight_size: weight_gib * 1024 * 1024 * 1024,
@@ -523,8 +527,8 @@ mod tests {
         assert_eq!(d.profile.port, 18000);
         assert_eq!(d.profile.ctx_size, d.max_ctx);
         assert!(d.profile.flash_attn);
-        // llama.cpp keeps layers on GPU (ngl=0 means all) and uses mmap.
-        assert_eq!(d.profile.n_gpu_layers, 0);
+        // llama.cpp keeps every layer on GPU (full offload) and uses mmap.
+        assert_eq!(d.profile.n_gpu_layers, 999);
         assert_eq!(d.profile.load_mode.as_deref(), Some("mmap"));
         // qwen3 -> reasoning enabled with a budget.
         assert_eq!(d.profile.reasoning.as_deref(), Some("on"));

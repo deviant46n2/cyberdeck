@@ -6,7 +6,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-use deck_core::profile::Profile;
+use deck_core::profile::{Engine, Profile};
 
 use crate::unit::build_args;
 
@@ -72,6 +72,35 @@ pub fn fetch_metrics(host: &str, port: u16) -> anyhow::Result<String> {
     Ok(body)
 }
 
+/// Fixed probe prompt for the active fallback: long enough that the steady-
+/// state decode rate dominates prefill, deterministic content.
+pub const PROBE_PROMPT: &str = "Write a detailed explanation of how transformer attention works: queries, keys, values, softmax, and multi-head attention.";
+
+/// Measure generation tok/s against a live engine: scrape the /metrics
+/// throughput gauge, and when that is absent or dead (idle llama.cpp gauges
+/// read 0), run one real probe generation and take its native timing. This is
+/// the single measurement path for `deck bench record` and the app's
+/// bench door — a 0 tok/s row must never come from a dead scrape.
+pub fn measure_generation_tps(
+    engine: Engine,
+    host: &str,
+    port: u16,
+    model_id: &str,
+) -> Result<f64, String> {
+    let text = fetch_metrics(host, port)
+        .map_err(|e| format!("could not reach {host}:{port}/metrics — is the engine running with --metrics? ({e})"))?;
+    if let Some(v) = parse_tps(&text).filter(|v| *v > 0.0) {
+        return Ok(v);
+    }
+    let sample = crate::inference::run_prompt(engine, host, port, model_id, PROBE_PROMPT, 192);
+    sample.tok_s.filter(|v| *v > 0.0).ok_or_else(|| {
+        format!(
+            "probe generation failed: {}",
+            sample.error.unwrap_or_else(|| "no tok/s".into())
+        )
+    })
+}
+
 /// Extracts a generation throughput (tokens/sec) gauge from Prometheus text.
 /// Prefers `generation_tokens_per_second`; falls back to any `*_tokens_per_second`
 /// line. Returns None if the endpoint exposes no usable gauge.
@@ -93,11 +122,16 @@ pub fn parse_tps(text: &str) -> Option<f64> {
             return Some(v);
         }
     }
-    // Pass 2: any tokens/sec gauge (llama.cpp exports
-    // `*_tokens_per_second`; FreeToken exports `tok_per_sec`).
+    // Pass 2: any tokens/sec gauge (llama.cpp exports `*_tokens_per_second`
+    // or `*_tokens_seconds` gauges; FreeToken exports `tok_per_sec`).
+    // `*_seconds_total` lines are counters (cumulative seconds), not rates —
+    // excluded. Prompt-processing speed is never recorded as generation speed.
     for line in &lines {
         let l = line.trim();
-        if l.starts_with('#') || !(l.contains("tok") && l.contains("per_sec")) {
+        if l.starts_with('#') || l.contains("_total") || l.contains("prompt") {
+            continue;
+        }
+        if !(l.contains("tok") && (l.contains("per_sec") || l.contains("tokens_seconds"))) {
             continue;
         }
         if let Some(v) = l
@@ -264,5 +298,35 @@ pub fn verify_on_test_port(p: &Profile, test_port: u16, timeout: Duration) -> Br
         verdict: "FAIL".into(),
         summary: "all ctx-ladder candidates failed to serve on the test port".into(),
         tok_per_sec: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tps_reads_predicted_gauge_of_local_llamacpp_build() {
+        let text = "# HELP llamacpp:predicted_tokens_seconds Average generation throughput\n\
+                    # TYPE llamacpp:predicted_tokens_seconds gauge\n\
+                    llamacpp:predicted_tokens_seconds 47.5\n\
+                    llamacpp:tokens_predicted_seconds_total 14.742\n";
+        assert_eq!(parse_tps(text), Some(47.5));
+    }
+
+    #[test]
+    fn tps_ignores_counters_and_prompt_rate() {
+        // Only a cumulative counter + the prompt rate: nothing usable.
+        let text = "llamacpp:tokens_predicted_seconds_total 14.742\n\
+                    llamacpp:prompt_tokens_seconds 980.0\n";
+        assert_eq!(parse_tps(text), None);
+    }
+
+    #[test]
+    fn tps_still_reads_upstream_and_freetoken_names() {
+        let upstream = "llamacpp:generation_tokens_per_second 12.5\n";
+        assert_eq!(parse_tps(upstream), Some(12.5));
+        let ft = "ft:tok_per_sec 31.0\n";
+        assert_eq!(parse_tps(ft), Some(31.0));
     }
 }

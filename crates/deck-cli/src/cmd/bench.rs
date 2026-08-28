@@ -16,13 +16,9 @@ pub(crate) fn record(
     model: String,
     ctx: u32,
 ) -> Result<()> {
-    let text = deck_engines::fetch_metrics(&host, port).map_err(|e| {
-        anyhow::anyhow!(
-            "could not reach {host}:{port}/metrics — is the engine running with --metrics? ({e})"
-        )
-    })?;
-    let tps = deck_engines::parse_tps(&text)
-        .ok_or_else(|| anyhow::anyhow!("no tokens/sec gauge exposed by {host}:{port}"))?;
+    let eng = super::parse_engine(&engine)?;
+    let tps = deck_engines::measure_generation_tps(eng, &host, port, &model)
+        .map_err(anyhow::Error::msg)?;
     let at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)

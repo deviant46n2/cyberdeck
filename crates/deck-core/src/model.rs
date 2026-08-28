@@ -21,6 +21,10 @@ pub struct ModelMeta {
     pub params: Option<u64>,
     pub n_layers: Option<u64>,
     pub n_embd: Option<u64>,
+    /// Attention head counts (GGUF `attention.head_count[_kv]`). Their ratio
+    /// gives the GQA KV width — the number that actually sizes the KV cache.
+    pub n_head: Option<u64>,
+    pub n_head_kv: Option<u64>,
     pub ctx_train: Option<u64>,
     pub vocab: Option<u64>,
     /// Bytes of tensor weights (GGUF file size, or safetensors total_size).

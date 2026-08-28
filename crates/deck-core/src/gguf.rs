@@ -191,6 +191,26 @@ impl GgufMeta {
             .map(|v| v as u64)
     }
 
+    /// Attention head count. May be a per-layer array on hybrid models —
+    /// `as_int` then yields None and callers fall back to n_embd.
+    pub fn n_head(&self) -> Option<u64> {
+        let arch = self.arch()?;
+        self.kv
+            .get(&format!("{arch}.attention.head_count"))
+            .and_then(Value::as_int)
+            .map(|v| v as u64)
+    }
+
+    /// KV head count (GQA): `n_embd * n_head_kv / n_head` is the per-layer
+    /// width actually cached, which is what sizes the KV cache.
+    pub fn n_head_kv(&self) -> Option<u64> {
+        let arch = self.arch()?;
+        self.kv
+            .get(&format!("{arch}.attention.head_count_kv"))
+            .and_then(Value::as_int)
+            .map(|v| v as u64)
+    }
+
     pub fn params(&self) -> Option<u64> {
         self.kv
             .get("general.parameter_count")
@@ -215,6 +235,8 @@ impl GgufMeta {
             params: self.params(),
             n_layers: self.n_layers(),
             n_embd: self.n_embd(),
+            n_head: self.n_head(),
+            n_head_kv: self.n_head_kv(),
             ctx_train: self.ctx_train().map(|v| v as u64),
             vocab: self.vocab_size(),
             weight_size: self.file_size,

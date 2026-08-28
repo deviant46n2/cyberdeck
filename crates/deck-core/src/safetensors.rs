@@ -160,6 +160,8 @@ impl SafetensorsModel {
             params: None,
             n_layers: self.n_layers(),
             n_embd: self.n_embd(),
+            n_head: None,
+            n_head_kv: None,
             ctx_train: self.ctx_train(),
             vocab: self.vocab(),
             weight_size,

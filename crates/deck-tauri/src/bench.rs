@@ -31,9 +31,14 @@ pub fn bench_now(
     model: &str,
     ctx: u32,
 ) -> anyhow::Result<BenchRow> {
-    let text = deck_engines::fetch_metrics(host, port)?;
-    let tps = deck_engines::parse_tps(&text)
-        .ok_or_else(|| anyhow::anyhow!("no tokens/sec gauge exposed by {host}:{port}"))?;
+    let tps = deck_engines::measure_generation_tps(
+        deck_core::profile::Engine::parse(engine)
+            .ok_or_else(|| anyhow::anyhow!("unknown engine '{engine}'"))?,
+        host,
+        port,
+        model,
+    )
+    .map_err(|e| anyhow::anyhow!(e))?;
     let at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)

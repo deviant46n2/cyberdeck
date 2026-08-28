@@ -129,6 +129,8 @@ pub fn list(conn: &Connection) -> Result<Vec<ModelMeta>> {
             params: params.map(|v| v as u64),
             n_layers: nl.map(|v| v as u64),
             n_embd: ne.map(|v| v as u64),
+            n_head: None,
+            n_head_kv: None,
             ctx_train: ctx.map(|v| v as u64),
             vocab: vocab.map(|v| v as u64),
             weight_size: ws as u64,

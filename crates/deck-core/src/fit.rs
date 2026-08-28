@@ -78,7 +78,15 @@ impl Verdict {
 pub fn estimate(model: &ModelMeta, req: &FitRequest, available_mb: u64) -> FitBreakdown {
     let n_layers = req.kv_layers.or(model.n_layers).unwrap_or(0);
     let n_embd = model.n_embd.unwrap_or(0);
-    let kv_elements = req.ctx.saturating_mul(n_layers).saturating_mul(n_embd);
+    // GQA models cache only the KV heads' width per layer, not the full
+    // embedding width — assuming n_embd overstates the cache ~5x on modern
+    // models and collapses the derived ctx. Fall back to n_embd when the
+    // head counts are unknown (or non-scalar on hybrid attention models).
+    let kv_width = match (model.n_head, model.n_head_kv) {
+        (Some(h), Some(hv)) if h > 0 => n_embd * hv / h,
+        _ => n_embd,
+    };
+    let kv_elements = req.ctx.saturating_mul(n_layers).saturating_mul(kv_width);
     let kv_mb = (kv_elements as f64 * req.kv_bytes * 2.0 / 1_048_576.0) as u64;
 
     let buffers_mb = ((req.ctx * 2 * n_embd) as f64 / 1_048_576.0).max(32.0) as u64;
@@ -145,4 +153,48 @@ pub fn hw_vram() -> Option<u64> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::ModelMeta;
+    use std::path::PathBuf;
+
+    fn meta(n_layers: u64, n_embd: u64, n_head: Option<u64>, n_head_kv: Option<u64>) -> ModelMeta {
+        ModelMeta {
+            path: PathBuf::from("/models/test.gguf"),
+            format: crate::model::ModelFormat::Gguf,
+            name: "test".into(),
+            arch: Some("qwen3".into()),
+            quant: Some("Q4_K_M".into()),
+            params: None,
+            n_layers: Some(n_layers),
+            n_embd: Some(n_embd),
+            n_head,
+            n_head_kv,
+            ctx_train: None,
+            vocab: None,
+            weight_size: 4 * 1024 * 1024 * 1024,
+            footprint: 4 * 1024 * 1024 * 1024,
+        }
+    }
+
+    #[test]
+    fn gqa_head_ratio_shrinks_kv_cache() {
+        // 32B-class GQA: 40 heads, 8 KV heads — kv width is 1/5 of n_embd.
+        let m = meta(64, 5120, Some(40), Some(8));
+        let req = FitRequest {
+            ctx: 32_768,
+            ..Default::default()
+        };
+        let fb = estimate(&m, &req, 24 * 1024);
+        // kv = ctx * layers * (5120*8/40) * 0.5B * 2 = 32768*64*1024*1B = 2 GiB
+        assert_eq!(fb.kv_mb, 2 * 1024);
+
+        // Same model without head facts falls back to n_embd (5x bigger).
+        let m2 = meta(64, 5120, None, None);
+        let fb2 = estimate(&m2, &req, 24 * 1024);
+        assert_eq!(fb2.kv_mb, fb.kv_mb * 5);
+    }
 }
