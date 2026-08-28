@@ -246,6 +246,75 @@ export const benchHistory = () => invoke<BenchRow[]>("bench_history");
 export const engineStatus = (engine: string, host: string, port: number) =>
   invoke<EngineStatus>("engine_status", { engine, host, port });
 
+// --- port map (multi-model residency) ---
+export interface PortMapSlot {
+  engine: string;
+  display: string;
+  port: number;
+  profile: string | null;
+  resident: boolean;
+  state: "up" | "starting" | "down";
+}
+
+export const portMapStatus = (host: string) =>
+  invoke<PortMapSlot[]>("port_map_status", { host });
+
+// --- blind A/B compare ---
+export interface ScoredTrial {
+  trial: string;
+  task: string;
+  run: number;
+  ok: boolean;
+  error: string | null;
+  gen_tokens: number | null;
+  prompt_tokens: number | null;
+  tok_s: number | null;
+  tok_s_kind: string;
+  wall_ms: number;
+  score: number;
+  output: string;
+}
+
+export interface CandidateStanding {
+  trial: string;
+  engine: string;
+  model: string;
+  ctx: number;
+  ok_runs: number;
+  trials: number;
+  mean_tok_s: number | null;
+  mean_score: number;
+  failure: string | null;
+  verdict: string | null;
+}
+
+export interface CompareReport {
+  procedure: string;
+  tasks: string[];
+  candidates: CandidateStanding[];
+  trials: ScoredTrial[];
+  verdict: string;
+}
+
+export const compareRun = (p: {
+  model: string;
+  engines: string[];
+  ollama: string[];
+  tasks: string[];
+  runs: number;
+  maxTokens: number;
+  seed: number;
+}) =>
+  invoke<CompareReport>("compare_run", {
+    model: p.model,
+    engines: p.engines,
+    ollama: p.ollama,
+    tasks: p.tasks,
+    runs: p.runs,
+    maxTokens: p.maxTokens,
+    seed: p.seed,
+  });
+
 export const opencodeRun = (p: {
   prompt: string;
   dir: string;

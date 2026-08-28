@@ -202,6 +202,24 @@ fn bench_history() -> Result<Vec<deck_tauri::BenchRow>, String> {
     deck_tauri::bench_history().map_err(|e| e.to_string())
 }
 
+/// Run the blind A/B compare grid headlessly (long-running; off the UI thread)
+/// and return the scored report for the Compare tab.
+#[tauri::command]
+async fn compare_run(
+    model: String,
+    engines: Vec<String>,
+    ollama: Vec<String>,
+    tasks: Vec<String>,
+    runs: u32,
+    max_tokens: u32,
+    seed: u64,
+) -> Result<deck_tauri::CompareReport, String> {
+    blocking(move || {
+        deck_tauri::compare_run(model, engines, ollama, tasks, runs, max_tokens, seed)
+    })
+    .await
+}
+
 #[tauri::command]
 async fn engine_status(engine: String, host: String, port: u16) -> deck_tauri::EngineStatus {
     let fallback = (engine.clone(), host.clone());
@@ -290,6 +308,15 @@ fn engine_list() -> Vec<deck_tauri::EngineDescriptor> {
     deck_tauri::engine_list()
 }
 
+/// Live PORT MAP for the UI: each engine's fixed slot, bound profile, resident
+/// flag, and up/down state. Probes are non-blocking one-shot checks.
+#[tauri::command]
+async fn port_map_status(host: String) -> Vec<deck_tauri::PortMapSlot> {
+    tauri::async_runtime::spawn_blocking(move || deck_tauri::port_map_status(&host))
+        .await
+        .unwrap_or_default()
+}
+
 #[tauri::command]
 fn engine_bin_list() -> Vec<deck_tauri::EngineBinRow> {
     deck_tauri::engine_bin_list()
@@ -346,6 +373,7 @@ fn main() {
             test_model_start,
             bench_now,
             bench_history,
+            compare_run,
             engine_status,
             opencode_run,
             opencode_stop,
@@ -355,7 +383,8 @@ fn main() {
             engine_list,
             engine_bin_list,
             engine_bin_set,
-            engine_bin_clear
+            engine_bin_clear,
+            port_map_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running cyberdeck");

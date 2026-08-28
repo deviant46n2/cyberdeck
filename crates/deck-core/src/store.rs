@@ -256,6 +256,95 @@ pub fn active_profile(conn: &Connection) -> Result<Option<String>> {
     Ok(rows.next().transpose()?)
 }
 
+// ------------------------------------------------------------ residents (PORT MAP)
+
+/// What is bound to a single engine port slot. `resident = true` means the
+/// profile is meant to run *alongside* other engine slots (multi-model
+/// residency); `false` is a plain single swap that still records reality so
+/// `deck engines status` can show what's currently bound to each slot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Resident {
+    pub engine_id: String,
+    pub profile: String,
+    pub resident: bool,
+}
+
+/// Keyed by engine id (`llamacpp` / `freetoken` / `ollama`) because each
+/// engine owns exactly one fixed PORT MAP slot with one unit. Presence of a row
+/// = a profile is bound to that slot; the `resident` flag marks it as a
+/// coexisting resident rather than a plain swap.
+pub fn ensure_resident_schema(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS residents (
+            engine_id TEXT PRIMARY KEY,
+            profile_name TEXT NOT NULL,
+            resident INTEGER NOT NULL DEFAULT 0
+        )",
+    )?;
+    Ok(())
+}
+
+/// Bind `profile` to `engine_id`'s slot. Keeps the existing `resident` flag if
+/// unspecified so re-applying a resident profile doesn't silently demote it;
+/// pass `resident` to force.
+pub fn set_resident(
+    conn: &Connection,
+    engine_id: &str,
+    profile: &str,
+    resident: Option<bool>,
+) -> Result<()> {
+    ensure_resident_schema(conn)?;
+    if let Some(r) = resident {
+        conn.execute(
+            "INSERT INTO residents (engine_id, profile_name, resident) VALUES (?1,?2,?3)
+             ON CONFLICT(engine_id) DO UPDATE SET profile_name = excluded.profile_name,
+                                                  resident = excluded.resident",
+            rusqlite::params![engine_id, profile, r as i64],
+        )?;
+    } else {
+        conn.execute(
+            "INSERT INTO residents (engine_id, profile_name, resident)
+             VALUES (?1,?2, COALESCE((SELECT resident FROM residents WHERE engine_id = ?1), 0))
+             ON CONFLICT(engine_id) DO UPDATE SET profile_name = excluded.profile_name",
+            rusqlite::params![engine_id, profile],
+        )?;
+    }
+    Ok(())
+}
+
+pub fn get_resident(conn: &Connection, engine_id: &str) -> Result<Option<Resident>> {
+    ensure_resident_schema(conn)?;
+    let mut stmt =
+        conn.prepare("SELECT engine_id, profile_name, resident FROM residents WHERE engine_id = ?1")?;
+    let mut rows = stmt.query_map([engine_id], |r| {
+        Ok(Resident {
+            engine_id: r.get(0)?,
+            profile: r.get(1)?,
+            resident: r.get::<_, i64>(2)? != 0,
+        })
+    })?;
+    Ok(rows.next().transpose()?)
+}
+
+pub fn list_residents(conn: &Connection) -> Result<Vec<Resident>> {
+    ensure_resident_schema(conn)?;
+    let mut stmt = conn.prepare("SELECT engine_id, profile_name, resident FROM residents")?;
+    let rows = stmt.query_map([], |r| {
+        Ok(Resident {
+            engine_id: r.get(0)?,
+            profile: r.get(1)?,
+            resident: r.get::<_, i64>(2)? != 0,
+        })
+    })?;
+    Ok(rows.flatten().collect())
+}
+
+pub fn clear_resident(conn: &Connection, engine_id: &str) -> Result<()> {
+    ensure_resident_schema(conn)?;
+    conn.execute("DELETE FROM residents WHERE engine_id = ?1", [engine_id])?;
+    Ok(())
+}
+
 /// Removes rows whose path is not in `keep`. Keeps the index honest when a
 /// model is deleted or moved between scans.
 pub fn prune(conn: &Connection, keep: &[String]) -> Result<usize> {
@@ -510,6 +599,41 @@ mod tests {
         );
         clear_engine_bin(&conn, "llamacpp").unwrap();
         assert_eq!(get_engine_bin(&conn, "llamacpp").unwrap(), None);
+    }
+
+    #[test]
+    fn residents_roundtrip_keeps_flag() {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+        ensure_resident_schema(&conn).unwrap();
+
+        assert_eq!(get_resident(&conn, "llamacpp").unwrap(), None);
+
+        // Bind as a resident.
+        set_resident(&conn, "llamacpp", "qwen", Some(true)).unwrap();
+        let r = get_resident(&conn, "llamacpp").unwrap().unwrap();
+        assert_eq!(r.engine_id, "llamacpp");
+        assert_eq!(r.profile, "qwen");
+        assert!(r.resident);
+
+        // Re-applying without a flag preserves the resident bit (no demotion).
+        set_resident(&conn, "llamacpp", "qwen2", None).unwrap();
+        let r = get_resident(&conn, "llamacpp").unwrap().unwrap();
+        assert_eq!(r.profile, "qwen2");
+        assert!(r.resident, "flag preserved on re-bind");
+
+        // Explicit non-resident overrides.
+        set_resident(&conn, "llamacpp", "qwen2", Some(false)).unwrap();
+        let r = get_resident(&conn, "llamacpp").unwrap().unwrap();
+        assert!(!r.resident);
+
+        // Two slots coexist independently.
+        set_resident(&conn, "ollama", "qwen-ollama", Some(true)).unwrap();
+        let all = list_residents(&conn).unwrap();
+        assert_eq!(all.len(), 2);
+
+        clear_resident(&conn, "llamacpp").unwrap();
+        assert_eq!(get_resident(&conn, "llamacpp").unwrap(), None);
+        assert!(list_residents(&conn).unwrap().len() == 1);
     }
 
     #[test]

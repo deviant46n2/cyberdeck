@@ -70,8 +70,12 @@ deck profile new --model <path> --engine llamacpp --name custom \   # from flags
     [--port 18000] [--alias qwen3.8-27b] [--ctx 32768] [--ngl 64] [--draft <gguf>]
 deck profile list [--json]
 
-deck use <name> [--dry-run]                # render+install unit (.bak first),
-                                           # restart service, health-wait, ctx ladder
+deck use <name> [--dry-run] [--managed] [--resident]
+                                            # render+install unit (.bak first),
+                                            # restart service, health-wait, ctx ladder
+deck engines status [--host 127.0.0.1]     # live PORT MAP per engine slot
+deck engines stop <engine>                 # stop a slot, other residents stay up
+deck engines list | bin <engine> [path]    # runtime registry / per-engine binary
 
 deck bringup --model <path> --engine <llamacpp|freetoken> \
     [--name <loadout>] [--fast] [--dry-run]
@@ -81,6 +85,17 @@ deck bringup --model <path> --engine <llamacpp|freetoken> \
 working. On a failed load it walks `ctx_size` → the profile's `ctx_ladder`,
 then restores the last-good `.bak`. `--dry-run` prints the generated unit
 without touching the live service.
+
+### Multi-model residency (PORT MAP)
+
+Each engine owns a **fixed port slot** — llama.cpp `:18000`, FreeToken `:1919`,
+Ollama `:11434` — with its own systemd unit, so all three can run at once.
+`deck use --resident` binds a loadout to its engine's slot **and** runs it
+alongside the other slots (plain `deck use` stays the one-at-a-time swap). The
+binding is recorded in the `residents` table; `deck engines status` shows the
+live map — bound profile, systemd/health state, resident flag — and
+`deck engines stop <engine>` takes a single slot down without touching the
+rest. The app's `port_map_status` surfaces the same map to the UI.
 
 ```sh
 deck bench record [--engine llamacpp] [--host 127.0.0.1] [--port 18000] \

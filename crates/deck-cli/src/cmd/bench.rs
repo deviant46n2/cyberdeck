@@ -5,7 +5,7 @@ use anyhow::Result;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use deck_core::profile::{Engine, ModelSource};
+use deck_core::profile::Engine;
 
 use super::parse_engine;
 
@@ -79,40 +79,9 @@ fn chrono_like(at: i64) -> String {
     format!("{h:02}:{m:02}:{s:02} UTC")
 }
 
-/// Top-level `*.gguf` files of a directory, or the single file itself.
-fn quant_files(model: &Path) -> Result<Vec<PathBuf>> {
-    if model.is_dir() {
-        let mut files: Vec<PathBuf> = std::fs::read_dir(model)?
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| p.is_file() && p.extension().is_some_and(|x| x == "gguf"))
-            .collect();
-        if files.is_empty() {
-            anyhow::bail!("no *.gguf files found in {model:?}");
-        }
-        files.sort();
-        Ok(files)
-    } else if model.extension().is_some_and(|x| x == "gguf") {
-        Ok(vec![model.to_path_buf()])
-    } else {
-        anyhow::bail!("{model:?} is neither a directory nor a .gguf file")
-    }
-}
-
 /// Parse repeatable `--task "label=prompt"` flags.
 fn parse_tasks(tasks: &[String]) -> Result<Vec<(String, String)>> {
-    if tasks.is_empty() {
-        anyhow::bail!("pass at least one --task \"label=prompt\"");
-    }
-    tasks
-        .iter()
-        .map(|t| {
-            t.split_once('=')
-                .map(|(l, p)| (l.trim().to_string(), p.trim().to_string()))
-                .filter(|(l, p)| !l.is_empty() && !p.is_empty())
-                .ok_or_else(|| anyhow::anyhow!("--task must be \"label=prompt\", got {t:?}"))
-        })
-        .collect()
+    deck_engines::grid::parse_tasks(tasks)
 }
 
 /// Parsed matrix knobs shared down to the grid runner.
@@ -140,15 +109,7 @@ impl GridOpts {
         }
         // Seed any engine without an explicit --bin from the per-engine DB
         // config, so a machine configured once needs no repeated flags.
-        if let Ok(conn) = deck_core::store::open(&deck_core::store::default_db_path()) {
-            for e in [Engine::LlamaCpp, Engine::FreeToken, Engine::Ollama] {
-                if !bins.contains_key(&e)
-                    && let Ok(Some(b)) = deck_core::store::get_engine_bin(&conn, e.store_id())
-                {
-                    bins.insert(e, PathBuf::from(b));
-                }
-            }
-        }
+        bins = deck_engines::grid::resolve_bins(&bins);
         Ok(Self {
             tasks,
             runs,
@@ -165,44 +126,11 @@ fn build_cells(
     engines: &[String],
     ollama: &[String],
 ) -> Result<Vec<deck_engines::matrix::MatrixCell>> {
-    let parsed_engines: Vec<Engine> = engines
+    let parsed: Vec<Engine> = engines
         .iter()
         .map(|e| parse_engine(e))
         .collect::<Result<_>>()?;
-    for e in &parsed_engines {
-        if e.model_source() != ModelSource::LocalPath {
-            anyhow::bail!(
-                "{} cannot serve arbitrary ~/models GGUFs — put Ollama models on --ollama",
-                e.descriptor().display
-            );
-        }
-    }
-
-    let mut cells: Vec<deck_engines::matrix::MatrixCell> = Vec::new();
-    for f in quant_files(model)? {
-        let label = f
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| f.display().to_string());
-        for e in &parsed_engines {
-            cells.push(deck_engines::matrix::MatrixCell {
-                engine: *e,
-                model_id: f.display().to_string(),
-                display: label.clone(),
-            });
-        }
-    }
-    for oid in ollama {
-        cells.push(deck_engines::matrix::MatrixCell {
-            engine: Engine::Ollama,
-            model_id: oid.clone(),
-            display: oid.clone(),
-        });
-    }
-    if cells.is_empty() {
-        anyhow::bail!("nothing to grid — pass --model <gguf|dir> and/or --ollama ids");
-    }
-    Ok(cells)
+    deck_engines::grid::build_cells(model, &parsed, ollama)
 }
 
 /// The scientific grid: local quants × local-source engines, plus any requested

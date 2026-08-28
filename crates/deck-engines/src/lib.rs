@@ -21,7 +21,10 @@ mod inference;
 mod systemd;
 mod unit;
 
+pub mod status;
+
 pub mod compare;
+pub mod grid;
 pub mod matrix;
 pub mod rewire;
 pub mod scoring;

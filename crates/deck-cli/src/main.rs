@@ -62,6 +62,11 @@ enum Commands {
         /// MANAGED: also repoint dsh + opencode at the applied engine's port
         #[arg(long)]
         managed: bool,
+        /// Resident: bind this loadout to its engine's fixed PORT MAP slot and
+        /// run it *alongside* other engine slots instead of treating it as a
+        /// one-at-a-time swap
+        #[arg(long)]
+        resident: bool,
     },
     /// Benchmark a live engine: probe /metrics and record, or list history
     Bench {
@@ -182,6 +187,18 @@ enum BenchCmd {
 enum EngineCmd {
     /// List registered runtimes and their configured binaries
     List,
+    /// Show the live PORT MAP: each engine's fixed slot, bound profile,
+    /// systemd/health state, and resident flag
+    Status {
+        /// Host used to probe engine health (default loopback)
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+    },
+    /// Stop an engine's unit and clear its port-map binding (other residents stay up)
+    Stop {
+        /// engine id: llamacpp | freetoken | ollama
+        engine: String,
+    },
     /// Show or set an engine's executable path
     Bin {
         /// engine id: llamacpp | freetoken | ollama
@@ -269,7 +286,8 @@ fn main() -> Result<()> {
             name,
             dry_run,
             managed,
-        } => cmd::use_cmd::run(name, dry_run, managed),
+            resident,
+        } => cmd::use_cmd::run(name, dry_run, managed, resident),
         Commands::Bench { action } => match action {
             BenchCmd::Record {
                 engine,
@@ -317,6 +335,8 @@ fn main() -> Result<()> {
         } => cmd::bringup::run(model, engine, fast, name, dry_run, bin),
         Commands::Engines { action } => match action {
             EngineCmd::List => cmd::engines::list(),
+            EngineCmd::Status { host } => cmd::engines::status(&host),
+            EngineCmd::Stop { engine } => cmd::engines::stop(&engine),
             EngineCmd::Bin {
                 engine,
                 path,

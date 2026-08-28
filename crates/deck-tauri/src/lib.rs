@@ -11,10 +11,12 @@ pub use deck_core::profile::{Engine, EngineDescriptor, ModelSource, Profile};
 
 mod bench;
 mod bringup;
+mod compare;
 mod console;
 mod downloads;
 mod fit;
 mod market;
+mod portmap;
 mod profiles;
 mod scan;
 mod test;
@@ -74,6 +76,7 @@ pub use bench::{BenchRow, EngineStatus, bench_history, bench_now, engine_status}
 pub use bringup::{
     BringupLine, BringupPhase, BringupResult, FitBreakdown, bringup_start, test_model_start,
 };
+pub use compare::{CandidateStanding, CompareReport, ScoredTrial, compare_run};
 pub use console::{OpDone, OpLine, OpStarted, opencode_run, opencode_stop};
 pub use downloads::{
     DownloadDone, DownloadErr, DownloadEvt, DownloadStarted, download_cancel, download_remove,
@@ -84,6 +87,7 @@ pub use market::{
     MarketFileRow, MarketHit, SignalRow, browse_org, market_files, market_search, signals_check,
     watch_add, watch_remove, watchlist,
 };
+pub use portmap::{PortMapSlot, port_map_status};
 pub use profiles::{
     ProfileRow, UseResult, delete_profile, list_profiles, render_profile_unit, save_profile,
     use_profile,
