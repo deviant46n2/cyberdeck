@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import * as api from "../api";
+import * as br from "../lib/br";
 import EngineBins from "./EngineBins";
 import PortMap from "./PortMap";
+import { useEngineList } from "../lib/engines";
 
 const ENGINE_NODES: { engine: string; host: string; port: number }[] = [
   { engine: "LlamaCpp", host: "127.0.0.1", port: 18000 },
@@ -31,6 +33,8 @@ export default function Hud({
   const [showBins, setShowBins] = useState(false);
   const [showPorts, setShowPorts] = useState(true);
   const [ctx, setCtx] = useState(32768);
+  const [bringupEngine, setBringupEngine] = useState<api.EngineId>("llamacpp");
+  const localEngines = useEngineList("LocalPath");
   const [status, setStatus] = useState<api.EngineStatus[]>([]);
   const [sessions, setSessions] = useState<
     { id: string; prompt: string; log: string[]; running: boolean }[]
@@ -157,6 +161,29 @@ export default function Hud({
           <option value="">model — {active ? "loadout default" : "auto"}</option>
           {models.map((m) => <option key={m.path} value={m.path}>{m.name}</option>)}
         </select>
+        {models.length > 0 && localEngines.length > 0 && (
+          <div style={{display:"flex", gap:4, alignItems:"center"}}>
+            <select
+              value={bringupEngine}
+              onChange={(e) => setBringupEngine(e.target.value as api.EngineId)}
+              title="engine for one-click load"
+              style={{background:"#0e0e18", border:"1px solid #232336", color:"var(--text)", padding:"6px 10px", fontSize:11, fontFamily:"inherit", minWidth:90}}
+            >
+              {localEngines.map((en) => (
+                <option key={en.id} value={en.id}>{en.id === "llamacpp" ? "LCPP" : en.id === "freetoken" ? "FT" : en.id}</option>
+              ))}
+            </select>
+            <button
+              className="action"
+              style={{fontSize:11, padding:"6px 10px", fontWeight:"bold"}}
+              onClick={() => harnessModel && br.startBringup(harnessModel, bringupEngine)}
+              disabled={!harnessModel}
+              title={`LOAD ${bringupEngine} — derive max-ctx, verify on test port, then go live`}
+            >
+              LOAD
+            </button>
+          </div>
+        )}
         <button className="ghost" style={{fontSize:11, padding:"6px 10px"}} onClick={()=>setShowAdvanced((v)=>!v)}>
           {showAdvanced ? "− basic" : "+ controls"}
         </button>
