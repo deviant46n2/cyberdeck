@@ -254,6 +254,7 @@ export interface PortMapSlot {
   profile: string | null;
   resident: boolean;
   state: "up" | "starting" | "down";
+  fit_verdict: string | null;
 }
 
 export const portMapStatus = (host: string) =>

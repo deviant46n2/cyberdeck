@@ -8,6 +8,12 @@ const STATE_COLOR: Record<string, string> = {
   down: "var(--dim2)",
 };
 
+const VERDICT_COLOR: Record<string, string> = {
+  PASS: "var(--pass)",
+  WARN: "var(--warn)",
+  OOM: "var(--oom)",
+};
+
 /** PORT MAP — the residency card. One row per engine's fixed slot: live
  * state, the profile bound to it (from the residents table), and the latest
  * recorded tok/s so you can see where to type before you type. Stopping a
@@ -81,6 +87,20 @@ export default function PortMap({ onChanged }: { onChanged?: () => void }) {
               <span className="mono" style={{ fontSize: 10, color: b ? "var(--cyan)" : "var(--dim2)", width: 92, textAlign: "right" }} title={b ? `${b.model} @ ctx ${b.ctx.toLocaleString()}` : "no bench reading"}>
                 {b ? `${b.tps.toFixed(1)} tok/s` : "—"}
               </span>
+              {s.fit_verdict && (
+                <span
+                  className="mono"
+                  style={{
+                    fontSize: 10,
+                    color: VERDICT_COLOR[s.fit_verdict] ?? "var(--dim2)",
+                    width: 54,
+                    textAlign: "right",
+                  }}
+                  title={`fit: ${s.fit_verdict}`}
+                >
+                  {s.fit_verdict}
+                </span>
+              )}
               {s.state !== "down" && (
                 <button
                   className="ghost"

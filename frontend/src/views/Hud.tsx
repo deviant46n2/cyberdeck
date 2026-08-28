@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import * as api from "../api";
 import * as br from "../lib/br";
+import { latestBySlot, slotKey } from "../lib/portmap";
 import EngineBins from "./EngineBins";
 import PortMap from "./PortMap";
 import { useEngineList } from "../lib/engines";
@@ -39,6 +40,10 @@ export default function Hud({
   const [sessions, setSessions] = useState<
     { id: string; prompt: string; log: string[]; running: boolean }[]
   >([]);
+  const [residents, setResidents] = useState<api.PortMapSlot[]>([]);
+  const [benchBySlot, setBenchBySlot] = useState<Map<string, { tps: number; ctx: number; model: string; at: number }>>(
+    () => new Map()
+  );
   const sessionsRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -51,11 +56,24 @@ export default function Hud({
     );
   }, []);
 
+  // Fetch residents + bench history for chat header (fit + tok/s per resident)
+  const refetchResidents = useCallback(async () => {
+    const [slots, hist] = await Promise.all([
+      api.portMapStatus("127.0.0.1"),
+      api.benchHistory(),
+    ]);
+    setResidents(slots);
+    setBenchBySlot(latestBySlot(hist));
+  }, []);
+
   useEffect(() => {
     Promise.all(ENGINE_NODES.map((n) => api.engineStatus(n.engine, n.host, n.port).catch(() => null))).then((r) =>
       setStatus(r.filter(Boolean) as api.EngineStatus[])
     );
-  }, []);
+    refetchResidents();
+    const t = window.setInterval(() => void refetchResidents(), 15000);
+    return () => window.clearInterval(t);
+  }, [refetchResidents]);
 
   // if the default opencode model (freetoken) is offline but llamacpp is up, default the harness to llamacpp
   useEffect(() => {
@@ -141,8 +159,8 @@ export default function Hud({
           freetoken :1919 is offline — defaulting harness to <b>llamacpp/qwen3.8-27b</b> (:18000 is live). Pick a model above to override.
         </div>
       )}
-      {/* top bar — model/loadout pills */}
-      <div style={{display:"flex", gap:8, alignItems:"center", padding:"10px 0 14px", flexWrap:"wrap", justifyContent:"center"}}>
+      {/* top bar — model/loadout pills + resident summary */}
+      <div style={{display:"flex", gap:8, alignItems:"center", padding:"10px 0 6px", flexWrap:"wrap", justifyContent:"center"}}>
         <select
           value={loadout}
           onChange={(e) => setLoadout(e.target.value)}
@@ -193,19 +211,27 @@ export default function Hud({
         <button className="ghost" style={{fontSize:11, padding:"6px 10px"}} onClick={()=>setShowBins((v)=>!v)}>
           {showBins ? "− bins" : "bins"}
         </button>
-        {active && (
-          <button
-            className="ghost"
-            style={{fontSize:11, padding:"6px 10px"}}
-            onClick={async()=>{ const r=await api.useProfile(active.name,true); onUnit(r.unit); }}
-            title="preview unit"
-          >
-            preview
-          </button>
-        )}
       </div>
 
-      {showPorts && <PortMap onChanged={reprobe} />}
+      {/* Resident chat header — fit verdict + tok/s per live slot */}
+      {residents.some((r) => r.resident && r.profile) && (
+        <div style={{display:"flex", gap:8, alignItems:"center", justifyContent:"center", flexWrap:"wrap", paddingBottom:8, fontSize:10}}>
+          {residents
+            .filter((r) => r.resident && r.profile)
+            .map((r) => {
+              const b = benchBySlot.get(slotKey(r.engine, r.port));
+              const verdictColor = r.fit_verdict === "PASS" ? "var(--pass)" : r.fit_verdict === "WARN" ? "var(--warn)" : r.fit_verdict === "OOM" ? "var(--oom)" : "var(--dim2)";
+              return (
+                <span key={r.engine} className="mono" style={{display:"flex", alignItems:"center", gap:4, color:"var(--text)"}}>
+                  <span style={{width:6, height:6, borderRadius:"50%", background: r.state === "up" ? "var(--pass)" : r.state === "starting" ? "var(--warn)" : "var(--dim2)", boxShadow: r.state === "up" ? "0 0 6px rgba(0,255,157,0.5)" : "none"}} />
+                  <span>{r.profile}</span>
+                  {r.fit_verdict && <span style={{color: verdictColor}}>{r.fit_verdict}</span>}
+                  {b && <span style={{color:"var(--cyan)"}}>{b.tps.toFixed(1)} tok/s</span>}
+                </span>
+              );
+            })}
+        </div>
+      )}
       {showBins && (
         <EngineBins
           onDone={() => {

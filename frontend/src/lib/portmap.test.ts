@@ -47,9 +47,9 @@ describe("latestBySlot", () => {
 describe("sortSlots", () => {
   it("orders up before starting before down", () => {
     const out = sortSlots([
-      { engine: "ollama", display: "Ollama", port: 11434, profile: null, resident: false, state: "down" },
-      { engine: "freetoken", display: "FreeToken", port: 1919, profile: "ft-x", resident: true, state: "up" },
-      { engine: "llamacpp", display: "llama.cpp", port: 18000, profile: "q", resident: false, state: "starting" },
+      { engine: "ollama", display: "Ollama", port: 11434, profile: null, resident: false, state: "down", fit_verdict: null },
+      { engine: "freetoken", display: "FreeToken", port: 1919, profile: "ft-x", resident: true, state: "up", fit_verdict: null },
+      { engine: "llamacpp", display: "llama.cpp", port: 18000, profile: "q", resident: false, state: "starting", fit_verdict: null },
     ]);
     expect(out.map((s) => s.engine)).toEqual(["freetoken", "llamacpp", "ollama"]);
   });

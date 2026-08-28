@@ -3,6 +3,8 @@
 //! the Tauri door to the same residency state `deck engines status` reads — the
 //! single truth lives in the store's `residents` table + the descriptor registry.
 
+use crate::fit;
+use deck_core::profile::Profile;
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -14,6 +16,9 @@ pub struct PortMapSlot {
     pub resident: bool,
     /// "up" (answers on port), "starting" (unit active, port not up yet), "down".
     pub state: String,
+    /// Fit verdict for the bound profile (PASS/WARN/OOM) — computed from the
+    /// profile's model + ctx_size so the chat header can show where to type.
+    pub fit_verdict: Option<String>,
 }
 
 /// Build the full PORT MAP status. Probes are one-shot and non-blocking so a
@@ -30,6 +35,16 @@ pub fn port_map_status(host: &str) -> Vec<PortMapSlot> {
         .map(|r| (r.engine_id.clone(), r))
         .collect();
 
+    // Cache profiles by name for fit computation
+    let profiles: Vec<Profile> = conn
+        .as_ref()
+        .and_then(|c| deck_core::store::list_profiles(c).ok())
+        .unwrap_or_default();
+    let profile_by_name: std::collections::HashMap<String, Profile> = profiles
+        .into_iter()
+        .map(|p| (p.name.clone(), p))
+        .collect();
+
     deck_core::profile::Engine::all()
         .into_iter()
         .map(|e| {
@@ -43,13 +58,32 @@ pub fn port_map_status(host: &str) -> Vec<PortMapSlot> {
                 "down".to_string()
             };
             let r = by_engine.get(d.id);
+            let profile_name = r.map(|r| r.profile.clone());
+            let fit_verdict = profile_name.as_ref().and_then(|name| {
+                profile_by_name.get(name).and_then(|p| {
+                    // Run fit estimate for this profile's model + ctx
+                    let model_path = std::path::PathBuf::from(&p.model);
+                    fit(
+                        model_path,
+                        p.ctx_size,
+                        0.5,   // kv_bytes default
+                        p.n_gpu_layers,
+                        None,  // kv_layers
+                        1600,  // reserve
+                        p.ft_backend.as_deref() == Some("offload"),
+                    )
+                    .ok()
+                    .map(|f| f.verdict)
+                })
+            });
             PortMapSlot {
                 engine: d.id.to_string(),
                 display: d.display.to_string(),
                 port: d.default_port,
-                profile: r.map(|r| r.profile.clone()),
+                profile: profile_name,
                 resident: r.map(|r| r.resident).unwrap_or(false),
                 state,
+                fit_verdict,
             }
         })
         .collect()
