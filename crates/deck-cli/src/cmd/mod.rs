@@ -13,11 +13,8 @@ pub(crate) mod scan;
 pub(crate) mod use_cmd;
 
 pub(crate) fn parse_engine(s: &str) -> Result<deck_core::profile::Engine> {
-    match s {
-        "llamacpp" | "llama" | "llama.cpp" => Ok(deck_core::profile::Engine::LlamaCpp),
-        "freetoken" | "ft" => Ok(deck_core::profile::Engine::FreeToken),
-        other => anyhow::bail!("unknown engine '{other}' (llamacpp|freetoken)"),
-    }
+    deck_core::profile::Engine::parse(s)
+        .ok_or_else(|| anyhow::anyhow!("unknown engine '{s}' (llamacpp|freetoken|ollama)"))
 }
 
 pub(crate) fn with_profiles_db() -> Result<(PathBuf, rusqlite::Connection)> {

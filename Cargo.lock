@@ -684,6 +684,7 @@ dependencies = [
  "anyhow",
  "deck-core",
  "serde",
+ "serde_json",
  "ureq",
 ]
 

@@ -30,6 +30,8 @@ pub(crate) fn new(
         p.bin = b;
     } else if p.engine == deck_core::profile::Engine::FreeToken {
         p.bin = PathBuf::from("ft");
+    } else if p.engine == deck_core::profile::Engine::Ollama {
+        p.bin = PathBuf::from("ollama");
     }
     let (_db, mut conn) = with_profiles_db()?;
     deck_core::store::upsert_profile(&mut conn, &p)?;
@@ -48,6 +50,12 @@ pub(crate) fn import(engine: String, script: PathBuf, name: String) -> Result<()
         }
         deck_core::profile::Engine::FreeToken => {
             deck_core::importer::import_freetoken_script(&script, &name)?
+        }
+        deck_core::profile::Engine::Ollama => {
+            anyhow::bail!(
+                "import supports llama.cpp / FreeToken launch scripts; Ollama models live in \
+                 its own store (ollama pull)"
+            )
         }
     };
     let (_db, mut conn) = with_profiles_db()?;

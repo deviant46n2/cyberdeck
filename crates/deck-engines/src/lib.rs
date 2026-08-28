@@ -1,10 +1,13 @@
 //! Engine control: render systemd units from a Profile, install them with
-//! timestamped backups of whatever was there before, and supervise the live
-//! service (start/stop/health-wait, context fallback ladder). Split across
-//! three focused modules:
-//!   - `unit`    — unit-file rendering (pure)
-//!   - `systemd` — install/backup/start/stop/apply lifecycle
-//!   - `health`  — /health probing, /metrics fetch, headless bring-up verify
+//! timestamped backups of whatever was there before, supervise the live
+//! service (start/stop/health-wait, context fallback ladder), and — the
+//! scientific heart — boot engines headlessly and run generation probes.
+//! Split across focused modules:
+//!   - `unit`     — unit-file rendering (pure)
+//!   - `systemd`  — install/backup/start/stop/apply lifecycle
+//!   - `health`   — /health probing, /metrics fetch, headless bring-up verify
+//!   - `inference`— per-protocol generation (OpenAI-compat, Ollama /api/chat)
+//!   - `matrix`   — the model × quant × engine grid runner
 //!
 //! Safety discipline (from the cyberdeck contract):
 //!   - never overwrite a unit without first writing `<unit>.bak.<timestamp>`
@@ -12,15 +15,18 @@
 //!   - on a failed load, walk the profile's ctx ladder, then restore last-good
 
 mod health;
+mod inference;
 mod systemd;
 mod unit;
 
+pub mod matrix;
 pub mod rewire;
 
 pub use health::{
     BringupOutcome, OOM_MARKERS, fetch_metrics, health_ok, health_ok_any, health_wait, parse_tps,
     verify_on_test_port,
 };
+pub use inference::run_prompt;
 pub use systemd::{
     apply, backup_existing, backup_file, install, reload_daemon, restore_last_good, start, stop,
 };
@@ -79,6 +85,23 @@ mod tests {
         assert!(a.contains(&"3000".into()));
         assert!(a.contains(&"--port".into()));
         assert!(a.contains(&"1919".into()));
+    }
+
+    #[test]
+    fn build_args_ollama_is_env_configured_daemon() {
+        let p = Profile {
+            engine: Engine::Ollama,
+            bin: PathBuf::from("/usr/bin/ollama"),
+            host: "127.0.0.1".into(),
+            port: 18997,
+            ..Profile::default()
+        };
+        let a = build_args(&p);
+        assert_eq!(a, vec!["serve"], "ollama takes no model/host args at exec");
+        let u = render_unit(&p);
+        assert!(u.contains("OLLAMA_HOST=127.0.0.1:18997"));
+        assert!(u.contains("ExecStart=/usr/bin/ollama serve"));
+        assert!(!u.contains("LLAMACPP_API_KEY"), "no llama.cpp auth env");
     }
 
     #[test]

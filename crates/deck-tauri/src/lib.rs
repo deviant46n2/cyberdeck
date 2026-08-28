@@ -7,7 +7,7 @@
 //! Each command family lives in its own module; the root re-exports the public
 //! surface so `src-tauri` can keep addressing commands as `deck_tauri::name`.
 
-pub use deck_core::profile::{Engine, Profile};
+pub use deck_core::profile::{Engine, EngineDescriptor, ModelSource, Profile};
 
 mod bench;
 mod bringup;
@@ -18,6 +18,12 @@ mod market;
 mod profiles;
 mod scan;
 mod test;
+
+/// The runtime registry for the engine menu: every runtime the app knows
+/// (llama.cpp / FreeToken / Ollama). Pure read from the descriptor table.
+pub fn engine_list() -> Vec<EngineDescriptor> {
+    deck_core::profile::engine_descriptors()
+}
 
 pub use bench::{BenchRow, EngineStatus, bench_history, bench_now, engine_status};
 pub use bringup::{

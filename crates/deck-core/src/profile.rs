@@ -9,45 +9,136 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum Engine {
     LlamaCpp,
     FreeToken,
+    Ollama,
+}
+
+/// Where a runtime's models live. This decides what "a model" means to that
+/// runtime and what the download manager can hand it.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ModelSource {
+    /// GGUF / safetensors files on local disk (`~/models`) — the download
+    /// manager's domain; an engine launch takes a model path.
+    LocalPath,
+    /// Models in Ollama's own store, addressed by id (e.g. `qwen3:8b`), pulled
+    /// with `ollama pull` — never a local GGUF path.
+    OllamaStore,
+}
+
+/// The HTTP generation API a runtime speaks. The bench matrix harness uses
+/// this to run the same task against any runtime.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum EngineProtocol {
+    /// POST /v1/chat/completions (llama.cpp, FreeToken).
+    OpenAiChat,
+    /// POST /api/chat (Ollama). tok/s is derived per-request from
+    /// `eval_count` / `eval_duration`, not a /metrics gauge.
+    OllamaChat,
+}
+
+/// Everything a runtime needs to exist, in one place. Adding an engine is one
+/// enum variant + one descriptor row (+ one protocol arm for the harness).
+/// Store id, unit name, ports, model source, and HTTP protocol live here; nothing
+/// else hardcodes them.
+#[derive(Debug, Clone, Serialize)]
+pub struct EngineDescriptor {
+    /// Stable store id (the `engine` column in the profiles table):
+    /// `llamacpp` / `freetoken` / `ollama`.
+    pub id: &'static str,
+    /// Human name for menus.
+    pub display: &'static str,
+    pub unit_name: &'static str,
+    /// Live PORT MAP slot (what clients point at).
+    pub default_port: u16,
+    /// Dedicated headless verification slot, distinct from every live port so
+    /// a bring-up never collides with a resident engine.
+    pub test_port: u16,
+    pub model_source: ModelSource,
+    pub protocol: EngineProtocol,
 }
 
 impl Engine {
+    pub fn descriptor(self) -> &'static EngineDescriptor {
+        match self {
+            Engine::LlamaCpp => &EngineDescriptor {
+                id: "llamacpp",
+                display: "llama.cpp",
+                unit_name: "llama-server.service",
+                default_port: 18000,
+                test_port: 18999,
+                model_source: ModelSource::LocalPath,
+                protocol: EngineProtocol::OpenAiChat,
+            },
+            Engine::FreeToken => &EngineDescriptor {
+                id: "freetoken",
+                display: "FreeToken",
+                unit_name: "freetoken.service",
+                default_port: 1919,
+                test_port: 18998,
+                model_source: ModelSource::LocalPath,
+                protocol: EngineProtocol::OpenAiChat,
+            },
+            Engine::Ollama => &EngineDescriptor {
+                id: "ollama",
+                display: "Ollama",
+                unit_name: "ollama.service",
+                default_port: 11434,
+                test_port: 18997,
+                model_source: ModelSource::OllamaStore,
+                protocol: EngineProtocol::OllamaChat,
+            },
+        }
+    }
+
+    pub fn all() -> [Engine; 3] {
+        [Engine::LlamaCpp, Engine::FreeToken, Engine::Ollama]
+    }
+
+    /// The store id (`llamacpp` / `freetoken` / `ollama`).
+    pub fn store_id(self) -> &'static str {
+        self.descriptor().id
+    }
+
     pub fn systemd_unit(&self) -> &'static str {
-        match self {
-            Engine::LlamaCpp => "llama-server.service",
-            Engine::FreeToken => "freetoken.service",
-        }
+        self.descriptor().unit_name
     }
 
-    /// Live PORT MAP slot (what clients point at).
     pub fn default_port(self) -> u16 {
-        match self {
-            Engine::LlamaCpp => 18000,
-            Engine::FreeToken => 1919,
-        }
+        self.descriptor().default_port
     }
 
-    /// Dedicated headless verification slot, distinct from every live port so
-    /// a bring-up never collides with a resident engine.
     pub fn test_port(self) -> u16 {
-        match self {
-            Engine::LlamaCpp => 18999,
-            Engine::FreeToken => 18998,
-        }
+        self.descriptor().test_port
+    }
+
+    pub fn model_source(self) -> ModelSource {
+        self.descriptor().model_source
+    }
+
+    pub fn protocol(self) -> EngineProtocol {
+        self.descriptor().protocol
     }
 
     /// Accepts the spellings used across CLI flags and UI buttons.
     pub fn parse(s: &str) -> Option<Engine> {
         match s.to_ascii_lowercase().as_str() {
-            "llamacpp" | "llama" | "llama.cpp" | "LlamaCpp" => Some(Engine::LlamaCpp),
-            "freetoken" | "ft" | "FreeToken" => Some(Engine::FreeToken),
+            "llamacpp" | "llama" | "llama.cpp" => Some(Engine::LlamaCpp),
+            "freetoken" | "ft" => Some(Engine::FreeToken),
+            "ollama" => Some(Engine::Ollama),
             _ => None,
         }
     }
+}
+
+/// The full runtime registry, for menus and the matrix harness.
+pub fn engine_descriptors() -> Vec<EngineDescriptor> {
+    Engine::all()
+        .into_iter()
+        .map(|e| e.descriptor().clone())
+        .collect()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -191,6 +282,12 @@ pub fn derive_from_meta(
     meta: &crate::model::ModelMeta,
     engine: Engine,
 ) -> Result<DerivedLoadout, String> {
+    if engine.model_source() != ModelSource::LocalPath {
+        return Err(format!(
+            "{} serves models from its own store (a local GGUF path cannot be derived for it)",
+            engine.descriptor().display
+        ));
+    }
     let vram_mb = kind_of_vram();
 
     // Weights are small enough to hold on GPU wholesale in the common case;
@@ -337,26 +434,66 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn engine_map_is_single_source_of_truth() {
-        for e in [Engine::LlamaCpp, Engine::FreeToken] {
+    fn engine_registry_is_single_source_of_truth() {
+        // no two engines share a live slot or a test slot, and no test slot
+        // collides with any live slot.
+        let live: Vec<u16> = Engine::all().iter().map(|e| e.default_port()).collect();
+        let test: Vec<u16> = Engine::all().iter().map(|e| e.test_port()).collect();
+        assert_eq!(live.len(), 3);
+        assert_eq!(test.len(), 3);
+        let mut ul = live.clone();
+        ul.sort_unstable();
+        ul.dedup();
+        assert_eq!(ul.len(), 3, "live ports must be unique");
+        let mut ut = test.clone();
+        ut.sort_unstable();
+        ut.dedup();
+        assert_eq!(ut.len(), 3, "test ports must be unique");
+        assert!(
+            test.iter().all(|t| !live.contains(t)),
+            "test slots must not collide with live slots"
+        );
+        for e in Engine::all() {
             assert_ne!(
                 e.test_port(),
                 e.default_port(),
-                "test slot must not collide with live slot"
-            );
-            assert_ne!(
-                Engine::LlamaCpp.test_port(),
-                Engine::FreeToken.default_port(),
-                "llamacpp test port must not collide with freetoken live port"
+                "{e:?}: test slot must not collide with live slot"
             );
         }
         assert_eq!(Engine::LlamaCpp.default_port(), 18000);
         assert_eq!(Engine::FreeToken.default_port(), 1919);
+        assert_eq!(Engine::Ollama.default_port(), 11434);
         // CLI + UI spellings parse; junk doesn't.
-        for s in ["llamacpp", "LLAMA.CPP", "freetoken", "ft", "FreeToken"] {
+        for s in [
+            "llamacpp",
+            "LLAMA.CPP",
+            "freetoken",
+            "ft",
+            "FreeToken",
+            "ollama",
+        ] {
             assert!(Engine::parse(s).is_some(), "{s} should parse");
         }
-        assert!(Engine::parse("ollama").is_none());
+        assert!(Engine::parse("cranberry").is_none());
+        // the store id round-trips exactly.
+        assert_eq!(Engine::LlamaCpp.store_id(), "llamacpp");
+        assert_eq!(Engine::Ollama.store_id(), "ollama");
+        for e in Engine::all() {
+            assert_eq!(Engine::parse(e.store_id()), Some(e), "{e:?} id round-trips");
+        }
+        // Non-local runtimes can't derive a GGUF loadout — engines that serve a
+        // local path all can.
+        for e in Engine::all() {
+            let m = meta(4, 48, 5120, "qwen3.8-27b", "qwen3");
+            if e.model_source() == ModelSource::LocalPath {
+                assert!(derive_from_meta(&m, e).is_ok(), "{e:?} should derive");
+            } else {
+                assert!(
+                    derive_from_meta(&m, e).is_err(),
+                    "{e:?} cannot derive a local GGUF path"
+                );
+            }
+        }
     }
 
     fn meta(weight_gib: u64, n_layers: u64, n_embd: u64, name: &str, arch: &str) -> ModelMeta {

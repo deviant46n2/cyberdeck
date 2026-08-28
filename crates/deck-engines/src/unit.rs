@@ -112,6 +112,13 @@ pub fn build_args(p: &Profile) -> Vec<String> {
             }
             a
         }
+        Engine::Ollama => {
+            // A daemon, not a per-model launch: no model path at exec time and
+            // no host/port flags — Ollama binds via the OLLAMA_HOST env
+            // rendered by `render_unit`. Models are addressed per-request by id
+            // via /api/chat (see EngineProtocol::OllamaChat).
+            vec!["serve".into()]
+        }
     }
 }
 
@@ -128,10 +135,7 @@ pub fn render_unit(p: &Profile) -> String {
     s.push_str(&format!(
         "Description=cyberdeck: {} ({})\n",
         p.name,
-        match p.engine {
-            Engine::LlamaCpp => "llama.cpp",
-            Engine::FreeToken => "FreeToken",
-        }
+        p.engine.descriptor().display
     ));
     s.push_str("After=network.target\n\n");
     s.push_str("[Service]\n");
@@ -141,6 +145,11 @@ pub fn render_unit(p: &Profile) -> String {
     s.push_str("RestartSec=5\n");
     if p.engine == Engine::LlamaCpp {
         s.push_str("Environment=LLAMACPP_API_KEY=llamacpp-local\n");
+    }
+    if p.engine == Engine::Ollama {
+        // Ollama binds where OLLAMA_HOST points; the port contract lives here,
+        // not in ExecStart args (ollama serve takes no --host/--port flags).
+        s.push_str(&format!("Environment=OLLAMA_HOST={}:{}\n", p.host, p.port));
     }
     if let Some(m) = p.mem_max_mb {
         s.push_str(&format!("MemoryMax={}M\n", m));

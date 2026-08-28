@@ -204,10 +204,7 @@ pub fn ensure_profile_schema(conn: &Connection) -> Result<()> {
 
 pub fn upsert_profile(conn: &Connection, profile: &crate::profile::Profile) -> Result<()> {
     let body = serde_json::to_string(profile)?;
-    let engine = match profile.engine {
-        crate::profile::Engine::LlamaCpp => "llamacpp",
-        crate::profile::Engine::FreeToken => "freetoken",
-    };
+    let engine = profile.engine.store_id();
     conn.execute(
         "INSERT INTO profiles (name, engine, body) VALUES (?1,?2,?3)
          ON CONFLICT(name) DO UPDATE SET engine=?2, body=?3",
@@ -279,6 +276,80 @@ pub fn prune(conn: &Connection, keep: &[String]) -> Result<usize> {
 }
 
 // ---------------------------------------------------------------- benchmark
+
+/// One recorded trial in the scientific model × quant × engine matrix.
+/// Keeps the RAW ingredients (token counts, wall ms) so downstream math can
+/// recompute derived metrics; `tok_s_kind` says whether the speed is the
+/// engine's native timing or a wall-based estimate.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MatrixRow {
+    pub engine: String,
+    pub model: String,
+    pub ctx: u32,
+    pub task: String,
+    pub run: u32,
+    /// RUNNING when the sample was taken, else the boot verdict that ended the
+    /// cell (OOM / CRASH / TIMEOUT / ERROR).
+    pub verdict: String,
+    pub summary: String,
+    pub gen_tokens: Option<u64>,
+    pub prompt_tokens: Option<u64>,
+    pub tok_s: Option<f64>,
+    pub tok_s_kind: String,
+    pub wall_ms: u64,
+    pub output: String,
+    /// Unix epoch seconds.
+    pub at: i64,
+}
+
+pub fn ensure_matrix_schema(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS matrix_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            engine TEXT NOT NULL,
+            model TEXT NOT NULL,
+            ctx INTEGER NOT NULL,
+            task TEXT NOT NULL,
+            run INTEGER NOT NULL,
+            verdict TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            gen_tokens INTEGER,
+            prompt_tokens INTEGER,
+            tok_s REAL,
+            tok_s_kind TEXT,
+            wall_ms INTEGER,
+            output TEXT,
+            at INTEGER NOT NULL
+        )",
+    )?;
+    Ok(())
+}
+
+pub fn insert_matrix_run(conn: &Connection, row: &MatrixRow) -> Result<i64> {
+    conn.execute(
+        "INSERT INTO matrix_runs
+            (engine, model, ctx, task, run, verdict, summary, gen_tokens,
+             prompt_tokens, tok_s, tok_s_kind, wall_ms, output, at)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
+        rusqlite::params![
+            row.engine,
+            row.model,
+            row.ctx,
+            row.task,
+            row.run,
+            row.verdict,
+            row.summary,
+            row.gen_tokens,
+            row.prompt_tokens,
+            row.tok_s,
+            row.tok_s_kind,
+            row.wall_ms,
+            row.output,
+            row.at,
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
 
 /// A single live throughput measurement pulled from a running engine's
 /// Prometheus `/metrics` endpoint.

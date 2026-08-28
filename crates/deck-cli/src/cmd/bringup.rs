@@ -13,6 +13,7 @@ pub(crate) fn run(
     fast: bool,
     name: Option<String>,
     dry_run: bool,
+    bin: Option<String>,
 ) -> Result<()> {
     let eng = parse_engine(&engine)?;
     println!(
@@ -21,6 +22,9 @@ pub(crate) fn run(
     );
     let derived = deck_core::profile::derive_loadout(&model, eng).map_err(anyhow::Error::msg)?;
     let mut p = derived.profile;
+    if let Some(b) = &bin {
+        p.bin = PathBuf::from(b);
+    }
 
     if let Some(n) = &name {
         p.name = n.clone();

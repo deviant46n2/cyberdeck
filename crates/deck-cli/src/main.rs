@@ -87,6 +87,9 @@ enum Commands {
         /// Name to save the derived loadout under (default: from model name)
         #[arg(long)]
         name: Option<String>,
+        /// Per-engine binary override, "engine=path" (else the engine's default)
+        #[arg(long)]
+        bin: Option<String>,
     },
 }
 
@@ -107,6 +110,33 @@ enum BenchCmd {
     },
     /// List recent benchmark readings
     List,
+    /// Run a headless model × engine grid (quant × runtime) and record every trial
+    Matrix {
+        /// GGUF file, or a directory whose top-level *.gguf files are the quants to grid
+        #[arg(long)]
+        model: PathBuf,
+        /// local-source engines to run the GGUFs through (llamacpp|freetoken)
+        #[arg(long, value_delimiter = ',', default_value = "llamacpp")]
+        engines: Vec<String>,
+        /// Ollama model ids to grid (each runs through ollama)
+        #[arg(long, value_delimiter = ',')]
+        ollama: Vec<String>,
+        /// Repeatable: task to run as "label=prompt"
+        #[arg(long)]
+        task: Vec<String>,
+        /// Repeats per cell (variance sampling)
+        #[arg(long, default_value_t = 1)]
+        runs: u32,
+        /// Max generation tokens per request
+        #[arg(long, default_value_t = 512)]
+        max_tokens: u32,
+        /// Per-engine binary override, "engine=path" (repeatable; else profile default)
+        #[arg(long)]
+        bin: Vec<String>,
+        /// Write machine-readable results (all trials) to this JSON path
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -194,6 +224,19 @@ fn main() -> Result<()> {
                 ctx,
             } => cmd::bench::record(engine, host, port, model, ctx),
             BenchCmd::List => cmd::bench::list(),
+            BenchCmd::Matrix {
+                model,
+                engines,
+                ollama,
+                task,
+                runs,
+                max_tokens,
+                bin,
+                out,
+            } => {
+                let opts = cmd::bench::GridOpts::parse(&task, runs, max_tokens, &bin)?;
+                cmd::bench::matrix(model, engines, ollama, opts, out)
+            }
         },
         Commands::Bringup {
             model,
@@ -201,6 +244,7 @@ fn main() -> Result<()> {
             fast,
             name,
             dry_run,
-        } => cmd::bringup::run(model, engine, fast, name, dry_run),
+            bin,
+        } => cmd::bringup::run(model, engine, fast, name, dry_run, bin),
     }
 }

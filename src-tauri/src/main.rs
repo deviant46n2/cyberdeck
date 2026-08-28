@@ -286,6 +286,11 @@ fn tweak_profile(
 }
 
 #[tauri::command]
+fn engine_list() -> Vec<deck_tauri::EngineDescriptor> {
+    deck_tauri::engine_list()
+}
+
+#[tauri::command]
 fn delete_model(path: String, delete_file: bool) -> Result<usize, String> {
     deck_tauri::delete_model(&path, delete_file).map_err(|e| e.to_string())
 }
@@ -331,7 +336,8 @@ fn main() {
             opencode_stop,
             hw_info,
             browse_fit_remote,
-            tweak_profile
+            tweak_profile,
+            engine_list
         ])
         .run(tauri::generate_context!())
         .expect("error while running cyberdeck");

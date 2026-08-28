@@ -43,11 +43,12 @@ pub fn health_ok(host: &str, port: u16) -> bool {
 }
 
 /// Liveness check that accepts whichever endpoint the engine happens to expose
-/// (/health for llama.cpp, /v1/models for FreeToken). Used by the loadout test
-/// harness so a healthy engine isn't misread as a timeout.
+/// (/health for llama.cpp and FreeToken, /v1/models for FreeToken's API,
+/// /api/tags for Ollama). Used by the loadout test harness so a healthy engine
+/// isn't misread as a timeout.
 pub fn health_ok_any(host: &str, port: u16) -> bool {
     let agent = agent(Duration::from_secs(2));
-    for path in ["/health", "/v1/models"] {
+    for path in ["/health", "/v1/models", "/api/tags"] {
         let url = format!("http://{host}:{port}{path}");
         if matches!(agent.get(&url).call(), Ok(r) if r.status() == 200) {
             return true;
@@ -137,6 +138,89 @@ pub struct BringupOutcome {
     pub tok_per_sec: Option<f64>,
 }
 
+/// Spawn a draft loadout directly (no systemd writes) on a dedicated test port
+/// and wait until it is healthy, OOMs, crashes, or times out. On success the
+/// live child is returned — the caller OWNS it and MUST kill it. On failure the
+/// child is already reaped and the (verdict, summary) is returned.
+///
+/// Ollama binds via `OLLAMA_HOST` (no `--host`/$`--port` flags), so that env is
+/// set on the child here — it only exists in the rendered unit otherwise.
+pub fn boot_on_test_port(
+    p: &Profile,
+    test_port: u16,
+    timeout: Duration,
+) -> Result<std::process::Child, (String, String)> {
+    let mut draft = p.clone();
+    draft.port = test_port;
+    let host = draft.host.clone();
+    let args = build_args(&draft);
+    let mut cmd = Command::new(&draft.bin);
+    cmd.args(&args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if draft.engine == deck_core::profile::Engine::Ollama {
+        cmd.env("OLLAMA_HOST", format!("{host}:{test_port}"));
+    }
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            return Err((
+                "ERROR".into(),
+                format!("failed to spawn {}: {e}", draft.bin.display()),
+            ));
+        }
+    };
+    let stderr = child.stderr.take().expect("test engine stderr unavailable");
+    let oom = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let oom_t = oom.clone();
+    std::thread::spawn(move || {
+        let reader = std::io::BufReader::new(stderr);
+        for line in reader.lines().map_while(Result::ok) {
+            let low = line.to_lowercase();
+            if OOM_MARKERS.iter().any(|m| low.contains(m)) {
+                oom_t.store(true, Ordering::SeqCst);
+            }
+        }
+    });
+
+    let start = Instant::now();
+    let mut verdict = (
+        "TIMEOUT",
+        "never reported healthy within the timeout".to_string(),
+    );
+    loop {
+        if oom.load(Ordering::SeqCst) {
+            verdict = (
+                "OOM",
+                "engine logged an out-of-memory / allocation failure".into(),
+            );
+            break;
+        }
+        if let Some(s) = child.try_wait().ok().flatten() {
+            verdict = ("CRASH", format!("engine exited early with status {s}"));
+            break;
+        }
+        if health_ok_any(&host, test_port) {
+            verdict = (
+                "RUNNING",
+                "engine loaded and is serving on the test port".into(),
+            );
+            break;
+        }
+        if start.elapsed() > timeout {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    if verdict.0 == "RUNNING" {
+        Ok(child)
+    } else {
+        let _ = child.kill();
+        let _ = child.wait();
+        Err((verdict.0.to_string(), verdict.1))
+    }
+}
+
 /// Headlessly verify a draft loadout on a dedicated test port **without
 /// touching the live service**, watching for OOM and health. If the max-ctx
 /// candidate OOMs or fails to serve, walks the profile's ctx ladder down and
@@ -147,96 +231,31 @@ pub struct BringupOutcome {
 /// only the verified-good profile is ever installed/started by the caller.
 pub fn verify_on_test_port(p: &Profile, test_port: u16, timeout: Duration) -> BringupOutcome {
     let mut draft = p.clone();
-    draft.port = test_port;
     let host = draft.host.clone();
 
     for ctx in draft.active_ladder() {
         // (re-)apply ladder ctx to the draft.
         draft.ctx_size = ctx;
-        let args = build_args(&draft);
-        let mut child = match Command::new(&draft.bin)
-            .args(&args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-        {
-            Ok(c) => c,
-            Err(e) => {
-                return BringupOutcome {
-                    ctx,
-                    verdict: "ERROR".into(),
-                    summary: format!("failed to spawn {}: {e}", draft.bin.display()),
-                    tok_per_sec: None,
-                };
-            }
-        };
-        let stderr = child.stderr.take().expect("stderr");
-        let oom = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let oom_t = oom.clone();
-        std::thread::spawn(move || {
-            let reader = std::io::BufReader::new(stderr);
-            for line in reader.lines().map_while(Result::ok) {
-                let low = line.to_lowercase();
-                if OOM_MARKERS.iter().any(|m| low.contains(m)) {
-                    oom_t.store(true, Ordering::SeqCst);
-                }
-            }
-        });
-
-        let start = Instant::now();
-        let mut verdict = (
-            "TIMEOUT",
-            "never reported healthy within the timeout".to_string(),
-        );
-        loop {
-            if oom.load(Ordering::SeqCst) {
-                verdict = (
-                    "OOM",
-                    "engine logged an out-of-memory / allocation failure".into(),
-                );
-                break;
-            }
-            if let Some(s) = child.try_wait().ok().flatten() {
-                verdict = ("CRASH", format!("engine exited early with status {s}"));
-                break;
-            }
-            if health_ok_any(&host, test_port) {
-                verdict = (
-                    "RUNNING",
-                    "engine loaded and is serving on the test port".into(),
-                );
-                break;
-            }
-            if start.elapsed() > timeout {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(500));
-        }
-
-        // Always tear down the test child before moving on.
-        let _ = child.kill();
-        let _ = child.wait();
-
-        match verdict.0 {
-            "RUNNING" => {
+        match boot_on_test_port(&draft, test_port, timeout) {
+            Ok(mut child) => {
+                // Sample tok/s WHILE the engine is still alive (/metrics dies
+                // with the process), then tear down.
                 let tps = fetch_metrics(&host, test_port)
                     .ok()
                     .and_then(|m| parse_tps(&m));
+                let _ = child.kill();
+                let _ = child.wait();
                 return BringupOutcome {
                     ctx,
                     verdict: "RUNNING".into(),
-                    summary: verdict.1,
+                    summary: "engine loaded and is serving on the test port".into(),
                     tok_per_sec: tps,
                 };
             }
-            "OOM" | "CRASH" | "TIMEOUT" => {
-                eprintln!(
-                    "[bringup] ctx={ctx} {}: {} — walking ladder down",
-                    verdict.0, verdict.1
-                );
+            Err((verdict, summary)) => {
+                eprintln!("[bringup] ctx={ctx} {verdict}: {summary} — walking ladder down");
                 continue;
             }
-            _ => {}
         }
     }
 
