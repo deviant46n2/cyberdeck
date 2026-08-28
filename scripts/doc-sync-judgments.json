@@ -7,6 +7,10 @@
     {
       "commit": "0ac4e9d",
       "reason": "loadout-editor feature: the loadout machinery + fit estimate + choose-ladder/OOM behavior is documented in feature-parity.md (§Direction, ctx_ladder, bringup flow), consolidated in the 98447a6 docs commit"
+    },
+    {
+      "commit": "00ddf18",
+      "reason": "feat(ui) HUD LOAD button: exposes existing bringup_start Tauri command + br.ts store from the chat surface; no new API/config/behavior — the flagship flow (derive → verify → apply → bench) was already documented in feature-parity.md #0 and the bringup drawer implementation"
     }
   ]
 }
