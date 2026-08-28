@@ -3,7 +3,7 @@
 //! loading weights.
 
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
@@ -47,9 +47,49 @@ fn keep(entry: &walkdir::DirEntry) -> bool {
     true
 }
 
+/// Classify a single filesystem entry as a model: a safetensors model dir (a
+/// dir carrying config.json + weights) or a GGUF file larger than 1 MiB.
+fn classify(path: &Path, metadata: &std::fs::Metadata) -> Option<ModelMeta> {
+    if metadata.is_dir() {
+        if path.join("config.json").exists() && safetensors::is_model_dir(path) {
+            return safetensors::open_dir(path).ok();
+        }
+        return None;
+    }
+    if !metadata.is_file() {
+        return None;
+    }
+    if path.extension().and_then(|e| e.to_str()) == Some("gguf") {
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if name.contains("ggml-vocab") {
+            return None;
+        }
+        if metadata.len() > 1_000_000 {
+            // Parses the GGUF header only — never loads weights.
+            if let Ok(g) = crate::gguf::GgufMeta::read(path) {
+                return Some(g.to_meta(path));
+            }
+        }
+    }
+    None
+}
+
+fn dedup_and_sort(mut found: Vec<ModelMeta>) -> Vec<ModelMeta> {
+    let mut seen: HashSet<String> = HashSet::new();
+    // Deduplicate by canonical path: roots can overlap (HOME covers ~/models,
+    // ~/.cache/huggingface/hub), which would otherwise double-list models.
+    found.retain(|m| {
+        let key = std::fs::canonicalize(&m.path)
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| m.path.display().to_string());
+        seen.insert(key)
+    });
+    found.sort_by(|a, b| a.path.cmp(&b.path));
+    found
+}
+
 pub fn scan(roots: &[PathBuf]) -> Result<Vec<ModelMeta>> {
     let mut found = Vec::new();
-    let mut seen: HashSet<String> = HashSet::new();
 
     for root in roots {
         if !root.exists() {
@@ -61,37 +101,32 @@ pub fn scan(roots: &[PathBuf]) -> Result<Vec<ModelMeta>> {
             .filter_entry(keep)
             .flatten()
         {
-            let path = entry.path();
-            if entry.file_type().is_dir() {
-                if path.join("config.json").exists() && safetensors::is_model_dir(path) {
-                    if let Ok(meta) = safetensors::open_dir(path) {
-                        found.push(meta);
-                    }
-                }
-            } else if path.extension().and_then(|e| e.to_str()) == Some("gguf") {
-                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if name.contains("ggml-vocab") {
-                    continue;
-                }
-                if let Some(meta) = entry.metadata().ok().filter(|m| m.len() > 1_000_000) {
-                    if meta.is_file() {
-                        if let Ok(g) = crate::gguf::GgufMeta::read(path) {
-                            found.push(g.to_meta(path));
-                        }
-                    }
-                }
+            let metadata = match entry.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            if let Some(meta) = classify(entry.path(), &metadata) {
+                found.push(meta);
             }
         }
     }
 
-    // Deduplicate by canonical path: roots can overlap (HOME covers ~/models,
-    // ~/.cache/huggingface/hub), which would otherwise double-list models.
-    found.retain(|m| {
-        let key = std::fs::canonicalize(&m.path)
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|_| m.path.display().to_string());
-        seen.insert(key)
-    });
-    found.sort_by(|a, b| a.path.cmp(&b.path));
-    Ok(found)
+    Ok(dedup_and_sort(found))
+}
+
+/// Index an explicit set of paths (files that just landed on disk) without
+/// walking any roots. Used by the downloader so a finished transfer shows up
+/// in the vault immediately, with no full-tree rescan.
+pub fn scan_paths(paths: &[&Path]) -> Result<Vec<ModelMeta>> {
+    let mut found = Vec::new();
+    for path in paths {
+        let metadata = match std::fs::metadata(path) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if let Some(meta) = classify(path, &metadata) {
+            found.push(meta);
+        }
+    }
+    Ok(dedup_and_sort(found))
 }

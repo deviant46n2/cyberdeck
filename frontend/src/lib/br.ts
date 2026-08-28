@@ -1,11 +1,15 @@
-// Single-flight bring-up (LOAD) state, backed by bringup-* Tauri events.
-// The Bringup drawer mounted in App is the only consumer; VAULT buttons call
-// startBringup().
+// Single-flight bring-up (LOAD) and headless TEST state, backed by the
+// bringup-* Tauri events shared by deck-tauri::bringup_start and
+// deck-tauri::test_model_start. The Bringup drawer mounted in App is the only
+// consumer; VAULT / DOWNLOADS buttons call startBringup() / startTest().
 import { listen } from "@tauri-apps/api/event";
 import * as api from "../api";
 
+export type BrMode = "load" | "test";
+
 export interface BrState {
   running: boolean;
+  mode: BrMode;
   phase: string; // derive | verify | apply | bench | done | error | idle
   lines: string[];
   result: api.BringupResult | null;
@@ -16,6 +20,7 @@ export interface BrState {
 
 let state: BrState = {
   running: false,
+  mode: "load",
   phase: "idle",
   lines: [],
   result: null,
@@ -79,7 +84,14 @@ export function init(): void {
 /** Kick off a one-click load. Errors surface as an immediate failed run. */
 export async function startBringup(modelPath: string, engine: string): Promise<void> {
   init();
-  state = { running: true, phase: "derive", lines: [`[load] ${modelPath} → ${engine}`], result: null, profile: null };
+  state = {
+    running: true,
+    mode: "load",
+    phase: "derive",
+    lines: [`[load] ${modelPath} → ${engine}`],
+    result: null,
+    profile: null,
+  };
   bump();
   try {
     await api.bringupStart(modelPath, engine);
@@ -98,10 +110,40 @@ export async function startBringup(modelPath: string, engine: string): Promise<v
   }
 }
 
+/** Headless TEST — derive + verify on the test port; the live service is never
+ * touched and nothing is installed. Result marks itself "NOT applied". */
+export async function startTest(modelPath: string, engine: string): Promise<void> {
+  init();
+  state = {
+    running: true,
+    mode: "test",
+    phase: "derive",
+    lines: [`[test] ${modelPath} → ${engine} (headless, not applied)`],
+    result: null,
+    profile: null,
+  };
+  bump();
+  try {
+    await api.testModelStart(modelPath, engine);
+  } catch (e) {
+    const msg = String(e);
+    state = {
+      ...state,
+      running: false,
+      phase: msg.includes("already running") ? state.phase : "error",
+      lines: [...state.lines, `[reject] ${msg}`].slice(-9),
+      result: msg.includes("already running")
+        ? null
+        : { ok: false, summary: msg, name: "", port: 0, ctx: 0, tps: null, fit: null },
+    };
+    bump();
+  }
+}
+
 /** Clear the finished/failed card. No-op while a run is in flight. */
 export function dismiss(): void {
   if (state.running) return;
-  state = { running: false, phase: "idle", lines: [], result: null, profile: null };
+  state = { running: false, mode: "load", phase: "idle", lines: [], result: null, profile: null };
   bump();
 }
 

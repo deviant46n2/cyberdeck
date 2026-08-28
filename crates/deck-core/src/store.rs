@@ -160,7 +160,8 @@ pub fn delete_model(conn: &Connection, path: &str, delete_file: bool) -> Result<
 /// Delete all duplicate copies in a group except the cheapest one (the one with
 /// the smallest footprint). Returns the number of rows removed.
 pub fn dedup_delete(conn: &Connection, identity: &str, delete_file: bool) -> Result<usize> {
-    let mut stmt = conn.prepare("SELECT path, footprint FROM models WHERE arch = ?1 ORDER BY footprint ASC")?;
+    let mut stmt =
+        conn.prepare("SELECT path, footprint FROM models WHERE arch = ?1 ORDER BY footprint ASC")?;
     let rows: Vec<(String, i64)> = stmt
         .query_map([identity], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<Result<Vec<_>, _>>()?;

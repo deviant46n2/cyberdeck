@@ -1,16 +1,12 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../api";
 import * as dls from "../lib/dl";
+import { shardSet } from "../lib/shards";
+import { verdictClass } from "../lib/ui";
 
 function gib(size: number | null): string {
   if (size == null) return "?";
   return (size / 1_073_741_824).toFixed(2) + " GiB";
-}
-
-function verdictClass(v: string): string {
-  if (v === "PASS") return "pass";
-  if (v === "WARN") return "warn";
-  return "oom";
 }
 
 /** Extract param count from a repo name like "Qwen3.8-27B-GGUF" → "27B". */
@@ -192,7 +188,7 @@ export default function Browse() {
   /** Queue a download; auto-detects split-GGUF/safetensors shard sets. */
   const startDl = (repoId: string, rfilename: string) => {
     const allNames = (files[repoId] ?? []).map((f) => f.rfilename);
-    const parts = dls.shardSet(rfilename, allNames);
+    const parts = shardSet(rfilename, allNames);
     if (parts.length > 1) {
       setMsg(`queued ${parts.length}-part set of ${rfilename} — watch DOWNLOADS`);
       void dls.enqueueSequence(repoId, parts);

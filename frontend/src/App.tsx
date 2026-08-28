@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import * as api from "./api";
+import * as dls from "./lib/dl";
 import Hud from "./views/Hud";
 import Vault from "./views/Vault";
 import Loadouts from "./views/Loadouts";
@@ -11,7 +12,7 @@ import Downloads from "./views/Downloads";
 import Bringup from "./views/Bringup";
 import Dedup from "./views/Dedup";
 
-const VIEWS = ["HUD", "VAULT", "DEDUP", "SIGNALS", "MARKET", "BROWSE", "LOADOUTS", "CONSOLE"];
+const VIEWS = ["HUD", "VAULT", "DEDUP", "SIGNALS", "MARKET", "BROWSE", "DOWNLOADS", "LOADOUTS", "CONSOLE"];
 
 export default function App() {
   const [view, setView] = useState("HUD");
@@ -20,6 +21,7 @@ export default function App() {
   const [dups, setDups] = useState<api.DupRow[]>([]);
   const [profiles, setProfiles] = useState<api.ProfileRow[]>([]);
   const [unit, setUnit] = useState<string>("");
+  const activeCount = useSyncExternalStore(dls.subscribe, dls.activeCount);
 
   const refresh = async () => {
     const r = await api.scanWithEvent();
@@ -46,6 +48,23 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Attach the global download store at boot so MARKET/BROWSE transfers work
+  // even before the DOWNLOADS tab is opened; any completed file triggers a
+  // debounced rescan so the vault stays in sync with disk.
+  useEffect(() => {
+    dls.init();
+    let t: number | undefined;
+    const off = dls.onDone(() => {
+      window.clearTimeout(t);
+      t = window.setTimeout(() => void refresh(), 800);
+    });
+    return () => {
+      off();
+      window.clearTimeout(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <div className="app">
       <aside className="sidebar">
@@ -59,6 +78,9 @@ export default function App() {
               onClick={() => setView(v)}
             >
               {v}
+              {v === "DOWNLOADS" && activeCount > 0 && (
+                <span className="dl-badge">{activeCount}</span>
+              )}
             </button>
           ))}
         </nav>
@@ -88,13 +110,13 @@ export default function App() {
         {view === "SIGNALS" && <Signals />}
         {view === "MARKET" && <Market />}
         {view === "BROWSE" && <Browse />}
+        {view === "DOWNLOADS" && <Downloads />}
         {view === "LOADOUTS" && (
           <Loadouts profiles={profiles} onUnit={setUnit} onChanged={refresh} />
         )}
         {view === "CONSOLE" && <Console unit={unit} />}
       </main>
 
-      <Downloads onChanged={refresh} />
       <Bringup />
 
       <div

@@ -138,7 +138,7 @@ button** that calls it.
 | Odysseus | cyberdeck | Status | Notes |
 |----------|-----------|--------|-------|
 | Hardware-aware model recs | fit estimator + `hw_vram()` | `PARTIAL` | We compute fit for a *given* model. Gap: **suggest** models that fit your VRAM. Close via remote GGUF header fetch across MARKET/BROWSE → rank by fit. |
-| Downloads | MARKET → `~/models` | `DONE` | GGUF HEAD-resolved sizes, one-click download. |
+| Downloads | MARKET → `~/models` via the DOWNLOADS tab | `DONE` | GGUF HEAD-resolved sizes, one-click download. The tab is a resumable state machine, not fire-and-forget: MAX_ACTIVE=2 concurrent transfers behind a reorderable priority queue (`queued\|active\|paused\|done\|error`). |
 | Serving | systemd units, `deck use` | `DONE` | Alias+port contract, ctx ladder, `.bak`. Stronger than Odysseus. |
 | Quant-aware guidance | GgufMeta parse | `PARTIAL` | We know quant. Add "best quant that still PASSes" inference. |
 

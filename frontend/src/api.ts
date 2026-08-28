@@ -162,6 +162,13 @@ export const downloadStart = (repoId: string, rfilename: string) =>
   invoke<{ key: string }>("download_start", { repoId, rfilename });
 export const downloadCancel = (key: string) =>
   invoke<void>("download_cancel", { key });
+/** Cancel (if active) and drop the partial `.part` for a download. */
+export const downloadRemove = (key: string, rfilename: string) =>
+  invoke<void>("download_remove", { key, rfilename });
+
+/** Index an explicit set of landed files into the vault (no full rescan). */
+export const indexDownloaded = (paths: string[]) =>
+  invoke<number>("index_downloaded", { paths });
 
 // --- bring-up (one-click load pipeline) ---
 
@@ -191,6 +198,10 @@ export interface FitBreakdown {
 
 export const bringupStart = (model: string, engine: string, fast = false) =>
   invoke<void>("bringup_start", { model, engine, fast });
+
+/** Headless TEST — derive + verify on the test port, never touches live. */
+export const testModelStart = (model: string, engine: string) =>
+  invoke<void>("test_model_start", { model, engine });
 
 export const benchNow = (p: {
   engine: string;

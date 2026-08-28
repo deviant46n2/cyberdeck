@@ -1,6 +1,7 @@
 import { Fragment, useState } from "react";
 import * as api from "../api";
 import * as dls from "../lib/dl";
+import { shardSet } from "../lib/shards";
 
 function gib(size: number | null): string {
   if (size == null) return "?";
@@ -43,7 +44,7 @@ export default function Market() {
 
   /** Queue a download; auto-detects split-GGUF/safetensors shard sets. */
   const startDl = (repoId: string, rfilename: string, allNames: string[]) => {
-    const parts = dls.shardSet(rfilename, allNames);
+    const parts = shardSet(rfilename, allNames);
     if (parts.length > 1) {
       setMsg(`queued ${parts.length}-part set of ${rfilename} — watch DOWNLOADS`);
       void dls.enqueueSequence(repoId, parts);

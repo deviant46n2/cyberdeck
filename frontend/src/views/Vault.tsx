@@ -21,6 +21,10 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
     void br.startBringup(path, engine);
   };
 
+  const test = (path: string, engine: "llamacpp" | "freetoken") => {
+    void br.startTest(path, engine);
+  };
+
   const remove = async (path: string) => {
     if (!confirm(`Delete "${path}"\n\nThis removes the index entry and deletes the file from disk.`)) return;
     setDeleting((prev) => new Set(prev).add(path));
@@ -123,6 +127,26 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
                           style={{ fontSize: 9, padding: "3px 7px" }}
                           title="bring up via FreeToken offload — derive max-ctx → verify on test port → live"
                           onClick={() => load(m.path, "freetoken")}
+                        >
+                          FT
+                        </button>
+                      </div>
+                      <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
+                        <span className="dim" style={{ fontSize: 8, padding: "3px 0" }}>TEST</span>
+                        <button
+                          className="ghost"
+                          style={{ fontSize: 9, padding: "3px 7px", borderColor: "var(--magenta)", color: "var(--magenta)" }}
+                          title="headless test via llama.cpp — derive + verify on test port, NOT applied"
+                          onClick={() => test(m.path, "llamacpp")}
+                          disabled={m.path.toLowerCase().endsWith(".safetensors")}
+                        >
+                          LCPP
+                        </button>
+                        <button
+                          className="ghost"
+                          style={{ fontSize: 9, padding: "3px 7px", borderColor: "var(--magenta)", color: "var(--magenta)" }}
+                          title="headless test via FreeToken offload — derive + verify on test port, NOT applied"
+                          onClick={() => test(m.path, "freetoken")}
                         >
                           FT
                         </button>

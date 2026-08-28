@@ -84,7 +84,11 @@ export default function Bringup() {
       {/* Header */}
       <div className="row" style={{ justifyContent: "space-between", marginBottom: 8 }}>
         <span className="mono" style={{ fontSize: 10, letterSpacing: 1, color: failed ? "var(--oom)" : state.running ? "var(--magenta)" : "var(--pass)" }}>
-          {state.running ? `LOAD · ${state.phase.toUpperCase()}` : failed ? "LOAD FAILED" : "LOAD OK"}
+          {state.running
+            ? `${state.mode === "test" ? "TEST" : "LOAD"} · ${state.phase.toUpperCase()}`
+            : failed
+              ? `${state.mode === "test" ? "TEST" : "LOAD"} FAILED`
+              : `${state.mode === "test" ? "TEST" : "LOAD"} OK`}
         </span>
         {!state.running && (
           <button className="ghost" style={{ fontSize: 9, padding: "2px 7px" }} onClick={br.dismiss}>
@@ -93,7 +97,7 @@ export default function Bringup() {
         )}
       </div>
 
-      {/* Phase dots */}
+      {/* Phase dots (TEST never hits apply/bench, so they stay dim) */}
       {state.running && (
         <div className="row" style={{ gap: 4, marginBottom: 10 }}>
           {PHASES.map((ph, i) => (
@@ -105,6 +109,7 @@ export default function Bringup() {
                 background:
                   i < phaseIdx ? "var(--pass)" : i === phaseIdx ? "var(--magenta)" : "#23232f",
                 boxShadow: i === phaseIdx ? "0 0 8px rgba(255,46,196,0.5)" : undefined,
+                opacity: state.mode === "test" && (ph === "apply" || ph === "bench") ? 0.25 : 1,
               }}
             />
           ))}

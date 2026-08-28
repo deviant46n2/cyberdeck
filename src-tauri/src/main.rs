@@ -6,8 +6,8 @@
 // it freezes the window. Everything remote is async below; fast local SQLite
 // reads stay sync on purpose.
 use deck_tauri::{DupRow, FitRow, ModelRow, ProfileRow, ScanResult, TweakResult, UseResult};
-use tauri::Emitter;
 use std::path::PathBuf;
+use tauri::Emitter;
 
 async fn blocking<T, F>(f: F) -> Result<T, String>
 where
@@ -155,13 +155,32 @@ fn download_cancel(key: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn bringup_start(
+fn download_remove(key: String, rfilename: String) -> Result<(), String> {
+    deck_tauri::download_remove(&key, &rfilename).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn index_downloaded(paths: Vec<String>) -> Result<usize, String> {
+    blocking(move || deck_tauri::index_downloaded(&paths).map_err(|e| e.to_string())).await
+}
+
+#[tauri::command]
+async fn bringup_start(
     model: String,
     engine: String,
     fast: bool,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     deck_tauri::bringup_start(&app, &model, &engine, fast).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn test_model_start(
+    model: String,
+    engine: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    deck_tauri::test_model_start(&app, &model, &engine).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -301,7 +320,10 @@ fn main() {
             market_files,
             download_start,
             download_cancel,
+            download_remove,
+            index_downloaded,
             bringup_start,
+            test_model_start,
             bench_now,
             bench_history,
             engine_status,

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import * as api from "../api";
+import { verdictClass } from "../lib/ui";
 
 function defaultProfile(): api.Profile {
   return {
@@ -53,12 +54,6 @@ function kvBytes(t: string | null): number {
     default:
       return 0.5;
   }
-}
-
-function verdictClass(v: string): string {
-  if (v === "PASS") return "pass";
-  if (v === "WARN") return "warn";
-  return "oom";
 }
 
 const KV_TYPES = ["q4_0", "q4_1", "q5_0", "q5_1", "q6_0", "q8_0", "fp16", "fp32"];
