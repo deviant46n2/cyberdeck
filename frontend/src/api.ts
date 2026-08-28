@@ -48,6 +48,26 @@ export interface BenchRow {
   at: number;
 }
 
+// --- engine registry (mirrors deck_core::profile::EngineDescriptor) ---
+
+export type EngineId = "llamacpp" | "freetoken" | "ollama";
+export type EngineSource = "LocalPath" | "OllamaStore";
+
+/** One registered runtime: store id, display name, ports, where models come
+ * from, and the HTTP protocol it speaks. The UI derives engine menus from this
+ * — never from hardcoded buttons. */
+export interface EngineDescriptor {
+  id: EngineId;
+  display: string;
+  unit_name: string;
+  default_port: number;
+  test_port: number;
+  model_source: EngineSource;
+  protocol: "OpenAiChat" | "OllamaChat";
+}
+
+export const engineList = () => invoke<EngineDescriptor[]>("engine_list");
+
 /** Full editable loadout shape — mirrors deck_core::profile::Profile. */
 export interface Profile {
   name: string;

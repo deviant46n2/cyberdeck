@@ -84,12 +84,14 @@ pub fn bench_history() -> anyhow::Result<Vec<BenchRow>> {
         .collect())
 }
 
-/// Liveness of a single engine endpoint.
+/// Liveness of a single engine endpoint. Accepts whichever liveness endpoint
+/// the runtime exposes (`health_ok_any`) so an Ollama daemon isn't misread as
+/// down just because it has no `/health`.
 pub fn engine_status(engine: &str, host: &str, port: u16) -> EngineStatus {
     EngineStatus {
         engine: engine.to_string(),
         host: host.to_string(),
         port,
-        up: deck_engines::health_ok(host, port),
+        up: deck_engines::health_ok_any(host, port),
     }
 }

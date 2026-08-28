@@ -5,6 +5,7 @@ import * as api from "../api";
 const ENGINE_NODES: { engine: string; host: string; port: number }[] = [
   { engine: "LlamaCpp", host: "127.0.0.1", port: 18000 },
   { engine: "FreeToken", host: "127.0.0.1", port: 1919 },
+  { engine: "Ollama", host: "127.0.0.1", port: 11434 },
 ];
 
 export default function Hud({

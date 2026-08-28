@@ -101,6 +101,10 @@ KV-qtype, MoE cache, or reasoning flags by hand.
 Net effect: **model + engine menu → working chat on the best-max-ctx config in
 a few seconds, with a benchmark row to prove it.** No flag surfing.
 
+The engine menus (VAULT load/test buttons, DOWNLOADS "TEST WITH" picker, HUD /
+CONSOLE status pills) all derive from the `engine_list` registry — a runtime
+appears everywhere the moment it's registered; nothing is a hardcoded button.
+
 Build as: `deck bringup --model <path> --engine freetoken [--dedicated-port]`
 CLI first (headless-tested like everything else), then a HUD/Chat **"LOAD"
 button** that calls it.

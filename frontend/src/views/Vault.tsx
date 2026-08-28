@@ -1,6 +1,7 @@
 import { useState } from "react";
 import * as api from "../api";
 import * as br from "../lib/br";
+import { useEngineList } from "../lib/engines";
 
 interface VaultProps {
   models: api.ModelRow[];
@@ -9,19 +10,27 @@ interface VaultProps {
   onReload: () => void;
 }
 
+function shortLabel(id: api.EngineId, display: string): string {
+  if (id === "llamacpp") return "LCPP";
+  if (id === "freetoken") return "FT";
+  if (id === "ollama") return "OLLAMA";
+  return display;
+}
+
 export default function Vault({ models, dups, onRefresh, onReload }: VaultProps) {
   const [deleting, setDeleting] = useState<Set<string>>(new Set());
   const [flash, setFlash] = useState<string | null>(null);
   const dupIds = new Set(dups.flatMap((d) => d.members));
+  const localEngines = useEngineList("LocalPath");
 
-  const load = (path: string, engine: "llamacpp" | "freetoken") => {
+  const load = (path: string, engine: api.EngineId) => {
     if (!confirm(`LOAD ${engine} — derive max-ctx, verify on test port, then go live?\n${path}`)) {
       return;
     }
     void br.startBringup(path, engine);
   };
 
-  const test = (path: string, engine: "llamacpp" | "freetoken") => {
+  const test = (path: string, engine: api.EngineId) => {
     void br.startTest(path, engine);
   };
 
@@ -112,44 +121,34 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
                       {m.path}
                     </td>
                     <td>
-                      <div style={{ display: "flex", gap: 4 }}>
-                        <button
-                          className="ghost"
-                          style={{ fontSize: 9, padding: "3px 7px" }}
-                          title="bring up via llama.cpp — derive max-ctx → verify on test port → live"
-                          onClick={() => load(m.path, "llamacpp")}
-                          disabled={m.path.toLowerCase().endsWith(".safetensors")}
-                        >
-                          LCPP
-                        </button>
-                        <button
-                          className="ghost"
-                          style={{ fontSize: 9, padding: "3px 7px" }}
-                          title="bring up via FreeToken offload — derive max-ctx → verify on test port → live"
-                          onClick={() => load(m.path, "freetoken")}
-                        >
-                          FT
-                        </button>
+                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                        {localEngines.map((en) => (
+                          <button
+                            key={en.id}
+                            className="ghost"
+                            style={{ fontSize: 9, padding: "3px 7px" }}
+                            title={`bring up via ${en.display} — derive max-ctx → verify on test port → live`}
+                            onClick={() => load(m.path, en.id)}
+                            disabled={m.path.toLowerCase().endsWith(".safetensors") && en.id !== "freetoken"}
+                          >
+                            {shortLabel(en.id, en.display)}
+                          </button>
+                        ))}
                       </div>
-                      <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
+                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 }}>
                         <span className="dim" style={{ fontSize: 8, padding: "3px 0" }}>TEST</span>
-                        <button
-                          className="ghost"
-                          style={{ fontSize: 9, padding: "3px 7px", borderColor: "var(--magenta)", color: "var(--magenta)" }}
-                          title="headless test via llama.cpp — derive + verify on test port, NOT applied"
-                          onClick={() => test(m.path, "llamacpp")}
-                          disabled={m.path.toLowerCase().endsWith(".safetensors")}
-                        >
-                          LCPP
-                        </button>
-                        <button
-                          className="ghost"
-                          style={{ fontSize: 9, padding: "3px 7px", borderColor: "var(--magenta)", color: "var(--magenta)" }}
-                          title="headless test via FreeToken offload — derive + verify on test port, NOT applied"
-                          onClick={() => test(m.path, "freetoken")}
-                        >
-                          FT
-                        </button>
+                        {localEngines.map((en) => (
+                          <button
+                            key={en.id}
+                            className="ghost"
+                            style={{ fontSize: 9, padding: "3px 7px", borderColor: "var(--magenta)", color: "var(--magenta)" }}
+                            title={`headless test via ${en.display} — derive + verify on test port, NOT applied`}
+                            onClick={() => test(m.path, en.id)}
+                            disabled={m.path.toLowerCase().endsWith(".safetensors") && en.id !== "freetoken"}
+                          >
+                            {shortLabel(en.id, en.display)}
+                          </button>
+                        ))}
                       </div>
                     </td>
                     <td>

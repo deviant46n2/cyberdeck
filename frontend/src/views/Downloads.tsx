@@ -1,6 +1,8 @@
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore, useState } from "react";
 import * as dls from "../lib/dl";
 import * as br from "../lib/br";
+import { EngineId } from "../api";
+import EnginePicker from "./EnginePicker";
 
 function fmtBytes(b: number): string {
   if (!b) return "—";
@@ -18,6 +20,7 @@ function fmtSpeed(s: number): string {
  * persistent list of active / queued / paused / finished transfers. */
 export default function Downloads() {
   const items = useSyncExternalStore(dls.subscribe, dls.getSnapshot);
+  const [engine, setEngine] = useState<EngineId>("llamacpp");
 
   useEffect(() => {
     dls.init();
@@ -42,6 +45,9 @@ export default function Downloads() {
   const row = (d: dls.DlEntry) => {
     const pct = d.total > 0 ? Math.min(100, (d.done / d.total) * 100) : null;
     const name = d.rfilename.split("/").pop() ?? d.key;
+    // Only llama.cpp-class runtimes take arbitrary GGUFs; non-GGUF files
+    // (e.g. safetensors pairs) test through the one runtime that can serve them.
+    const testEngine: EngineId = d.path?.endsWith(".gguf") ? engine : "freetoken";
     const arrows = (
       <>
         <span className="ghost" style={{ fontSize: 10, padding: "2px 6px" }} title="raise priority"
@@ -99,7 +105,7 @@ export default function Downloads() {
               {d.path && (
                 <button className="ghost" style={{ fontSize: 9, padding: "2px 7px", borderColor: "var(--magenta)", color: "var(--magenta)" }}
                   title={`headless test ${d.path} — derive + verify on test port, NOT applied`}
-                  onClick={() => void br.startTest(d.path as string, "freetoken")}>
+                  onClick={() => void br.startTest(d.path as string, testEngine)}>
                   TEST
                 </button>
               )}
@@ -153,11 +159,15 @@ export default function Downloads() {
     <div className="view">
       <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <div className="view-title" style={{ marginBottom: 0 }}>DOWNLOADS</div>
-        {finished.length > 0 && (
-          <button className="ghost" style={{ fontSize: 9, padding: "3px 8px" }} onClick={dls.clearFinished}>
-            CLEAR FINISHED
-          </button>
-        )}
+        <div className="row" style={{ gap: 8, alignItems: "center" }}>
+          <span className="dim" style={{ fontSize: 9, letterSpacing: 1 }}>TEST WITH</span>
+          <EnginePicker value={engine} onChange={setEngine} source="LocalPath" title="runtime used to headless-TEST finished downloads" />
+          {finished.length > 0 && (
+            <button className="ghost" style={{ fontSize: 9, padding: "3px 8px" }} onClick={dls.clearFinished}>
+              CLEAR FINISHED
+            </button>
+          )}
+        </div>
       </div>
 
       {section("DOWNLOADING", active.length, active.map(row))}
