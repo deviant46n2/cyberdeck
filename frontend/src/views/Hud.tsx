@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import * as api from "../api";
 import EngineBins from "./EngineBins";
+import PortMap from "./PortMap";
 
 const ENGINE_NODES: { engine: string; host: string; port: number }[] = [
   { engine: "LlamaCpp", host: "127.0.0.1", port: 18000 },
@@ -28,6 +29,7 @@ export default function Hud({
   const [loadout, setLoadout] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showBins, setShowBins] = useState(false);
+  const [showPorts, setShowPorts] = useState(true);
   const [ctx, setCtx] = useState(32768);
   const [status, setStatus] = useState<api.EngineStatus[]>([]);
   const [sessions, setSessions] = useState<
@@ -37,6 +39,13 @@ export default function Hud({
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const active = profiles.find((p) => p.name === loadout) ?? null;
+
+  // Re-probe liveness after residency changes (a stopped slot frees its port).
+  const reprobe = useCallback(() => {
+    void Promise.all(ENGINE_NODES.map((n) => api.engineStatus(n.engine, n.host, n.port).catch(() => null))).then((r) =>
+      setStatus(r.filter(Boolean) as api.EngineStatus[])
+    );
+  }, []);
 
   useEffect(() => {
     Promise.all(ENGINE_NODES.map((n) => api.engineStatus(n.engine, n.host, n.port).catch(() => null))).then((r) =>
@@ -151,6 +160,9 @@ export default function Hud({
         <button className="ghost" style={{fontSize:11, padding:"6px 10px"}} onClick={()=>setShowAdvanced((v)=>!v)}>
           {showAdvanced ? "− basic" : "+ controls"}
         </button>
+        <button className="ghost" style={{fontSize:11, padding:"6px 10px"}} onClick={()=>setShowPorts((v)=>!v)}>
+          {showPorts ? "− ports" : "ports"}
+        </button>
         <button className="ghost" style={{fontSize:11, padding:"6px 10px"}} onClick={()=>setShowBins((v)=>!v)}>
           {showBins ? "− bins" : "bins"}
         </button>
@@ -166,6 +178,7 @@ export default function Hud({
         )}
       </div>
 
+      {showPorts && <PortMap onChanged={reprobe} />}
       {showBins && (
         <EngineBins
           onDone={() => {

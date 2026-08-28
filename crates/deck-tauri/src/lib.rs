@@ -87,7 +87,7 @@ pub use market::{
     MarketFileRow, MarketHit, SignalRow, browse_org, market_files, market_search, signals_check,
     watch_add, watch_remove, watchlist,
 };
-pub use portmap::{PortMapSlot, port_map_status};
+pub use portmap::{PortMapSlot, engine_stop, port_map_status};
 pub use profiles::{
     ProfileRow, UseResult, delete_profile, list_profiles, render_profile_unit, save_profile,
     use_profile,

@@ -54,3 +54,17 @@ pub fn port_map_status(host: &str) -> Vec<PortMapSlot> {
         })
         .collect()
 }
+
+/// Stop one engine's unit and clear its port-map binding — the UI door to
+/// `deck engines stop`. Other residents are untouched; that is the essence of
+/// multi-model residency.
+pub fn engine_stop(engine_id: &str) -> anyhow::Result<()> {
+    let eng = deck_core::profile::Engine::parse(engine_id)
+        .ok_or_else(|| anyhow::anyhow!("unknown engine '{engine_id}'"))?;
+    let db = deck_core::store::default_db_path();
+    let conn = deck_core::store::open(&db)?;
+    deck_core::store::ensure_resident_schema(&conn)?;
+    deck_engines::stop(eng.systemd_unit())?;
+    deck_core::store::clear_resident(&conn, eng.store_id())?;
+    Ok(())
+}

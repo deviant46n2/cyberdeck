@@ -259,6 +259,11 @@ export interface PortMapSlot {
 export const portMapStatus = (host: string) =>
   invoke<PortMapSlot[]>("port_map_status", { host });
 
+/** Stop one engine's unit and clear its port-map binding; other residents
+ * stay up (the UI door to `deck engines stop`). */
+export const engineStop = (engine: string) =>
+  invoke<void>("engine_stop", { engine });
+
 // --- blind A/B compare ---
 export interface ScoredTrial {
   trial: string;

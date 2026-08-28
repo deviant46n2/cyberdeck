@@ -317,6 +317,13 @@ async fn port_map_status(host: String) -> Vec<deck_tauri::PortMapSlot> {
         .unwrap_or_default()
 }
 
+/// Stop one engine's unit and clear its port-map binding (UI door to
+/// `deck engines stop`); other residents are untouched.
+#[tauri::command]
+async fn engine_stop(engine: String) -> Result<(), String> {
+    blocking(move || deck_tauri::engine_stop(&engine).map_err(|e| e.to_string())).await
+}
+
 #[tauri::command]
 fn engine_bin_list() -> Vec<deck_tauri::EngineBinRow> {
     deck_tauri::engine_bin_list()
@@ -384,7 +391,8 @@ fn main() {
             engine_bin_list,
             engine_bin_set,
             engine_bin_clear,
-            port_map_status
+            port_map_status,
+            engine_stop
         ])
         .run(tauri::generate_context!())
         .expect("error while running cyberdeck");
