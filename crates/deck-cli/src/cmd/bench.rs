@@ -158,16 +158,13 @@ impl GridOpts {
     }
 }
 
-/// The scientific grid: local quants × local-source engines, plus any requested
-/// Ollama ids (each × ollama). Every cell is booted headlessly on the engine's
-/// dedicated test port, run through each task × run, recorded, then torn down.
-pub(crate) fn matrix(
-    model: PathBuf,
-    engines: Vec<String>,
-    ollama: Vec<String>,
-    opts: GridOpts,
-    out: Option<PathBuf>,
-) -> Result<()> {
+/// Build the flat grid: local quants × local-source engines, plus each
+/// requested Ollama id × ollama. Shared by `matrix` and `compare`.
+fn build_cells(
+    model: &Path,
+    engines: &[String],
+    ollama: &[String],
+) -> Result<Vec<deck_engines::matrix::MatrixCell>> {
     let parsed_engines: Vec<Engine> = engines
         .iter()
         .map(|e| parse_engine(e))
@@ -182,7 +179,7 @@ pub(crate) fn matrix(
     }
 
     let mut cells: Vec<deck_engines::matrix::MatrixCell> = Vec::new();
-    for f in quant_files(&model)? {
+    for f in quant_files(model)? {
         let label = f
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
@@ -199,12 +196,26 @@ pub(crate) fn matrix(
         cells.push(deck_engines::matrix::MatrixCell {
             engine: Engine::Ollama,
             model_id: oid.clone(),
-            display: oid,
+            display: oid.clone(),
         });
     }
     if cells.is_empty() {
         anyhow::bail!("nothing to grid — pass --model <gguf|dir> and/or --ollama ids");
     }
+    Ok(cells)
+}
+
+/// The scientific grid: local quants × local-source engines, plus any requested
+/// Ollama ids (each × ollama). Every cell is booted headlessly on the engine's
+/// dedicated test port, run through each task × run, recorded, then torn down.
+pub(crate) fn matrix(
+    model: PathBuf,
+    engines: Vec<String>,
+    ollama: Vec<String>,
+    opts: GridOpts,
+    out: Option<PathBuf>,
+) -> Result<()> {
+    let cells = build_cells(&model, &engines, &ollama)?;
 
     eprintln!(
         "[matrix] grid: {} cell(s), {} task(s) × {} run(s), max_tokens={}",
@@ -247,6 +258,65 @@ pub(crate) fn matrix(
         let json = serde_json::to_string_pretty(&rows)?;
         std::fs::write(&p, json)?;
         eprintln!("[matrix] wrote {} trial(s) to {p:?}", rows.len());
+    }
+    Ok(())
+}
+
+/// Blind A/B over the grid: same execution as `matrix` (every trial persists to
+/// `matrix_runs`), scored offline and re-revealed under opaque trial ids. The
+/// printed table is the scored ranking; the JSON (--out) carries every output
+/// grouped by trial id so the operator can evaluate before trusting the score.
+pub(crate) fn compare(
+    model: PathBuf,
+    engines: Vec<String>,
+    ollama: Vec<String>,
+    opts: GridOpts,
+    seed: u64,
+    out: Option<PathBuf>,
+) -> Result<()> {
+    let cells = build_cells(&model, &engines, &ollama)?;
+    let compare_opts = deck_engines::compare::CompareOpts {
+        tasks: &opts.tasks,
+        runs: opts.runs,
+        max_tokens: opts.max_tokens,
+        boot_timeout: Duration::from_secs(240),
+        bins: &opts.bins,
+    };
+    eprintln!(
+        "[compare] grid: {} candidate(s), {} task(s) × {} run(s), seed={seed}",
+        cells.len(),
+        opts.tasks.len(),
+        opts.runs
+    );
+
+    let report = deck_engines::compare::run_compare(&cells, &compare_opts, seed);
+
+    println!(
+        "trial        {:>6}  {:>7}  {:<5} {:>8}   candidate",
+        "avg", "avg", "verdict", "score"
+    );
+    for c in &report.candidates {
+        let avg_tok = c
+            .mean_tok_s
+            .map(|t| format!("{t:>7.1}"))
+            .unwrap_or_else(|| "     —".into());
+        let v = c.verdict.as_deref().unwrap_or("");
+        println!(
+            "{:<12} {avg_tok}  {:>7.3}  {:<5} {:<10} × {:<16} (ctx {})",
+            c.trial, c.mean_score, v, c.engine, c.model, c.ctx
+        );
+        if let Some(f) = &c.failure {
+            println!("  {:<24} ⚠ {f}", "");
+        }
+    }
+    println!("verdict: {}", report.verdict);
+    if let Some(p) = out {
+        let json = serde_json::to_string_pretty(&report)?;
+        std::fs::write(&p, json)?;
+        eprintln!(
+            "[compare] wrote {} scored trial(s) to {p:?}",
+            report.trials.len()
+        );
     }
     Ok(())
 }

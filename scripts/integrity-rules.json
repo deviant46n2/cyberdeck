@@ -92,6 +92,18 @@
         "lines": 309,
         "kind": "accepted",
         "reason": "The loadout test harness: the single-flight TEST_CHILD slot (test_profile/test_stop both operate it) plus the boot-watch verdict policy. Reader threads were deduped into spawn_output_reader; the file is one lifecycle contract. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
+      },
+      {
+        "path": "crates/deck-cli/src/cmd/bench.rs",
+        "lines": 322,
+        "kind": "accepted",
+        "reason": "The bench command door: record/list/matrix/compare plus the grid plumbing they share (GridOpts, build_cells, quant_files, parse_tasks) in one CLI door. Splitting would scatter one bench surface and duplicate the shared grid parsing. AGENTS.md 'File & Function Size Limits' and 'COHESION > ARBITRARY LINE COUNT'"
+      },
+      {
+        "path": "crates/deck-cli/src/main.rs",
+        "lines": 327,
+        "kind": "accepted",
+        "reason": "The CLI entry: clap subcommand/flag enums + dispatch only, exactly the dispatch-door shape AGENTS.md mandates for deck-cli; splitting the enums across modules for ~27 lines over the soft heuristic is coupling for nothing. Mirrors the src-tauri main.rs accepted entry. AGENTS.md 'File & Function Size Limits' and 'COHESION > ARBITRARY LINE COUNT'"
       }
     ],
     "artifact-hygiene": [],

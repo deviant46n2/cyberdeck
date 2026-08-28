@@ -189,8 +189,8 @@ numbers to find the best model→task assignment."*
 
 | Odysseus | cyberdeck | Status | Notes |
 |----------|-----------|--------|-------|
-| Blind A/B model compare | none | `EXTEND` | **This is cyberdeck's home turf.** Its raw material already landed: `deck bench matrix` runs the same prompt(s) across a model × quant × engine grid and records every trial (`matrix_runs`). Build `deck bench compare` on top — blind-randomize, score, synthesize. |
-| Synthesis of comparison | none | `EXTEND` | Post-compare synthesis via the agent (same harness). |
+| Blind A/B model compare | `deck bench compare` | `PARTIAL` | **Landed (2026-08-28):** `deck bench compare` runs the same grid as `deck bench matrix` (every trial persists to `matrix_runs`), then blinds candidates under opaque `trial-NNN` ids and scores each trial as `0.6·quality + 0.4·throughput` — quality = `0.25·variety + 0.75·(1 − bigram repetition)` on the raw output, throughput = recorded tok/s normalized to the task group's max. No external judge; the procedure is inline in the JSON report, and per-candidate boot failures are surfaced (`⚠ CRASH: …`), not silently scored zero. CLI-only. |
+| Synthesis of comparison | none | `EXTEND` | Post-compare synthesis via the agent (same harness). Pull a report (`deck bench compare --out`) into a prompt and let the agent spell out the takeaway. |
 
 ### 5. Documents — writing-first editor with AI edits
 
@@ -275,7 +275,7 @@ the app feels whole to use, then benchmark depth.
 | 1 | **Multi-model residency (PORT MAP)** | Direction §1 | each engine a fixed port slot (:18000/:1919/:11434) with an optional bound profile; `deck use` = bind to slot *and start*, N residents coexist; keep single-swap as default | M |
 | 2 | **Concurrent chat across residents** | Direction §2 | generalize HUD/CONSOLE: per-session engine+model pin, token streaming (not just opencode lines), live retarget of next message | M |
 | 3 | **Bench-aware chat header** | Direction §3 | for each resident show tok/s + fit in chat header, so you can see where to type | S |
-| 4 | **Compare / A·B bench** | Odysseus §4 | `deck bench compare` CLI + tab; blind-random same prompts across residents, tok/s + score, agent synthesis — **raw grid landed: `deck bench matrix`** (model × quant × engine, `matrix_runs`), compare is scoring+blind per row | M |
+| 4 | **Compare / A·B bench** | Odysseus §4 | `deck bench compare` CLI + tab; blind-random same prompts across residents, tok/s + score, agent synthesis — **compare CLI landed: blind scoring over the `matrix` grid, per-candidate failures surfaced; tab + agent synthesis still open** | M |
 | 5 | **Autotune headless** | Advantage B3 | sweep ctx/kv/ngl/ubatch on test port, score by objective, `APPLY` best — feeds the rec header | M |
 | 6 | Deep-research skill | §3 | agent skill: search→read→synthesize→report | S |
 | 7 | MCP picker per session | §1 | expose opencode MCP servers in agent panel | S |
@@ -312,7 +312,8 @@ cyberdeck is at-parity when:
 2. **#1–#3 land:** multiple engines resident on fixed ports, concurrent chat
    sessions pinned to different models you can flip between, and each resident's
    bench/fit shown in the chat header.
-3. `deck bench compare` produces a blind-scored, synthesized comparison.
+3. `deck bench compare` produces a blind-scored comparison — **scoring lives**;
+   the synthesized write-up (agent reads the JSON report) is the open tail.
 4. The headless `autotune` loop picks and APPLY-able best config per objective,
    feeding the recommendations.
 5. Agent + chat route to a live local engine by default, have MCP/attach/skills,

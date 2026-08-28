@@ -144,6 +144,38 @@ enum BenchCmd {
         #[arg(long)]
         out: Option<PathBuf>,
     },
+    /// Blind A/B compare over a grid: execute like `matrix`, score every trial
+    /// offline (lexical quality + normalized throughput), and reveal the best
+    /// (model × engine) under opaque trial ids
+    Compare {
+        /// GGUF file, or a directory whose top-level *.gguf files are the quants to grid
+        #[arg(long)]
+        model: PathBuf,
+        /// local-source engines to run the GGUFs through (llamacpp|freetoken)
+        #[arg(long, value_delimiter = ',', default_value = "llamacpp")]
+        engines: Vec<String>,
+        /// Ollama model ids to compare (each runs through ollama)
+        #[arg(long, value_delimiter = ',')]
+        ollama: Vec<String>,
+        /// Repeatable: task to run as "label=prompt"
+        #[arg(long)]
+        task: Vec<String>,
+        /// Repeats per candidate (variance sampling)
+        #[arg(long, default_value_t = 1)]
+        runs: u32,
+        /// Max generation tokens per request
+        #[arg(long, default_value_t = 512)]
+        max_tokens: u32,
+        /// Per-engine binary override, "engine=path" (repeatable; else profile default)
+        #[arg(long)]
+        bin: Vec<String>,
+        /// PRNG seed for opaque trial-id assignment (tie-breaks re-runs)
+        #[arg(long, default_value_t = 20260828)]
+        seed: u64,
+        /// Write the full blind report (candidates + scored trials) to this JSON path
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -259,6 +291,20 @@ fn main() -> Result<()> {
             } => {
                 let opts = cmd::bench::GridOpts::parse(&task, runs, max_tokens, &bin)?;
                 cmd::bench::matrix(model, engines, ollama, opts, out)
+            }
+            BenchCmd::Compare {
+                model,
+                engines,
+                ollama,
+                task,
+                runs,
+                max_tokens,
+                bin,
+                seed,
+                out,
+            } => {
+                let opts = cmd::bench::GridOpts::parse(&task, runs, max_tokens, &bin)?;
+                cmd::bench::compare(model, engines, ollama, opts, seed, out)
             }
         },
         Commands::Bringup {

@@ -8,6 +8,8 @@
 //!   - `health`   — /health probing, /metrics fetch, headless bring-up verify
 //!   - `inference`— per-protocol generation (OpenAI-compat, Ollama /api/chat)
 //!   - `matrix`   — the model × quant × engine grid runner
+//!   - `compare`  — blind A/B over the grid: opaque trial ids, explicit
+//!     quality/throughput scoring, a verdict naming the best (model × engine)
 //!
 //! Safety discipline (from the cyberdeck contract):
 //!   - never overwrite a unit without first writing `<unit>.bak.<timestamp>`
@@ -19,8 +21,10 @@ mod inference;
 mod systemd;
 mod unit;
 
+pub mod compare;
 pub mod matrix;
 pub mod rewire;
+pub mod scoring;
 
 pub use health::{
     BringupOutcome, OOM_MARKERS, fetch_metrics, health_ok, health_ok_any, health_wait, parse_tps,
