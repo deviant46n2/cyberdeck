@@ -11,6 +11,10 @@
     {
       "commit": "00ddf18",
       "reason": "feat(ui) HUD LOAD button: exposes existing bringup_start Tauri command + br.ts store from the chat surface; no new API/config/behavior — the flagship flow (derive → verify → apply → bench) was already documented in feature-parity.md #0 and the bringup drawer implementation"
+    },
+    {
+      "commit": "dea266d",
+      "reason": "feat(ui) bench-aware chat header: adds fit_verdict to port_map_status + resident summary in HUD top bar; the Direction §3 requirement (tok/s + fit per resident in chat header) is now documented in feature-parity.md #3 as DONE"
     }
   ]
 }
