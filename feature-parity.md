@@ -135,6 +135,12 @@ numbers to find the best model→task assignment."*
   `deck-engines::inference` + one descriptor row.
 - Engine binaries: `Profile::default().bin` is a placeholder; pass
   `--bin engine=/path` (llama-server, `ft serve`, `ollama`) on this machine.
+- **Per-engine binaries are machine config, stored once.** `deck engines
+  list|bin <engine> [path]` (and the HUD "bins" card) write `engine_bin` in the
+  store. bringup / test / matrix then substitute that path whenever a profile's
+  resolved bin doesn't exist on disk (`store::resolve_engine_bin`), so a machine
+  configured once needs no `--bin` repeats — the one machine-specific fact a
+  profile should not carry.
 
 ---
 

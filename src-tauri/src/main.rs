@@ -291,6 +291,21 @@ fn engine_list() -> Vec<deck_tauri::EngineDescriptor> {
 }
 
 #[tauri::command]
+fn engine_bin_list() -> Vec<deck_tauri::EngineBinRow> {
+    deck_tauri::engine_bin_list()
+}
+
+#[tauri::command]
+async fn engine_bin_set(store_id: String, bin: String) -> Result<(), String> {
+    blocking(move || deck_tauri::engine_bin_set(&store_id, &bin).map_err(|e| e.to_string())).await
+}
+
+#[tauri::command]
+async fn engine_bin_clear(store_id: String) -> Result<(), String> {
+    blocking(move || deck_tauri::engine_bin_clear(&store_id).map_err(|e| e.to_string())).await
+}
+
+#[tauri::command]
 fn delete_model(path: String, delete_file: bool) -> Result<usize, String> {
     deck_tauri::delete_model(&path, delete_file).map_err(|e| e.to_string())
 }
@@ -337,7 +352,10 @@ fn main() {
             hw_info,
             browse_fit_remote,
             tweak_profile,
-            engine_list
+            engine_list,
+            engine_bin_list,
+            engine_bin_set,
+            engine_bin_clear
         ])
         .run(tauri::generate_context!())
         .expect("error while running cyberdeck");

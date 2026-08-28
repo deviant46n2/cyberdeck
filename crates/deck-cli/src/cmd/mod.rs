@@ -6,6 +6,7 @@ use anyhow::Result;
 
 pub(crate) mod bench;
 pub(crate) mod bringup;
+pub(crate) mod engines;
 pub(crate) mod fit;
 pub(crate) mod list;
 pub(crate) mod profile;

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import * as api from "../api";
+import EngineBins from "./EngineBins";
 
 const ENGINE_NODES: { engine: string; host: string; port: number }[] = [
   { engine: "LlamaCpp", host: "127.0.0.1", port: 18000 },
@@ -26,6 +27,7 @@ export default function Hud({
   const [harnessModel, setHarnessModel] = useState("");
   const [loadout, setLoadout] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showBins, setShowBins] = useState(false);
   const [ctx, setCtx] = useState(32768);
   const [status, setStatus] = useState<api.EngineStatus[]>([]);
   const [sessions, setSessions] = useState<
@@ -149,6 +151,9 @@ export default function Hud({
         <button className="ghost" style={{fontSize:11, padding:"6px 10px"}} onClick={()=>setShowAdvanced((v)=>!v)}>
           {showAdvanced ? "− basic" : "+ controls"}
         </button>
+        <button className="ghost" style={{fontSize:11, padding:"6px 10px"}} onClick={()=>setShowBins((v)=>!v)}>
+          {showBins ? "− bins" : "bins"}
+        </button>
         {active && (
           <button
             className="ghost"
@@ -161,6 +166,17 @@ export default function Hud({
         )}
       </div>
 
+      {showBins && (
+        <EngineBins
+          onDone={() => {
+            // Re-probe liveness — a bin change shouldn't affect UP state, but
+            // keeping the status row honest after the next DEPS apply is cheap.
+            void Promise.all(ENGINE_NODES.map((n) => api.engineStatus(n.engine, n.host, n.port).catch(() => null))).then((r) =>
+              setStatus(r.filter(Boolean) as api.EngineStatus[])
+            );
+          }}
+        />
+      )}
       {showAdvanced && (
         <div style={{display:"flex", gap:12, alignItems:"center", justifyContent:"center", padding:"8px 12px", marginBottom:8, background:"#0c0c16", border:"1px solid #1e1e2e", fontSize:11, flexWrap:"wrap"}}>
           <span className="dim">ctx</span>

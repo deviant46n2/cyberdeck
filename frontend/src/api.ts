@@ -68,6 +68,18 @@ export interface EngineDescriptor {
 
 export const engineList = () => invoke<EngineDescriptor[]>("engine_list");
 
+/** Per-engine executable config row — the one machine-specific fact the
+ * engine menu needs (None = engine default resolution). */
+export interface EngineBinRow {
+  engine_id: EngineId;
+  display: string;
+  bin: string | null;
+}
+
+export const engineBinList = () => invoke<EngineBinRow[]>("engine_bin_list");
+export const engineBinSet = (storeId: string, bin: string) => invoke<void>("engine_bin_set", { storeId, bin });
+export const engineBinClear = (storeId: string) => invoke<void>("engine_bin_clear", { storeId });
+
 /** Full editable loadout shape — mirrors deck_core::profile::Profile. */
 export interface Profile {
   name: string;

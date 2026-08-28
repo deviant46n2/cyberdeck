@@ -24,6 +24,13 @@ pub(crate) fn run(
     let mut p = derived.profile;
     if let Some(b) = &bin {
         p.bin = PathBuf::from(b);
+    } else if let Ok(conn) = deck_core::store::open(&deck_core::store::default_db_path())
+        && let Ok(p2) = deck_core::store::resolve_engine_bin(&conn, p.clone())
+    {
+        if p2.bin != p.bin {
+            println!("[bringup] engine binary: {}", p2.bin.display());
+        }
+        p = p2;
     }
 
     if let Some(n) = &name {

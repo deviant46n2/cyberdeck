@@ -256,6 +256,16 @@ fn derive_and_verify(
     let _ = app2.emit("bringup-profile", derived.profile.clone());
     let mut p = derived.profile;
     p.name = p.alias.clone();
+    // Substitute a configured engine executable when the derived default does
+    // not exist on disk (e.g. /usr/bin/llama-server here).
+    if let Ok(conn) = deck_core::store::open(&deck_core::store::default_db_path())
+        && let Ok(p2) = deck_core::store::resolve_engine_bin(&conn, p.clone())
+    {
+        if p2.bin != p.bin {
+            line(format!("[derive] engine binary: {}", p2.bin.display()));
+        }
+        p = p2;
+    }
     let offload = derived.weights_ram_mb > 0;
     let fit = FitBreakdown {
         weights_mb: if offload {

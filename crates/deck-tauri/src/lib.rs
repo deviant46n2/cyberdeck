@@ -25,6 +25,51 @@ pub fn engine_list() -> Vec<EngineDescriptor> {
     deck_core::profile::engine_descriptors()
 }
 
+/// Per-engine executable configuration for a UI card, plus the currently
+/// configured bin for each runtime (None = engine default resolution).
+#[derive(serde::Serialize)]
+pub struct EngineBinRow {
+    pub engine_id: String,
+    pub display: String,
+    pub bin: Option<String>,
+}
+
+pub fn engine_bin_list() -> Vec<EngineBinRow> {
+    let db = deck_core::store::default_db_path();
+    let conn = deck_core::store::open(&db).ok();
+    deck_core::profile::engine_descriptors()
+        .into_iter()
+        .map(|d| EngineBinRow {
+            engine_id: d.id.to_string(),
+            display: d.display.to_string(),
+            bin: conn
+                .as_ref()
+                .and_then(|c| deck_core::store::get_engine_bin(c, d.id).ok())
+                .flatten(),
+        })
+        .collect()
+}
+
+pub fn engine_bin_set(store_id: &str, bin: &str) -> Result<(), String> {
+    if bin.trim().is_empty() {
+        return engine_bin_clear(store_id);
+    }
+    let path = std::path::Path::new(bin.trim());
+    if !path.exists() {
+        return Err(format!("binary not found at {bin}"));
+    }
+    let db = deck_core::store::default_db_path();
+    let conn = deck_core::store::open(&db).map_err(|e| e.to_string())?;
+    deck_core::store::set_engine_bin(&conn, store_id, path.display().to_string().as_str())
+        .map_err(|e| e.to_string())
+}
+
+pub fn engine_bin_clear(store_id: &str) -> Result<(), String> {
+    let db = deck_core::store::default_db_path();
+    let conn = deck_core::store::open(&db).map_err(|e| e.to_string())?;
+    deck_core::store::clear_engine_bin(&conn, store_id).map_err(|e| e.to_string())
+}
+
 pub use bench::{BenchRow, EngineStatus, bench_history, bench_now, engine_status};
 pub use bringup::{
     BringupLine, BringupPhase, BringupResult, FitBreakdown, bringup_start, test_model_start,

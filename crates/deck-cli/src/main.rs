@@ -68,6 +68,13 @@ enum Commands {
         #[command(subcommand)]
         action: BenchCmd,
     },
+    /// List the runtime registry and configure per-engine executable paths.
+    /// A bin set here is used by bringup / test / matrix whenever a profile's
+    /// default binary doesn't exist on disk — set once per machine.
+    Engines {
+        #[command(subcommand)]
+        action: EngineCmd,
+    },
     /// PLUG IN a model + engine and let cyberdeck derive the best-max-ctx
     /// loadout, verify it headlessly on a test port (never touching the live
     /// service), then install + start + bench it.
@@ -136,6 +143,22 @@ enum BenchCmd {
         /// Write machine-readable results (all trials) to this JSON path
         #[arg(long)]
         out: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum EngineCmd {
+    /// List registered runtimes and their configured binaries
+    List,
+    /// Show or set an engine's executable path
+    Bin {
+        /// engine id: llamacpp | freetoken | ollama
+        engine: String,
+        /// executable path to configure (omit to print the current value)
+        path: Option<PathBuf>,
+        /// remove the configured path (back to the engine's default resolution)
+        #[arg(long)]
+        clear: bool,
     },
 }
 
@@ -246,5 +269,13 @@ fn main() -> Result<()> {
             dry_run,
             bin,
         } => cmd::bringup::run(model, engine, fast, name, dry_run, bin),
+        Commands::Engines { action } => match action {
+            EngineCmd::List => cmd::engines::list(),
+            EngineCmd::Bin {
+                engine,
+                path,
+                clear,
+            } => cmd::engines::bin(&engine, path, clear),
+        },
     }
 }

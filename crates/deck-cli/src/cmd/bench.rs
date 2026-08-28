@@ -138,6 +138,17 @@ impl GridOpts {
                 .ok_or_else(|| anyhow::anyhow!("--bin must be \"engine=path\", got {b:?}"))?;
             bins.insert(parse_engine(e)?, PathBuf::from(path));
         }
+        // Seed any engine without an explicit --bin from the per-engine DB
+        // config, so a machine configured once needs no repeated flags.
+        if let Ok(conn) = deck_core::store::open(&deck_core::store::default_db_path()) {
+            for e in [Engine::LlamaCpp, Engine::FreeToken, Engine::Ollama] {
+                if !bins.contains_key(&e)
+                    && let Ok(Some(b)) = deck_core::store::get_engine_bin(&conn, e.store_id())
+                {
+                    bins.insert(e, PathBuf::from(b));
+                }
+            }
+        }
         Ok(Self {
             tasks,
             runs,
