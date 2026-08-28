@@ -69,7 +69,7 @@ KV-qtype, MoE cache, or reasoning flags by hand.
 1. **Fit at max context.** From the model's GGUF header (`n_layers`, `n_embd`,
    quant) + detected VRAM (`hw_vram()`), run `estimate()` to find the largest
    `ctx_size` that still `PASS`es. That becomes the derived ctx. (Reuse
-   `deck-core::fit` + the BROWSE remote-fit path.)
+   `deck-core::fit` + the MARKET remote-fit path.)
 
 2. **Derive the full profile** from that fit (this is the new logic, in
    `deck-engines`):
@@ -174,7 +174,7 @@ numbers to find the best model→task assignment."*
 
 | Odysseus | cyberdeck | Status | Notes |
 |----------|-----------|--------|-------|
-| Hardware-aware model recs | fit estimator + `hw_vram()` | `PARTIAL` | We compute fit for a *given* model. Gap: **suggest** models that fit your VRAM. Close via remote GGUF header fetch across MARKET/BROWSE → rank by fit. |
+| Hardware-aware model recs | fit estimator + `hw_vram()` | `PARTIAL` | We compute fit for a *given* model. Gap: **suggest** models that fit your VRAM. Close via remote GGUF header fetch across MARKET → rank by fit. (MARKET and BROWSE were merged into one MARKET window, 2026-08-28, with a DISK size column.) |
 | Downloads | MARKET → `~/models` via the DOWNLOADS tab | `DONE` | GGUF HEAD-resolved sizes, one-click download. The tab is a resumable state machine, not fire-and-forget: MAX_ACTIVE=2 concurrent transfers behind a reorderable priority queue (`queued\|active\|paused\|done\|error`). |
 | Serving | systemd units, `deck use` | `DONE` | Alias+port contract, ctx ladder, `.bak`. Stronger than Odysseus. |
 | Quant-aware guidance | GgufMeta parse | `PARTIAL` | We know quant. Add "best quant that still PASSes" inference. |
@@ -272,15 +272,15 @@ the app feels whole to use, then benchmark depth.
 | # | Gap | Tracks | cyberdeck target | Effort |
 |---|-----|--------|------------------|--------|
 | 0 | **BringUp: one-click load** | Flagship flow | `deck bringup --model --engine` → derive max-ctx profile → verify on test port → install → bench & record. HUD `LOAD` button | M |
-| 1 | **Multi-model residency (PORT MAP)** | Direction §1 | each engine a fixed port slot (:18000/:1919/:11434) with an optional bound profile; `deck use` = bind to slot *and start*, N residents coexist; keep single-swap as default — **Landed (2026-08-28):** per-engine slots already existed as the architectural shape; now backed by a `residents` table (which profile is bound to each slot + a resident flag) and surfaced through `deck use --resident` (bind + run alongside other slots, single-swap stays default) and `deck engines status` (live port map: bound profile, systemd/health state, resident flag) + `deck engines stop <engine>` (stop a slot, leave the rest up). Tauri `port_map_status` mirrors the reader for the UI. Per-slot client rewire + the UI residency card are still open | M |
+| 1 | **Multi-model residency (PORT MAP)** | Direction §1 | each engine a fixed port slot (:18000/:1919/:11434) with an optional bound profile; `deck use` = bind to slot *and start*, N residents coexist; keep single-swap as default — **Landed (2026-08-28):** per-engine slots already existed as the architectural shape; now backed by a `residents` table (which profile is bound to each slot + a resident flag) and surfaced through `deck use --resident` (bind + run alongside other slots, single-swap stays default) and `deck engines status` (live port map: bound profile, systemd/health state, resident flag) + `deck engines stop <engine>` (stop a slot, leave the rest up). Tauri `port_map_status` mirrors the reader for the UI. **Landed (2026-08-28, UI tail):** the HUD renders the map as the PORT MAP card — state dot, bound profile, resident flag, latest bench tok/s per slot, per-slot STOP (Tauri `engine_stop`, the UI door to `deck engines stop`). Per-slot client rewire is still open | M |
 | 2 | **Concurrent chat across residents** | Direction §2 | generalize HUD/CONSOLE: per-session engine+model pin, token streaming (not just opencode lines), live retarget of next message | M |
-| 3 | **Bench-aware chat header** | Direction §3 | for each resident show tok/s + fit in chat header, so you can see where to type | S |
+| 3 | **Bench-aware chat header** | Direction §3 | for each resident show tok/s + fit in chat header, so you can see where to type — **partial (2026-08-28):** the HUD PORT MAP card shows the latest bench tok/s per resident slot; fit verdict per resident still open | S |
 | 4 | **Compare / A·B bench** | Odysseus §4 | `deck bench compare` CLI + tab; blind-random same prompts across residents, tok/s + score, agent synthesis — **compare CLI landed: blind scoring over the `matrix` grid, per-candidate failures surfaced; tab + agent synthesis still open** | M |
 | 5 | **Autotune headless** | Advantage B3 | sweep ctx/kv/ngl/ubatch on test port, score by objective, `APPLY` best — feeds the rec header | M |
 | 6 | Deep-research skill | §3 | agent skill: search→read→synthesize→report | S |
 | 7 | MCP picker per session | §1 | expose opencode MCP servers in agent panel | S |
 | 8 | File attach to prompt | §1 | pass attach path into `opencode run` / chat | S |
-| 9 | Cookbook model suggestion | §2 | rank MARKET/BROWSE by `fit(ngl)` → "best that PASSes" | S |
+| 9 | Cookbook model suggestion | §2 | rank MARKET by `fit(ngl)` → "best that PASSes" | S |
 | 10 | Provider picker (Ollama/API) | §1 | generic OpenAI-compatible provider alongside llamacpp/FreeToken | S |
 | 11 | Skills surfacing | §1 | list `~/.config/opencode/skills` in agent panel | XS |
 | 12 | Scheduled bench/watch | §7 sliver | cron-style auto `deck bench` + SIGNALS on interval | S |

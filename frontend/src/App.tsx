@@ -7,12 +7,11 @@ import Loadouts from "./views/Loadouts";
 import Signals from "./views/Signals";
 import Market from "./views/Market";
 import Console from "./views/Console";
-import Browse from "./views/Browse";
 import Downloads from "./views/Downloads";
 import Bringup from "./views/Bringup";
 import Dedup from "./views/Dedup";
 
-const VIEWS = ["HUD", "VAULT", "DEDUP", "SIGNALS", "MARKET", "BROWSE", "DOWNLOADS", "LOADOUTS", "CONSOLE"];
+const VIEWS = ["HUD", "VAULT", "DEDUP", "SIGNALS", "MARKET", "DOWNLOADS", "LOADOUTS", "CONSOLE"];
 
 export default function App() {
   const [view, setView] = useState("HUD");
@@ -48,7 +47,7 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Attach the global download store at boot so MARKET/BROWSE transfers work
+  // Attach the global download store at boot so MARKET transfers work
   // even before the DOWNLOADS tab is opened; any completed file triggers a
   // debounced rescan so the vault stays in sync with disk.
   useEffect(() => {
@@ -109,7 +108,6 @@ export default function App() {
         {view === "DEDUP" && <Dedup dups={dups} onRefresh={refreshDedup} />}
         {view === "SIGNALS" && <Signals />}
         {view === "MARKET" && <Market />}
-        {view === "BROWSE" && <Browse />}
         {view === "DOWNLOADS" && <Downloads />}
         {view === "LOADOUTS" && (
           <Loadouts profiles={profiles} onUnit={setUnit} onChanged={refresh} />

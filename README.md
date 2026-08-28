@@ -12,7 +12,7 @@ Named for what it is: a personal machine for loading capability shards.
 - `crates/deck-engines` — engine control (llama.cpp :18000, FreeToken :1919), systemd unit generation, managed client rewiring
 - `crates/deck-feeds` — HF watchlist, engine staleness checks, market/discovery feed, GGUF header fetch for remote fit
 - `crates/deck-cli` — the `deck` binary; every feature lands here first, headless-tested
-- Tauri 2 + React frontend (phases 3+) — HUD / VAULT / SIGNALS / MARKET / BROWSE / LOADOUTS / CONSOLE
+- Tauri 2 + React frontend (phases 3+) — HUD / VAULT / SIGNALS / MARKET / LOADOUTS / CONSOLE
 
 ## Principles
 
@@ -33,7 +33,7 @@ Named for what it is: a personal machine for loading capability shards.
 | 5 | Market | HF search + GGUF discovery + one-click download to ~/models |
 | 6 | FreeToken | offload VRAM fit (RAM spill) + live bench history + engine status |
 | 7 | Agent | CONSOLE runs `opencode run` as a streaming agent (live output) |
-| 8 | Browse | browse HF sources with exact remote GGUF fit (header-fetch + nvidia-smi) |
+| 8 | Market | browse/search HF sources with exact remote GGUF fit (header-fetch + nvidia-smi) |
 
 ## Dev loop
 
@@ -52,7 +52,7 @@ cd .. && npm run tauri dev                    # vite dev server + Rust app (need
 
 - `crates/deck-tauri` — serializable command API (the UI<->crate bridge, unit-tested)
 - `src-tauri` — the Tauri 2 binary; thin `#[tauri::command]` wrappers over deck-tauri
-- `frontend` — React + Vite UI (HUD / VAULT / SIGNALS / MARKET / BROWSE / LOADOUTS / CONSOLE)
+- `frontend` — React + Vite UI (HUD / VAULT / SIGNALS / MARKET / LOADOUTS / CONSOLE)
 
 ## CLI
 
@@ -95,7 +95,9 @@ alongside the other slots (plain `deck use` stays the one-at-a-time swap). The
 binding is recorded in the `residents` table; `deck engines status` shows the
 live map — bound profile, systemd/health state, resident flag — and
 `deck engines stop <engine>` takes a single slot down without touching the
-rest. The app's `port_map_status` surfaces the same map to the UI.
+rest. The HUD renders the same map as the **PORT MAP** card (state dot, bound
+profile, resident flag, latest bench tok/s per slot) with a STOP button per
+live slot — the UI door to `deck engines stop`.
 
 ```sh
 deck bench record [--engine llamacpp] [--host 127.0.0.1] [--port 18000] \
@@ -106,7 +108,10 @@ deck bench list                  # recent readings (shared with the app)
 `deck bench` and the app's CONSOLE **BENCH** button write to the same
 `cyberdeck.db` table, so a reading taken on either side shows up on both. Both
 require the engine to be launched with `--metrics` (the generated loadout units
-do this automatically; a hand-started server may not).
+do this automatically; a hand-started server may not). When the engine's
+/metrics gauge is absent or idle-zero, the reading falls back to one real
+probe generation (native engine timing when reported) — a dead scrape never
+lands in the bench table as 0 tok/s.
 
 ## BringUp (one-click load)
 
@@ -138,13 +143,14 @@ and prints without touching anything.
 - **VAULT** — full inventory table; duplicate shards are flagged red.
 - **SIGNALS** — HF org watchlist + "CHECK NOW" that surfaces new releases
   (deduped against what you've already seen).
-- **MARKET** — search HuggingFace, expand a repo to list its GGUF files with
-  real sizes (resolved via `HEAD`), and download straight to `~/models`.
-- **BROWSE** — browse HF models from your watched orgs or by free-text search,
-  expand to see available GGUF quant files with real sizes, and hit **FIT** to
-  get an exact VRAM verdict — the app fetches the GGUF header via HTTP Range,
-  parses `n_layers`/`n_embd`/quant from the metadata, and runs the fit estimator
-  against detected GPU VRAM (nvidia-smi). Context slider applies to all fits.
+- **MARKET** — one window for discovery: free-text HF search or browse your
+  watched orgs (from SIGNALS), a DISK column showing each repo's smallest-GGUF
+  size on disk, expand to list GGUF quant files with real sizes (resolved via
+  `HEAD`), and hit **FIT** for an exact VRAM verdict — the app fetches the GGUF
+  header via HTTP Range, parses `n_layers`/`n_embd`/quant from the metadata,
+  and runs the fit estimator against detected GPU VRAM (nvidia-smi). Context
+  slider applies to all fits; top results get fit + disk size prefetched in the
+  background. DOWNLOAD goes straight to `~/models`.
 - **LOADOUTS** — preview or apply a generated systemd unit (with confirm;
   always takes a `.bak` first).
 - **CONSOLE** — engine telemetry + **BENCH tok/s** history, the last rendered

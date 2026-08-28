@@ -36,7 +36,7 @@ export default function Downloads() {
       <div className="view">
         <div className="view-title">DOWNLOADS</div>
         <div className="card dim" style={{ padding: 24, textAlign: "center" }}>
-          no transfers — queue models from MARKET or BROWSE
+          no transfers — queue models from MARKET
         </div>
       </div>
     );

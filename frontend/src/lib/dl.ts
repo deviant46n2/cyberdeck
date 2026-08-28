@@ -1,6 +1,6 @@
 // Global background-download store, Steam-style. Backed by the dl-* Tauri
 // events emitted by deck-tauri's job registry and consumed by the DOWNLOADS
-// manager view (and queues kicked off from MARKET/BROWSE).
+// manager view (and queues kicked off from MARKET).
 //
 // Lifecycle: enqueue() appends to `order` (the priority queue, front = next
 // to start). pump() fills up to MAX_ACTIVE slots from the frontmost queued
