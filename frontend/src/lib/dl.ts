@@ -172,9 +172,11 @@ function setKey(repoId: string, filenames: string[]): string {
  */
 async function indexOnLanded(key: string, landed: string): Promise<void> {
   let target: string[] | null = null;
+  let matchedSet = false;
   for (const bk of sets.values()) {
     const idx = bk.files.findIndex((f) => `${bk.repoId}/${f}` === key);
     if (idx < 0) continue;
+    matchedSet = true;
     bk.done[idx] = true;
     if (landed) bk.paths[idx] = landed;
     if (bk.done.every(Boolean)) {
@@ -184,7 +186,10 @@ async function indexOnLanded(key: string, landed: string): Promise<void> {
     }
     break;
   }
-  if (!target && landed) target = [landed];
+  // A single file (no shard book) indexes immediately. A partial shard set is
+  // NOT indexed — it waits for every member to land, keeping the vault
+  // half-model-free.
+  if (!target && landed && !matchedSet) target = [landed];
   if (!target) return;
   try {
     await api.indexDownloaded(target);

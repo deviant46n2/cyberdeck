@@ -161,6 +161,10 @@ throughput-measurement, per `feature-parity.md`.
 - Root scripts: `npm run tauri dev` (full app; Rust rebuilds + Vite HMR),
   `npm --prefix frontend run dev` (Vite only), `npm --prefix frontend run build`
   (tsc + vite).
+- Frontend unit tests: `npm --prefix frontend run test` (vitest). The dl.ts
+  and br.ts stores are covered (event-driven via a hoisted `listen` mock +
+  window stub; see `src/lib/*.test.ts`). Keep the state machines green when
+  you touch them.
 - Rust: `cargo test --workspace` (tests run from the repo root),
   `cargo clippy --workspace --all-targets` (must not add warnings),
   `cargo run -p deck-cli -- <cmd>` / `cargo build -p deck-cli`.
