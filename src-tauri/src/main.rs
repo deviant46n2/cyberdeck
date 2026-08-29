@@ -184,6 +184,15 @@ async fn test_model_start(
 }
 
 #[tauri::command]
+async fn apply_cached_profile(
+    profile: deck_tauri::Profile,
+    fit: Option<deck_tauri::FitBreakdown>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    deck_tauri::apply_cached_profile(&app, profile, fit).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn bench_now(
     engine: String,
     host: String,
@@ -378,6 +387,7 @@ fn main() {
             index_downloaded,
             bringup_start,
             test_model_start,
+            apply_cached_profile,
             bench_now,
             bench_history,
             compare_run,

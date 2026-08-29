@@ -26,7 +26,7 @@ pub fn default_roots() -> Vec<PathBuf> {
         .unwrap_or_else(|| PathBuf::from("."));
     vec![
         home.clone(),
-        home.join("models"),
+        crate::store::models_dir(),
         home.join(".cache/huggingface/hub"),
     ]
 }

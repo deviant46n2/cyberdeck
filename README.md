@@ -103,6 +103,8 @@ live slot — the UI door to `deck engines stop`.
 deck bench record [--engine llamacpp] [--host 127.0.0.1] [--port 18000] \
     [--model ?] [--ctx 0]        # probe /metrics, store generation tok/s
 deck bench list                  # recent readings (shared with the app)
+deck bench best                  # best tok/s per (model, engine) across history
+deck download <repo> [--file] [--quant] [--dry-run]  # resumable single-file download to ~/models
 ```
 
 `deck bench` and the app's CONSOLE **BENCH** button write to the same
@@ -150,11 +152,16 @@ and prints without touching anything.
   header via HTTP Range, parses `n_layers`/`n_embd`/quant from the metadata,
   and runs the fit estimator against detected GPU VRAM (nvidia-smi). Context
   slider applies to all fits; top results get fit + disk size prefetched in the
-  background. DOWNLOAD goes straight to `~/models`.
+  background. Downloads are resumable state machines (`.part` parking + curl
+  resume, MAX_ACTIVE=2) that stream straight to `~/models`; the CLI door
+  `deck download <repo>` does the same single-file pick+stream headlessly.
 - **LOADOUTS** — preview or apply a generated systemd unit (with confirm;
   always takes a `.bak` first).
 - **CONSOLE** — engine telemetry + **BENCH tok/s** history, the last rendered
   unit, and the **agent panel**.
+- **BENCH** — scoreboard grouped by model × engine (best/latest/avg tok/s +
+  run count), raw history list, and a record-now form; `deck bench best`
+  mirrors the same data.
 
 ## Agentic CONSOLE
 

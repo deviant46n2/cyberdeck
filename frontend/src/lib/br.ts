@@ -140,6 +140,32 @@ export async function startTest(modelPath: string, engine: string): Promise<void
   }
 }
 
+/** Apply the already-verified profile from a TEST run (skip derive+verify)
+ * and bench+record. Shares the test mode so the panel shows apply → bench. */
+export async function startApplyCached(): Promise<void> {
+  init();
+  const profile = state.profile;
+  const fit = state.result?.fit ?? null;
+  if (!profile) {
+    state = { ...state, running: false, phase: "error", lines: ["[apply] no verified profile — run TEST first"].slice(-9) };
+    bump();
+    return;
+  }
+  state = { ...state, running: true, phase: "apply", lines: ["[apply] applying verified profile…"] };
+  bump();
+  try {
+    await api.testApply(profile, fit);
+  } catch (e) {
+    const msg = String(e);
+    state = {
+      ...state, running: false, phase: "error",
+      lines: [...state.lines, `[reject] ${msg}`].slice(-9),
+      result: msg.includes("already running") ? null : { ok: false, summary: msg, name: "", port: 0, ctx: 0, tps: null, fit: null },
+    };
+    bump();
+  }
+}
+
 /** Clear the finished/failed card. No-op while a run is in flight. */
 export function dismiss(): void {
   if (state.running) return;

@@ -8,7 +8,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 
 use crate::{Engine, Profile};
@@ -26,7 +26,7 @@ pub struct BringupLine {
 
 /// Full VRAM fit breakdown shown during bring-up so the user sees exactly
 /// where memory goes even when verification fails.
-#[derive(Clone, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct FitBreakdown {
     pub weights_mb: u64,
     pub weights_gpu_mb: u64,
@@ -175,9 +175,11 @@ fn save_and_apply(
     Ok(())
 }
 
-/// Sample the freshly-applied engine's /metrics and record a bench row
-/// (BRINGUP step 4). Returns the measured tok/s, or None when the engine
-/// exposes no tps gauge (an explanatory line is emitted in that case).
+/// Measure generation tok/s against the freshly-applied engine and record
+/// a bench row (BRINGUP step 4). Uses the single measurement path
+/// (`deck_engines::measure_generation_tps`: scrape, then a 192-token
+/// probe generation if the idle gauge reads 0). Returns the measured
+/// tok/s, or None when the probe itself fails.
 fn bench_and_record(app2: &tauri::AppHandle, p: &Profile, line: &impl Fn(String)) -> Option<f64> {
     let _ = app2.emit(
         "bringup-phase",
@@ -185,9 +187,17 @@ fn bench_and_record(app2: &tauri::AppHandle, p: &Profile, line: &impl Fn(String)
             phase: "bench".into(),
         },
     );
-    if let Ok(text) = deck_engines::fetch_metrics(&p.host, p.port)
-        && let Some(v) = deck_engines::parse_tps(&text)
-    {
+    let tps = match deck_engines::measure_generation_tps(p.engine, &p.host, p.port, &p.alias) {
+        Ok(v) => {
+            line(format!("[bench] probe: {v:.1} tok/s"));
+            Some(v)
+        }
+        Err(e) => {
+            line(format!("[bench] probe failed: {e}"));
+            None
+        }
+    };
+    if let Some(v) = tps {
         let at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
@@ -212,7 +222,6 @@ fn bench_and_record(app2: &tauri::AppHandle, p: &Profile, line: &impl Fn(String)
         }
         Some(v)
     } else {
-        line("[bench] no /metrics tok/s gauge exposed (is --metrics on?)".into());
         None
     }
 }
@@ -402,6 +411,31 @@ pub fn test_model_start(
             return;
         };
 
+        // Record a bench row tagged as test-port so the score survives
+        // the dry-run (the row's port distinguishes it from a live run).
+        if let Some(v) = tps {
+            let at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            if let Ok(conn) = deck_core::store::open(&deck_core::store::default_db_path()) {
+                deck_core::store::ensure_bench_schema(&conn).ok();
+                let _ = deck_core::store::insert_bench(
+                    &conn,
+                    &deck_core::store::BenchRow {
+                        id: 0,
+                        engine: format!("{:?}", p.engine).to_lowercase(),
+                        host: p.host.clone(),
+                        port: p.port,
+                        model: p.model.clone(),
+                        ctx: p.ctx_size,
+                        tps: v,
+                        at,
+                    },
+                );
+            }
+        }
+
         finish(BringupResult {
             ok: true,
             summary: format!(
@@ -415,6 +449,75 @@ pub fn test_model_start(
             ctx: p.ctx_size,
             tps,
             fit: Some(fit),
+        });
+    });
+
+    Ok(())
+}
+
+/// Apply a previously-verified profile (e.g. from a headless TEST) —
+/// save + start via systemd and bench+record, skipping re-derive and
+/// re-verify. Shares the single-flight lock and event channels so the
+/// frontend panel renders identically to bringup.
+pub fn apply_cached_profile(
+    app: &tauri::AppHandle,
+    profile: Profile,
+    fit: Option<FitBreakdown>,
+) -> anyhow::Result<()> {
+    if !std::path::Path::new(&profile.model).exists() {
+        anyhow::bail!("model not found on disk: {}", profile.model);
+    }
+    if BRINGUP_RUNNING.swap(true, Ordering::SeqCst) {
+        anyhow::bail!("a bring-up is already running");
+    }
+    let app2 = app.clone();
+    let profile2 = profile.clone();
+    std::thread::spawn(move || {
+        let finish = |res: BringupResult| {
+            let _ = app2.emit("bringup-result", res);
+            let _ = app2.emit(
+                "bringup-phase",
+                BringupPhase {
+                    phase: "done".into(),
+                },
+            );
+            BRINGUP_RUNNING.store(false, Ordering::SeqCst);
+        };
+        let line = |t: String| {
+            let _ = app2.emit("bringup-line", BringupLine { text: t });
+        };
+
+        // 1. Save + apply (skip derive + verify — already done) -----
+        if let Err(e) = save_and_apply(&app2, &profile2, &line) {
+            finish(BringupResult {
+                ok: false,
+                summary: format!("apply failed: {e}"),
+                name: profile2.name.clone(),
+                port: profile2.port,
+                ctx: profile2.ctx_size,
+                tps: None,
+                fit,
+            });
+            return;
+        }
+
+        // 2. Bench + record (real measurement) -----------------------
+        let tps = bench_and_record(&app2, &profile2, &line);
+
+        finish(BringupResult {
+            ok: true,
+            summary: format!(
+                "'{}' applied on :{} at ctx={}{}",
+                profile2.name,
+                profile2.port,
+                profile2.ctx_size,
+                tps.map(|t| format!(" · {t:.1} tok/s")).unwrap_or_default()
+            ),
+            name: profile2.name.clone(),
+            port: profile2.port,
+            ctx: profile2.ctx_size,
+            tps,
+            fit,
         });
     });
 

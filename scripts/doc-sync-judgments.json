@@ -15,6 +15,14 @@
     {
       "commit": "dea266d",
       "reason": "feat(ui) bench-aware chat header: adds fit_verdict to port_map_status + resident summary in HUD top bar; the Direction §3 requirement (tok/s + fit per resident in chat header) is now documented in feature-parity.md #3 as DONE"
+    },
+    {
+      "commit": "077bd92",
+      "reason": "feat(ui) PORT MAP HUD card — residency view with per-slot STOP; the Direction §3 requirement (tok/s + fit per resident in chat header) is now documented in feature-parity.md #3 as DONE, and engine_stop is the CLI door for the existing port_map contract"
+    },
+    {
+      "commit": "21994de",
+      "reason": "feat(core) GQA-aware KV cache fit + unified tok/s measurement — internal measurement-path consolidation; the single-measurement contract is documented in feature-parity.md #0 (bench record uses measure_generation_tps) and the bringup drawer"
     }
   ]
 }

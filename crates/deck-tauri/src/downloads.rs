@@ -49,14 +49,7 @@ static DOWNLOADS: std::sync::LazyLock<Mutex<std::collections::HashMap<String, Dl
 const DL_EMIT_BYTES: u64 = 4 * 1024 * 1024;
 const DL_EMIT_MS: u64 = 400;
 
-fn models_dir() -> std::path::PathBuf {
-    std::env::var_os("HOME")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("models")
-}
-
-/// Begin a background download of one repo file into ~/models. Returns
+/// Begin a background download of one repo file into `~/models`. Returns
 /// immediately; progress flows as `dl-start` / `dl-progress` / `dl-done` /
 /// `dl-error` events tagged with `key`. Re-requesting an active transfer is
 /// rejected so double-clicks can't duplicate it.
@@ -144,7 +137,7 @@ pub fn download_start(
         let result = deck_feeds::download_file_progress(
             &repo,
             &rf,
-            &models_dir(),
+            &deck_core::store::models_dir(),
             (probed_total > 0).then_some(probed_total),
             &mut emit_progress,
             &cancel,
@@ -193,7 +186,7 @@ pub fn download_remove(key: &str, rfilename: &str) -> anyhow::Result<()> {
         .file_name()
         .map(|f| f.to_string_lossy().into_owned())
         .unwrap_or_else(|| rfilename.to_string());
-    let part = models_dir().join(format!("{name}.part"));
+    let part = deck_core::store::models_dir().join(format!("{name}.part"));
     if part.exists() {
         std::fs::remove_file(&part)?;
     }

@@ -21,6 +21,14 @@ pub fn default_db_path() -> PathBuf {
     dir.join("cyberdeck/cyberdeck.db")
 }
 
+/// Directory where downloaded models land (`~/models`).
+pub fn models_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("models")
+}
+
 pub fn open(path: &std::path::Path) -> Result<Connection> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;

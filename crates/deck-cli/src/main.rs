@@ -103,6 +103,25 @@ enum Commands {
         #[arg(long)]
         bin: Option<String>,
     },
+    /// Download a repo's model file into ~/models (resumable).
+    ///
+    /// Picks the largest .gguf (or one matching --file/--quant), then
+    /// streams it into `~/models` with curl resume. Single-file — the
+    /// bounded queue stays in the Tauri app.
+    Download {
+        /// HuggingFace repo id (e.g. `unsloth/Qwen3.8-GGUF`)
+        #[arg()]
+        repo: String,
+        /// Pick this exact filename (or suffix-match) instead of auto-picking
+        #[arg(long)]
+        file: Option<String>,
+        /// Filter by quant token in the filename (e.g. `Q3_K_XL`)
+        #[arg(long)]
+        quant: Option<String>,
+        /// Resolve and print the pick without downloading
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -122,6 +141,8 @@ enum BenchCmd {
     },
     /// List recent benchmark readings
     List,
+    /// Show the best tok/s per (model, engine) across stored bench history
+    Best,
     /// Run a headless model × engine grid (quant × runtime) and record every trial
     Matrix {
         /// GGUF file, or a directory whose top-level *.gguf files are the quants to grid
@@ -297,6 +318,7 @@ fn main() -> Result<()> {
                 ctx,
             } => cmd::bench::record(engine, host, port, model, ctx),
             BenchCmd::List => cmd::bench::list(),
+            BenchCmd::Best => cmd::bench::best(),
             BenchCmd::Matrix {
                 model,
                 engines,
@@ -343,5 +365,8 @@ fn main() -> Result<()> {
                 clear,
             } => cmd::engines::bin(&engine, path, clear),
         },
+        Commands::Download { repo, file, quant, dry_run } => {
+            cmd::download::run(&repo, file.as_deref(), quant.as_deref(), dry_run)
+        }
     }
 }

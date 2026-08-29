@@ -17,27 +17,21 @@
   "allowlists": {
     "line-limit": [
       {
+        "path": "crates/deck-cli/src/cmd/bench.rs",
+        "lines": 322,
+        "kind": "accepted",
+        "reason": "The bench command door: record/list/matrix/compare plus the grid plumbing they share (GridOpts, build_cells, quant_files, parse_tasks) in one CLI door. Splitting would scatter one bench surface and duplicate the shared grid parsing. AGENTS.md 'File & Function Size Limits' and 'COHESION > ARBITRARY LINE COUNT'"
+      },
+      {
+        "path": "crates/deck-cli/src/main.rs",
+        "lines": 327,
+        "kind": "accepted",
+        "reason": "The CLI entry: clap subcommand/flag enums + dispatch only, exactly the dispatch-door shape AGENTS.md mandates for deck-cli; splitting the enums across modules for ~27 lines over the soft heuristic is coupling for nothing. Mirrors the src-tauri main.rs accepted entry. AGENTS.md 'File & Function Size Limits' and 'COHESION > ARBITRARY LINE COUNT'"
+      },
+      {
         "path": "crates/deck-core/src/gguf.rs",
         "lines": 699,
         "reason": "pre-existing at tool introduction (2026-08-28); parked — revisit on next touching change"
-      },
-      {
-        "path": "crates/deck-tauri/src/bringup.rs",
-        "lines": 404,
-        "kind": "accepted",
-        "reason": "Single shared derive→verify→apply pipeline guarded by the single-flight BRINGUP_RUNNING lock; splitting would move derive_and_verify across a module boundary and couple bringup to test. AGENTS.md 'File & Function Size Limits' and 'COHESION > ARBITRARY LINE COUNT'"
-      },
-      {
-        "path": "src-tauri/src/main.rs",
-        "lines": 338,
-        "kind": "accepted",
-        "reason": "Thin #[tauri::command] adapter — each function is 3-8 lines of scaffold over a deck_tauri call; the adapter-layer shape is mandated by AGENTS.md 'src-tauri — thin binary entry'"
-      },
-      {
-        "path": "crates/deck-core/src/store.rs",
-        "lines": 347,
-        "kind": "accepted",
-        "reason": "Single-domain sqlite persistence module (model/profile/bench tables); splitting would scatter one store's invariants. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
       },
       {
         "path": "crates/deck-core/src/profile.rs",
@@ -52,34 +46,16 @@
         "reason": "safetensors model-dir reader — a single-purpose parser just over the soft heuristic. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
       },
       {
-        "path": "frontend/src/lib/dl.ts",
-        "lines": 450,
+        "path": "crates/deck-core/src/store.rs",
+        "lines": 347,
         "kind": "accepted",
-        "reason": "The download-manager store is the single source of truth for download state (AGENTS.md: dl.ts is the voter store, mutations go through its methods, never ad-hoc). shardSet was extracted to lib/shards.ts; the remaining queue/event/pump core is one cohesive unit by contract."
+        "reason": "Single-domain sqlite persistence module (model/profile/bench tables); splitting would scatter one store's invariants. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
       },
       {
-        "path": "frontend/src/api.ts",
-        "lines": 305,
+        "path": "crates/deck-engines/src/health.rs",
+        "lines": 332,
         "kind": "accepted",
-        "reason": "The single invoke door — views never shell out directly, they go through api.ts → Tauri invoke (AGENTS.md 'UI never shells out directly'). Each function is a 1-5 line wrapper; splitting would scatter the adapter contract."
-      },
-      {
-        "path": "frontend/src/styles.css",
-        "lines": 446,
-        "kind": "accepted",
-        "reason": "Flat stylesheet with no function seams; splitting into per-view CSS partials is cosmetic churn with import-order footguns and zero functional payoff. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
-      },
-      {
-        "path": "frontend/src/views/Browse.tsx",
-        "lines": 528,
-        "kind": "accepted",
-        "reason": "Single-screen marketplace page component; the only cross-view helper (verdictClass) was already extracted to lib/ui.ts and shardSet to lib/shards.ts. Further split is prop-drilling churn. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
-      },
-      {
-        "path": "frontend/src/views/LoadoutEditor.tsx",
-        "lines": 509,
-        "kind": "accepted",
-        "reason": "Single-screen loadout form component; shared verdictClass extracted to lib/ui.ts. Deep split would force prop drilling across one page. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
+        "reason": "Single measurement-path module: measure_generation_tps() used by bench record + bringup + CLI deck bench record; parse_tps() hardened for llama.cpp + FreeToken counter names. One cohesive health/throughput concern. AGENTS.md COHESION > ARBITRARY LINE COUNT"
       },
       {
         "path": "crates/deck-feeds/src/download.rs",
@@ -88,22 +64,64 @@
         "reason": "Cohesive download concern: Cancel handle + .part resumable streaming + shard-set grouping share one state contract (the .part park/resume invariant). Splitting would separate files that MUST stay in step. 1 over the soft heuristic from dense doc, not a seam. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
       },
       {
+        "path": "crates/deck-tauri/src/bringup.rs",
+        "lines": 404,
+        "kind": "accepted",
+        "reason": "Single shared derive→verify→apply pipeline guarded by the single-flight BRINGUP_RUNNING lock; splitting would move derive_and_verify across a module boundary and couple bringup to test. AGENTS.md 'File & Function Size Limits' and 'COHESION > ARBITRARY LINE COUNT'"
+      },
+      {
         "path": "crates/deck-tauri/src/test.rs",
         "lines": 309,
         "kind": "accepted",
         "reason": "The loadout test harness: the single-flight TEST_CHILD slot (test_profile/test_stop both operate it) plus the boot-watch verdict policy. Reader threads were deduped into spawn_output_reader; the file is one lifecycle contract. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
       },
       {
-        "path": "crates/deck-cli/src/cmd/bench.rs",
-        "lines": 322,
+        "path": "frontend/src/api.ts",
+        "lines": 305,
         "kind": "accepted",
-        "reason": "The bench command door: record/list/matrix/compare plus the grid plumbing they share (GridOpts, build_cells, quant_files, parse_tasks) in one CLI door. Splitting would scatter one bench surface and duplicate the shared grid parsing. AGENTS.md 'File & Function Size Limits' and 'COHESION > ARBITRARY LINE COUNT'"
+        "reason": "The single invoke door — views never shell out directly, they go through api.ts → Tauri invoke (AGENTS.md 'UI never shells out directly'). Each function is a 1-5 line wrapper; splitting would scatter the adapter contract."
       },
       {
-        "path": "crates/deck-cli/src/main.rs",
-        "lines": 327,
+        "path": "frontend/src/lib/dl.ts",
+        "lines": 450,
         "kind": "accepted",
-        "reason": "The CLI entry: clap subcommand/flag enums + dispatch only, exactly the dispatch-door shape AGENTS.md mandates for deck-cli; splitting the enums across modules for ~27 lines over the soft heuristic is coupling for nothing. Mirrors the src-tauri main.rs accepted entry. AGENTS.md 'File & Function Size Limits' and 'COHESION > ARBITRARY LINE COUNT'"
+        "reason": "The download-manager store is the single source of truth for download state (AGENTS.md: dl.ts is the voter store, mutations go through its methods, never ad-hoc). shardSet was extracted to lib/shards.ts; the remaining queue/event/pump core is one cohesive unit by contract."
+      },
+      {
+        "path": "frontend/src/styles.css",
+        "lines": 446,
+        "kind": "accepted",
+        "reason": "Flat stylesheet with no function seams; splitting into per-view CSS partials is cosmetic churn with import-order footguns and zero functional payoff. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
+      },
+      {
+        "path": "frontend/src/views/Bringup.tsx",
+        "lines": 308,
+        "kind": "accepted",
+        "reason": "Single bring-up drawer component (derive→verify→apply→bench phases + VRAM breakdown + tweak panel). The entire bring-up UX lives here; splitting would scatter the phase-dot flow and the apply/bench actions. AGENTS.md COHESION > ARBITRARY LINE COUNT"
+      },
+      {
+        "path": "frontend/src/views/Market.tsx",
+        "lines": 528,
+        "kind": "accepted",
+        "reason": "Single-screen marketplace page component; the only cross-view helper (verdictClass) was already extracted to lib/ui.ts and shardSet to lib/shards.ts. Further split is prop-drilling churn. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
+      },
+      {
+        "path": "frontend/src/views/Hud.tsx",
+        "lines": 361,
+        "kind": "accepted",
+        "reason": "Single HUD dashboard: model index, port map residency, fit verdicts, signals, bringup status card. The top-level fleet overview composites many sub-views; splitting would force prop-drilling across the main page. AGENTS.md COHESION > ARBITRARY LINE COUNT"
+      },
+      {
+        "path": "frontend/src/views/LoadoutEditor.tsx",
+        "lines": 509,
+        "kind": "accepted",
+        "reason": "Single-screen loadout form component; shared verdictClass extracted to lib/ui.ts. Deep split would force prop drilling across one page. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
+      },
+      {
+        "path": "src-tauri/src/main.rs",
+        "lines": 338,
+        "kind": "accepted",
+        "reason": "Thin #[tauri::command] adapter — each function is 3-8 lines of scaffold over a deck_tauri call; the adapter-layer shape is mandated by AGENTS.md 'src-tauri — thin binary entry'"
       }
     ],
     "artifact-hygiene": [],

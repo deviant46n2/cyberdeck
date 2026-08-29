@@ -235,6 +235,10 @@ export const bringupStart = (model: string, engine: string, fast = false) =>
 export const testModelStart = (model: string, engine: string) =>
   invoke<void>("test_model_start", { model, engine });
 
+/** Apply a previously-verified profile (skip derive+verify) and bench+record. */
+export const testApply = (profile: Profile, fit: FitBreakdown | null) =>
+  invoke<void>("apply_cached_profile", { profile, fit });
+
 export const benchNow = (p: {
   engine: string;
   host: string;

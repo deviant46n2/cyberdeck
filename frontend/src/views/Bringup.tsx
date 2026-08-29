@@ -200,6 +200,23 @@ export default function Bringup() {
         </div>
       )}
 
+      {/* APPLY — only after a successful TEST (mode=test), skips re-verify */}
+      {state.mode === "test" && finished && !state.running && state.result?.ok && (
+        <button
+          className="ghost"
+          style={{
+            fontSize: 9,
+            padding: "4px 10px",
+            marginBottom: 10,
+            borderColor: "var(--magenta)",
+            color: "var(--magenta)",
+          }}
+          onClick={() => void br.startApplyCached()}
+        >
+          APPLY — load this profile now
+        </button>
+      )}
+
       {/* Tweak panel — only when we have a profile but the run failed */}
       {hasProfile && failed && state.profile && (
         <div className="card" style={{ background: "#07070e", padding: 8, marginTop: 8 }}>

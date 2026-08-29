@@ -10,8 +10,9 @@ import Console from "./views/Console";
 import Downloads from "./views/Downloads";
 import Bringup from "./views/Bringup";
 import Dedup from "./views/Dedup";
+import Bench from "./views/Bench";
 
-const VIEWS = ["HUD", "VAULT", "DEDUP", "SIGNALS", "MARKET", "DOWNLOADS", "LOADOUTS", "CONSOLE"];
+const VIEWS = ["HUD", "VAULT", "DEDUP", "SIGNALS", "MARKET", "DOWNLOADS", "LOADOUTS", "CONSOLE", "BENCH"];
 
 export default function App() {
   const [view, setView] = useState("HUD");
@@ -113,6 +114,7 @@ export default function App() {
           <Loadouts profiles={profiles} onUnit={setUnit} onChanged={refresh} />
         )}
         {view === "CONSOLE" && <Console unit={unit} />}
+        {view === "BENCH" && <Bench />}
       </main>
 
       <Bringup />

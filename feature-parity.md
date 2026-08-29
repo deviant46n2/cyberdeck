@@ -235,11 +235,15 @@ having at all. They are the reason this project exists, not Odysseus parity.
 
 ### B2. Live throughput measurement
 - `/metrics` probe → median generation tok/s, stored in `cyberdeck.db`.
-- `deck bench record` / `list`; CONSOLE **BENCH** writes the same table.
+- `deck bench record` / `list` / `best`; CONSOLE **BENCH** writes the same table; TEST records a bench row tagged by test port.
+- `deck bench best` shows best tok/s per (model, engine) across stored history.
 - `DONE → EXTEND`: the **matrix grid** (`deck bench matrix`) now runs task
   prompts headlessly across model × quant × engine and records every trial —
   the multiscale raw data Compare will score. Still to come: P50/P90 medians
   and per-loadout history views.
+- Single measurement path: `bench_and_record`, `deck bench record`, and the
+  app's bench history all use `measure_generation_tps()` — a scrape + 192-token
+  probe; a dead scrape never lands as 0 tok/s.
 
 ### B3. Headless loadout autotune
 - The plan from the session: sweep ctx/kv/ngl/ubatch on the **test port**,
@@ -271,11 +275,13 @@ the app feels whole to use, then benchmark depth.
 
 | # | Gap | Tracks | cyberdeck target | Effort |
 |---|-----|--------|------------------|--------|
-| 0 | **BringUp: one-click load** | Flagship flow | `deck bringup --model --engine` → derive max-ctx profile → verify on test port → install → bench & record. HUD `LOAD` button — **DONE (2026-08-28):** CLI, Tauri `bringup_start`, VAULT per-model/engine LOAD buttons, HUD LOAD button with engine selector, Bringup drawer with phase streaming + VRAM breakdown + Tweak & Retry panel all working | M |
+| 0 | **BringUp: one-click load** | Flagship flow | `deck bringup --model --engine` → derive max-ctx profile → verify on test port → install → bench & record. HUD `LOAD` button — **DONE (2026-08-28):** CLI, Tauri `bringup_start`, VAULT per-model/engine LOAD buttons, HUD LOAD button with engine selector, Bringup drawer with phase streaming + VRAM breakdown + Tweak & Retry panel + APPLY button all working | M |
+| 0a | **TEST → bench → APPLY chain** | W1 correctness | headless TEST (derive+verify) now records a `BenchRow` tagged by test port so the score survives; `apply_cached_profile` Tauri command + APPLY button lets you load a verified profile and bench+record in one click without re-deriving — **DONE (2026-08-28):** `bench_and_record` uses the single `measure_generation_tps` path; bench history + scoreboard share one measurement contract | S |
 | 1 | **Multi-model residency (PORT MAP)** | Direction §1 | each engine a fixed port slot (:18000/:1919/:11434) with an optional bound profile; `deck use` = bind to slot *and start*, N residents coexist; keep single-swap as default — **Landed (2026-08-28):** per-engine slots already existed as the architectural shape; now backed by a `residents` table (which profile is bound to each slot + a resident flag) and surfaced through `deck use --resident` (bind + run alongside other slots, single-swap stays default) and `deck engines status` (live port map: bound profile, systemd/health state, resident flag) + `deck engines stop <engine>` (stop a slot, leave the rest up). Tauri `port_map_status` mirrors the reader for the UI. **Landed (2026-08-28, UI tail):** the HUD renders the map as the PORT MAP card — state dot, bound profile, resident flag, latest bench tok/s per slot, per-slot STOP (Tauri `engine_stop`, the UI door to `deck engines stop`). Per-slot client rewire is still open | M |
 | 2 | **Concurrent chat across residents** | Direction §2 | generalize HUD/CONSOLE: per-session engine+model pin, token streaming (not just opencode lines), live retarget of next message | M |
 | 3 | **Bench-aware chat header** | Direction §3 | for each resident show tok/s + fit in chat header, so you can see where to type — **DONE (2026-08-28):** HUD top bar now shows per-resident fit verdict (PASS/WARN/OOM) + latest tok/s + live state dot; PORT MAP card also shows fit verdict column | S |
 | 4 | **Compare / A·B bench** | Odysseus §4 | `deck bench compare` CLI + tab; blind-random same prompts across residents, tok/s + score, agent synthesis — **compare CLI landed: blind scoring over the `matrix` grid, per-candidate failures surfaced; tab + agent synthesis still open** | M |
+| 4.5 | **Bench CLI doors + scoreboard** | W2 convenience | `deck bench best` (best tok/s per model × engine), `deck bench record`, `deck download <repo>` (resumable, single-file, curl resume) — **DONE (2026-08-28):** CLI doors + Bench.tsx scoreboard grouped by model × engine (best/latest/avg/tok/s + runs), raw history list, and a record-now form; `deck download` picks the largest .gguf (or --file/--quant match) and streams into ~/models | M |
 | 5 | **Autotune headless** | Advantage B3 | sweep ctx/kv/ngl/ubatch on test port, score by objective, `APPLY` best — feeds the rec header | M |
 | 6 | Deep-research skill | §3 | agent skill: search→read→synthesize→report | S |
 | 7 | MCP picker per session | §1 | expose opencode MCP servers in agent panel | S |

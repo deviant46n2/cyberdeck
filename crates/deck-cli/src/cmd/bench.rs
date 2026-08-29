@@ -2,6 +2,7 @@
 //! engine matrix grid.
 
 use anyhow::Result;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -240,6 +241,54 @@ pub(crate) fn compare(
         eprintln!(
             "[compare] wrote {} scored trial(s) to {p:?}",
             report.trials.len()
+        );
+    }
+    Ok(())
+}
+
+/// Show the best tok/s per (model, engine) across stored bench history.
+pub(crate) fn best() -> Result<()> {
+    let db = deck_core::store::default_db_path();
+    let conn = deck_core::store::open(&db)?;
+    deck_core::store::ensure_bench_schema(&conn)?;
+    let rows = deck_core::store::recent_bench(&conn, 500)?;
+    if rows.is_empty() {
+        println!("no benchmark readings yet — run `deck bench record` against a live engine");
+        return Ok(());
+    }
+    let mut groups: HashMap<(String, String), Vec<f64>> = HashMap::new();
+    let mut latest: HashMap<(String, String), (f64, i64)> = HashMap::new();
+    for r in &rows {
+        let key = (r.model.clone(), r.engine.clone());
+        groups.entry(key.clone()).or_default().push(r.tps);
+        let entry = latest.entry(key).or_insert((r.tps, r.at));
+        if r.at > entry.1 {
+            entry.1 = r.at;
+            entry.0 = r.tps;
+        }
+    }
+    let mut summary: Vec<_> = groups
+        .into_iter()
+        .map(|(k, tps)| {
+            let best = tps.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let avg = tps.iter().sum::<f64>() / tps.len() as f64;
+            let latest_tps = latest.get(&k).map(|(t, _)| *t).unwrap_or(best);
+            (k, best, avg, latest_tps, tps.len())
+        })
+        .collect();
+    summary.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    println!(
+        "{:<32} {:<12} {:>7} {:>7} {:>7} {}",
+        "model", "engine", "best", "latest", "avg", "runs"
+    );
+    for ((model, engine), best, _avg, latest, count) in summary {
+        let short = std::path::Path::new(&model)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or_else(|| model.as_str());
+        println!(
+            "{:<32} {:<12} {:>7.1} {:>7.1} {:>7.1} {}",
+            short, engine, best, latest, _avg, count
         );
     }
     Ok(())

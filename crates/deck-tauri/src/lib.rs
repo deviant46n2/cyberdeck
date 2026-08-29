@@ -74,7 +74,8 @@ pub fn engine_bin_clear(store_id: &str) -> Result<(), String> {
 
 pub use bench::{BenchRow, EngineStatus, bench_history, bench_now, engine_status};
 pub use bringup::{
-    BringupLine, BringupPhase, BringupResult, FitBreakdown, bringup_start, test_model_start,
+    BringupLine, BringupPhase, BringupResult, FitBreakdown, apply_cached_profile, bringup_start,
+    test_model_start,
 };
 pub use compare::{CandidateStanding, CompareReport, ScoredTrial, compare_run};
 pub use console::{OpDone, OpLine, OpStarted, opencode_run, opencode_stop};

@@ -31,7 +31,7 @@
     {
       "id": "cli-parity-backlog",
       "priority": "P2",
-      "reason": "deck-cli exists but the download-manager and bringup flows shipped UI-only (session 2026-08-26, deliberate). Track which CLI-parity gaps are intentional vs accidental here; revisit when the UI stabilizes"
+      "reason": "deck-cli exists and now exposes CLI doors (deck download, deck bench record/best) alongside the Tauri app; the download-manager queue and bring-up flows were shipped UI-only (session 2026-08-26, deliberate). Track which CLI-parity gaps are intentional vs accidental here; revisit when the UI stabilizes"
     }
   ]
 }
