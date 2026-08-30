@@ -87,7 +87,9 @@ pub use bringup::{
     bringup_start, test_model_start,
 };
 pub use compare::{CandidateStanding, CompareReport, ScoredTrial, compare_run};
-pub use console::{OpDone, OpLine, OpStarted, kill_all, opencode_run, opencode_stop};
+pub use console::{
+    OpDone, OpLine, OpStarted, kill_all, opencode_run, opencode_stop, reap_orphans,
+};
 pub use tui::{tui_resize, tui_spawn, tui_stop, tui_write};
 pub use downloads::{
     DownloadDone, DownloadErr, DownloadEvt, DownloadStarted, download_cancel, download_remove,

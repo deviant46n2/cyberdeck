@@ -616,6 +616,12 @@ fn main() {
             workflow_history,
             workflow_per_role_bench
         ])
+        .setup(|_app| {
+            // Sweep agents orphaned by a previously crashed/crash-killed app
+            // instance; a live owner chain means they are still owned and skipped.
+            deck_tauri::reap_orphans();
+            Ok(())
+        })
         .build(tauri::generate_context!())
         .expect("error while building cyberdeck")
         .run(|_app_handle, event| {
