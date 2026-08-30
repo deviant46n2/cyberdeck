@@ -543,6 +543,10 @@ async fn workflow_per_role_bench(
 }
 
 fn main() {
+    // NVIDIA + Wayland: WebKitGTK's GBM/DMA-BUF scanout path fails with
+    // "Failed to create GBM buffer ... Invalid argument" and the window stays
+    // black. Force the software compositing fallback before WebKit spawns.
+    unsafe { std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1") };
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             scan_with_event,
