@@ -14,3 +14,9 @@ pub fn hardware_profile() -> Result<deck_core::hardware::HardwareProfile, String
         })
     }).map_err(|e| e.to_string())
 }
+
+/// Live host telemetry for the companion widget. Fast (<300 ms): polls disk
+/// bytes + nvidia-smi once, so it is safe to call on the poll interval.
+pub fn host_metrics() -> deck_core::hardware::LiveMetrics {
+    deck_core::hardware::live_metrics()
+}

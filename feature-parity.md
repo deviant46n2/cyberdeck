@@ -322,6 +322,15 @@ agents actually die), dismiss, `--auto` toggle, per-session model pick, and an
 editable project dir. The backend `opencode run` session manager, reaper, and
 events are untouched — the HUD is simply their only UI door.
 
+### System state, for testing (2026-08-30)
+
+A HUD companion widget (tamagotchi-style blob) mirrors live host telemetry —
+GPU util + VRAM, RAM, CPU — and shifts mood with load. Backed by a new
+`host_metrics` Tauri command over `deck_core::hardware::live_metrics` (one
+nvidia-smi call + two /proc samples, ~200 ms). Deliberately UI-only for now:
+it is a telemetry *display*; the CLI surface for host state remains
+`deck hardware` / fit math.
+
 ### One controller, not a swarm (2026-08-30)
 
 Parked as a deliberate engineering statement: **no "mini swarm" of independent

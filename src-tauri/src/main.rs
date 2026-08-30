@@ -330,6 +330,11 @@ fn hw_info() -> deck_tauri::HwInfo {
 }
 
 #[tauri::command]
+fn host_metrics() -> deck_tauri::LiveMetrics {
+    deck_tauri::host_metrics()
+}
+
+#[tauri::command]
 async fn browse_fit_remote(
     repo_id: String,
     rfilename: String,
@@ -590,6 +595,7 @@ fn main() {
             tui_resize,
             tui_stop,
             hw_info,
+            host_metrics,
             browse_fit_remote,
             tweak_profile,
             engine_list,

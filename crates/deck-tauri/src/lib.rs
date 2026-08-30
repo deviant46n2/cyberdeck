@@ -104,7 +104,8 @@ pub use market::{
 pub use feeds::{FeedsPollResult, RankedRelease, Release, feeds_list, feeds_poll, feeds_rank};
 pub use portmap::{PortMapSlot, engine_start, engine_stop, port_map_status};
 pub use agent::{analyze_relevance, agent_tools};
-pub use hardware::hardware_profile;
+pub use hardware::{hardware_profile, host_metrics};
+pub use deck_core::hardware::LiveMetrics;
 pub use recommend::recommend;
 pub use settings::{settings_get, settings_list, settings_set};
 pub use workloads::{Workload, workloads_list};

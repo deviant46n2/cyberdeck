@@ -412,6 +412,18 @@ export const browseFitRemote = (p: {
 export const scanWithEvent = () =>
   invoke<ScanResult>("scan_with_event");
 
+export interface LiveMetrics {
+  gpu_util: number;
+  vram_used_mb: number;
+  vram_total_mb: number;
+  ram_used_mb: number;
+  ram_total_mb: number;
+  cpu_pct: number;
+}
+
+export const hostMetrics = () =>
+  invoke<LiveMetrics>("host_metrics");
+
 export interface DeleteResult {
   rows: number;
   file_deleted: boolean;
