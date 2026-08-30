@@ -48,6 +48,15 @@ pub struct Score {
     pub bench: f64,
     pub recency: f64,
     pub fits: bool,
+    /// Estimated GGUF download size (GB) for a model; `None` for engine
+    /// releases or names we cannot size offline (O4 DISK enrichment).
+    pub disk_gb: Option<f64>,
+    /// Largest context (tokens) the candidate still fits VRAM at, given the
+    /// offline weight guess; `None` when the size is uncertain — never invent
+    /// a ctx for an un-sizable model (O4 fit-at-ctx enrichment).
+    pub max_ctx: Option<u64>,
+    /// Whether the estimated download fits the free disk at rank time.
+    pub disk_fits: bool,
     pub reasons: Vec<String>,
 }
 
@@ -139,34 +148,61 @@ fn params_to_gb(p: f64) -> f64 {
     }
 }
 
+/// KV-cache bytes per one billion params per one thousand context tokens.
+///
+/// Derived from `fit::estimate`'s real math (fp16, no GQA): a 32B model at
+/// 32k ctx → ~4 GiB of KV, an 8B at 32k → ~1 GiB. So KV ≈ 4 MiB per B-param
+/// per 1000 tokens. Conservative (no GQA discount) — a model that fits under
+/// this rule genuinely fits.
+const KV_MB_PER_B_PARAM_PER_1K: f64 = 4.0;
+
+/// Largest context (tokens) whose KV still fits in VRAM after the estimated
+/// weights + a small buffer, given the desktop reservation. Returns `None`
+/// when weights alone already exceed available-for-model (can't fit at any
+/// ctx). Deterministic, pure, and reuses the same reservation fit.rs uses.
+fn kv_ctx_at(params_b: f64, vram_mb: u64, reserved_mb: u64) -> Option<u64> {
+    let weights_mb = params_to_gb(params_b) * 1024.0;
+    let available_for_model = vram_mb as f64 - reserved_mb as f64;
+    let headroom = available_for_model - weights_mb - 64.0; // 64 MiB buffers
+    if headroom <= 0.0 {
+        return None;
+    }
+    // headroom_mb = KV_MB/1k * params_b * (ctx/1000) → ctx = headroom*1000 / (kv*params)
+    let ctx = (headroom * 1000.0 / (KV_MB_PER_B_PARAM_PER_1K * params_b)) as u64;
+    Some(ctx.clamp(1024, 131_072))
+}
+
 /// size when no real GGUF header is available. If the release payload looks
 /// like a HF model with tags, we approximate; otherwise we degrade gracefully.
 /// Real fit uses `fit::estimate` when GGUF meta is fetchable — that path is
 /// exercised by MARKET's `browse_fit_remote`; here we need a fast offline rank.
-fn hw_term(release: &Release, vram_mb: u64) -> (f64, bool, String) {
-    // GitHub releases always fit (they're engines, not models)
+fn hw_term(release: &Release, vram_mb: u64, reserved_mb: u64) -> (f64, bool, String, Option<f64>, Option<u64>) {
+    // GitHub releases always fit (they're engines, not models) — no size/ctx
     if release.source == "github" {
-        return (1.0, true, "engine release".into());
+        return (1.0, true, "engine release".into(), None, None);
     }
     // HF: guess total size from the params marker in the repo name. Names we
     // cannot size (decimal/composite MoE, or no marker) are UNCERTAIN — we must
     // not claim a fit for an un-sizable flagship (see params_total_b).
     let repo = release.repo.to_lowercase();
-    let guess_gb: f64 = match params_total_b(&repo) {
-        Some(total_b) => params_to_gb(total_b),
+    let (guess_gb, total_b): (f64, f64) = match params_total_b(&repo) {
+        Some(total_b) => (params_to_gb(total_b), total_b),
         None => {
             return (
                 0.0,
                 false,
                 "size unknown (composite/MoE) — probe GGUF in MARKET before testing".into(),
+                None,
+                None,
             );
         }
     };
     let guess_mb = (guess_gb * 1024.0) as u64;
-    let fits = guess_mb + 1600 < vram_mb; // reserve 1.6G like fit.rs
+    let fits = guess_mb + reserved_mb < vram_mb;
     let score = if fits { 1.0 } else if guess_mb < vram_mb + 4000 { 0.5 } else { 0.0 };
     let reason = if fits { format!("~{guess_gb:.0}GB fits {vram_mb}MB") } else { format!("~{guess_gb:.0}GB tight on {vram_mb}MB") };
-    (score, fits, reason)
+    let max_ctx = if fits { kv_ctx_at(total_b, vram_mb, reserved_mb) } else { None };
+    (score, fits, reason, Some(guess_gb), max_ctx)
 }
 
 pub fn score_one(
@@ -176,9 +212,10 @@ pub fn score_one(
     vram_mb: u64,
     recency_days: f64,
     w: &Weights,
+    disk_free_mb: u64,
 ) -> Score {
     // hw
-    let (hw, fits, hw_reason) = hw_term(release, vram_mb);
+    let (hw, fits, hw_reason, disk_gb, max_ctx) = hw_term(release, vram_mb, 1600);
     // family overlap: does installed contain same family?
     let fam = family_of(&release.repo);
     let family_hit = installed.iter().any(|m| {
@@ -207,7 +244,30 @@ pub fn score_one(
     if let Some(tok) = q { if novelty > 0.5 { reasons.push(format!("new quant {tok}")); } }
     if bench.tok_s.is_some() && fits { reasons.push("may beat current best".into()); }
 
-    Score { total, hw, family, novelty, bench: bench_s, recency, fits, reasons }
+    let disk_fits = match disk_gb {
+        Some(gb) => (gb * 1024.0) as u64 + 512 < disk_free_mb,
+        // engine releases and un-sizable models can't be judged against disk
+        None => true,
+    };
+    if !disk_fits {
+        if let Some(gb) = disk_gb {
+            reasons.push(format!("~{gb:.0}GB won't fit free disk"));
+        }
+    }
+
+    Score {
+        total,
+        hw,
+        family,
+        novelty,
+        bench: bench_s,
+        recency,
+        fits,
+        disk_gb,
+        max_ctx,
+        disk_fits,
+        reasons,
+    }
 }
 
 /// Score all releases; sort descending. `now` = unix secs for recency.
@@ -218,13 +278,14 @@ pub fn rank(
     vram_mb: u64,
     now: i64,
     w: &Weights,
+    disk_free_mb: u64,
 ) -> Vec<(Release, Score)> {
     let mut out: Vec<(Release, Score)> = releases
         .into_iter()
         .map(|r| {
             let age_days = if r.fetched_at > 0 { (now - r.fetched_at) as f64 / 86400.0 } else { 30.0 };
             // also consider published_at if ISO
-            let sc = score_one(&r, installed, bench, vram_mb, age_days, w);
+            let sc = score_one(&r, installed, bench, vram_mb, age_days, w, disk_free_mb);
             (r, sc)
         })
         .collect();
@@ -241,7 +302,7 @@ mod tests {
     #[test]
     fn github_always_fits() {
         let r = rel("github", "ggml-org/llama.cpp");
-        let s = score_one(&r, &[], &BenchBest::default(), 16000, 0.0, &Weights::default());
+        let s = score_one(&r, &[], &BenchBest::default(), 16000, 0.0, &Weights::default(), 268_000);
         assert!(s.fits);
         assert_eq!(s.hw, 1.0);
     }
@@ -249,8 +310,8 @@ mod tests {
     fn family_hit_scores_higher() {
         let r = rel("hf", "unsloth/Qwen3-8B-GGUF");
         let installed = vec![Installed { name: "qwen3".into(), arch: Some("qwen3".into()), quant: None }];
-        let s_hit = score_one(&r, &installed, &BenchBest::default(), 16000, 0.0, &Weights::default());
-        let s_miss = score_one(&r, &[], &BenchBest::default(), 16000, 0.0, &Weights::default());
+        let s_hit = score_one(&r, &installed, &BenchBest::default(), 16000, 0.0, &Weights::default(), 268_000);
+        let s_miss = score_one(&r, &[], &BenchBest::default(), 16000, 0.0, &Weights::default(), 268_000);
         assert!(s_hit.family > s_miss.family);
         assert!(s_hit.total > s_miss.total);
     }
@@ -258,7 +319,7 @@ mod tests {
     fn rank_sorts_desc() {
         let a = rel("hf", "unsloth/Qwen3-70B-GGUF");
         let b = rel("hf", "unsloth/Qwen3-7B-GGUF");
-        let ranked = rank(vec![a, b], &[], &BenchBest::default(), 16000, 0, &Weights::default());
+        let ranked = rank(vec![a, b], &[], &BenchBest::default(), 16000, 0, &Weights::default(), 268_000);
         // 7B fits, 70B doesn't → 7B first
         assert!(ranked[0].0.repo.contains("7B"));
     }
@@ -267,9 +328,12 @@ mod tests {
         // Flash-Next is a 125B-total MoE, AGENTS.md's explicit hardware
         // non-starter. Its decimal/composite name must NOT rank as "fits".
         let r = rel("hf", "bartowski/Qwen3.8-Flash-Next-GGUF");
-        let s = score_one(&r, &[], &BenchBest::default(), 16000, 0.0, &Weights::default());
+        let s = score_one(&r, &[], &BenchBest::default(), 16000, 0.0, &Weights::default(), 268_000);
         assert!(!s.fits, "Flash-Next must not be declared fittable offline");
         assert_eq!(s.hw, 0.0);
+        // O4 enrichment: un-sizable moons must not invent a DISK or ctx number
+        assert_eq!(s.disk_gb, None);
+        assert_eq!(s.max_ctx, None);
     }
     #[test]
     fn decimal_params_is_uncertain_not_tiny() {
@@ -280,5 +344,34 @@ mod tests {
         assert_eq!(params_total_b("bartowski/Qwen3.8-Flash-Next-GGUF"), None);
         // plain integers still resolve
         assert_eq!(params_total_b("unsloth/Qwen3-8B-GGUF"), Some(8.0));
+    }
+    #[test]
+    fn o4_disk_and_ctx_enrichment_for_sizable_model() {
+        // 8B GGUF: ~5GB disk (params_to_gb band), fits 16k VRAM → ctx derived.
+        let r = rel("hf", "unsloth/Qwen3-8B-GGUF");
+        let s = score_one(&r, &[], &BenchBest::default(), 16000, 0.0, &Weights::default(), 268_000);
+        assert!(s.fits);
+        assert_eq!(s.disk_gb, Some(5.0));
+        assert!(s.disk_fits);
+        // 8B: weights ≈ 5120 MiB → headroom ≈ 16000-1600-5120-64 = 9216 MiB
+        // ctx = 9216*1000 / (4*8) = 288000 → clamped to 131072
+        assert_eq!(s.max_ctx, Some(131_072));
+    }
+    #[test]
+    fn o4_ctx_scales_down_when_read_only_headroom() {
+        // 70B GGUF ~40GB does not fit 16 GiB VRAM → no ctx, disk still reported.
+        let r = rel("hf", "unsloth/Qwen3-70B-GGUF");
+        let s = score_one(&r, &[], &BenchBest::default(), 16000, 0.0, &Weights::default(), 268_000);
+        assert!(!s.fits);
+        assert_eq!(s.disk_gb, Some(40.0));
+        assert_eq!(s.max_ctx, None);
+    }
+    #[test]
+    fn o4_disk_fits_flips_when_free_disk_is_tiny() {
+        let r = rel("hf", "unsloth/Qwen3-8B-GGUF");
+        // only ~1 GB free disk: the ~2GB download cannot fit
+        let s = score_one(&r, &[], &BenchBest::default(), 16000, 0.0, &Weights::default(), 1024);
+        assert!(s.fits, "weights fit VRAM but the download is blocked by disk");
+        assert!(!s.disk_fits);
     }
 }

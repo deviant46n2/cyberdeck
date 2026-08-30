@@ -32,12 +32,13 @@ pub fn analyze_relevance(repo: String, workload: Option<String>) -> Result<serde
     let r = releases.into_iter().find(|x| x.repo == repo).ok_or_else(|| format!("release '{repo}' not in catalog — run feeds poll"))?;
     let installed = deck_core::store::list(&conn).map_err(|e| e.to_string())?.into_iter().map(|m| deck_core::relevance::Installed { name: m.name, arch: m.arch, quant: m.quant }).collect::<Vec<_>>();
     let vram = deck_core::fit::available_vram_mb(16000);
+    let disk_free_mb = deck_core::fit::hw_free_disk_mb().unwrap_or(268_000);
     let best = deck_core::store::recent_bench(&conn, 20).ok().and_then(|v| v.first().map(|r| r.tps)).unwrap_or(0.0);
     let bench = deck_core::relevance::BenchBest { tok_s: if best > 0.0 { Some(best) } else { None } };
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
     let mut w = deck_core::relevance::Weights::default();
     if workload.as_deref() == Some("coding") { w.family = 0.35; w.hw = 0.25; }
-    let score = deck_core::relevance::score_one(&r, &installed, &bench, vram, 0.0, &w);
+    let score = deck_core::relevance::score_one(&r, &installed, &bench, vram, 0.0, &w, disk_free_mb);
     // alternative: use rank to compute relative
     let _ = now;
     Ok(serde_json::json!({"release": r, "score": score, "workload": workload, "recommendation": if score.total > 0.7 && score.fits { "WORTH_TESTING" } else if score.fits { "RELEVANT" } else { "SKIP" }}))

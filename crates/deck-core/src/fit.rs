@@ -155,6 +155,23 @@ pub fn hw_vram() -> Option<u64> {
     None
 }
 
+/// Free disk (MiB) on the models volume, via `df`. Used so the FEEDS lane can
+/// say whether a candidate's estimated download fits what's actually left on
+/// disk — a model can pass VRAM yet still be a non-starter on this box's
+/// ~268 GB setup. `None` when `df` is unavailable (unlikely on Linux).
+pub fn hw_free_disk_mb() -> Option<u64> {
+    let out = std::process::Command::new("df")
+        .args(["--block-size=1M", "/home"])
+        .output()
+        .ok()?;
+    let s = String::from_utf8_lossy(&out.stdout);
+    let mut lines = s.lines();
+    lines.next(); // header
+    let cols: Vec<&str> = lines.next()?.split_whitespace().collect();
+    // NAME  SIZE  USED  AVAIL  USE%  MOUNTED — avail is column index 3
+    cols.get(3)?.trim().parse::<u64>().ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

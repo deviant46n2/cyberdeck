@@ -442,7 +442,7 @@ export interface RankedCandidate { model: string; engine: string; runs: number; 
 export const recommend = (workload: string, objective: string) => invoke<RankedCandidate[]>("recommend", { workload, objective });
 
 export interface Release { source: string; repo: string; rev: string; kind: string; title: string; url: string; published_at: string; payload_json: string; fetched_at: number; }
-export interface ScoredRelease { release: Release; score: { total: number; hw: number; family: number; novelty: number; bench: number; recency: number; fits: boolean; reasons: string[] } }
+export interface ScoredRelease { release: Release; score: { total: number; hw: number; family: number; novelty: number; bench: number; recency: number; fits: boolean; disk_gb: number | null; max_ctx: number | null; disk_fits: boolean; reasons: string[] } }
 export const feedsList = (limit: number) => invoke<Release[]>("feeds_list", { limit });
 export const feedsPoll = (sources: string[]) => invoke<{ fetched: number; inserted: number }>("feeds_poll", { sources });
 export const feedsRank = (limit: number, workload?: string | null) => invoke<ScoredRelease[]>("feeds_rank", { limit, workload: workload ?? null });

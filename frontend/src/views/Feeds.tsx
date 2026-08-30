@@ -155,6 +155,8 @@ export default function Feeds() {
                 <th>#</th>
                 <th>SCORE</th>
                 <th>FITS</th>
+                <th>DISK</th>
+                <th>MAX CTX</th>
                 <th>SRC</th>
                 <th>REPO / REV</th>
                 <th>WHY</th>
@@ -163,7 +165,7 @@ export default function Feeds() {
             <tbody>
               {ranked.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="dim">rank the catalog by polling first</td>
+                  <td colSpan={9} className="dim">rank the catalog by polling first</td>
                 </tr>
               )}
               {ranked.map((r, i) => {
@@ -179,6 +181,12 @@ export default function Feeds() {
                     </td>
                     <td className="mono" style={{ color: r.score.fits ? "var(--pass)" : "var(--oom)" }}>
                       {r.score.fits ? "✓" : "✗"}
+                    </td>
+                    <td className="mono dim">
+                      {r.score.disk_gb != null ? `~${r.score.disk_gb.toFixed(0)}G` : "-"}
+                    </td>
+                    <td className="mono dim">
+                      {r.score.max_ctx != null ? `@${r.score.max_ctx}` : "-"}
                     </td>
                     <td className="mono dim">{r.release.source}</td>
                     <td className="mono" style={{ maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>

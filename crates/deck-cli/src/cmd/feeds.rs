@@ -51,6 +51,7 @@ pub fn rank(limit: usize, json: bool, workload: Option<String>) -> Result<()> {
         })
         .collect::<Vec<_>>();
     let vram = deck_core::fit::available_vram_mb(16000);
+    let disk_free_mb = deck_core::fit::hw_free_disk_mb().unwrap_or(268_000);
     let best = deck_core::store::recent_bench(&conn, 20).ok().and_then(|v| v.first().map(|r| r.tps)).unwrap_or(0.0);
     let bench = deck_core::relevance::BenchBest { tok_s: if best > 0.0 { Some(best) } else { None } };
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
@@ -61,7 +62,7 @@ pub fn rank(limit: usize, json: bool, workload: Option<String>) -> Result<()> {
         if w == "coding" { weights.family = 0.35; weights.hw = 0.25; }
         if w == "reasoning" { weights.recency = 0.12; }
     }
-    let ranked = deck_core::relevance::rank(releases, &installed, &bench, vram, now, &weights);
+    let ranked = deck_core::relevance::rank(releases, &installed, &bench, vram, now, &weights, disk_free_mb);
     let top = ranked.into_iter().take(limit).collect::<Vec<_>>();
     if json {
         let out: Vec<serde_json::Value> = top.iter().map(|(r, s)| serde_json::json!({"release": r, "score": s})).collect();
@@ -71,9 +72,11 @@ pub fn rank(limit: usize, json: bool, workload: Option<String>) -> Result<()> {
             println!("no releases to rank — run `deck feeds poll`");
             return Ok(());
         }
-        println!("{:<5} {:<6} {:<8} {:<30} {}  {}", "rank", "score", "fits", "repo", "rev", "why");
+        println!("{:<5} {:<6} {:<8} {:<6} {:<8} {:<30} {}  {}", "rank", "score", "fits", "disk", "ctx", "repo", "rev", "why");
         for (i, (r, s)) in top.iter().enumerate() {
-            println!("{:<5} {:<6.2} {:<8} {:<30} {:<12} {}", i + 1, s.total, if s.fits { "✓" } else { "✗" }, r.repo, r.rev, s.reasons.join(", "));
+            let disk = s.disk_gb.map(|g| format!("~{g:.0}G")).unwrap_or_else(|| "-".into());
+            let ctx = s.max_ctx.map(|c| format!("@{c}")).unwrap_or_else(|| "-".into());
+            println!("{:<5} {:<6.2} {:<8} {:<6} {:<8} {:<30} {:<12} {}", i + 1, s.total, if s.fits { "✓" } else { "✗" }, disk, ctx, r.repo, r.rev, s.reasons.join(", "));
         }
     }
     Ok(())
