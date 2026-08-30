@@ -31,7 +31,7 @@ export default function TuiPane({
       cursorBlink: true,
       fontFamily: '"JetBrains Mono", "Fira Code", monospace',
       fontSize: 12,
-      theme: { background: "#060610", foreground: "#d6d6e0" },
+      theme: { background: "#0d1117", foreground: "#e6edf3" },
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -81,7 +81,7 @@ export default function TuiPane({
   return (
     <div
       ref={hostRef}
-      style={{ width: "100%", height: "100%", background: "#060610" }}
+      style={{ width: "100%", height: "100%", background: "#0d1117" }}
     />
   );
 }

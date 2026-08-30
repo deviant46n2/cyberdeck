@@ -72,7 +72,7 @@ export default function PortMap({ onChanged }: { onChanged?: () => void }) {
   return (
     <div className="card" style={{ marginBottom: 10, fontSize: 11 }}>
       <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-        <h3 style={{ fontSize: 11, letterSpacing: 2, color: "var(--cyan)", margin: 0 }}>LOADED MODELS</h3>
+        <h3 style={{ fontSize: 11, letterSpacing: 0.6, color: "var(--muted)", margin: 0 }}>LOADED MODELS</h3>
         <span className="dim" style={{ fontSize: 9 }}>
           LM Studio-style · start/stop each slot independently
         </span>
@@ -89,7 +89,7 @@ export default function PortMap({ onChanged }: { onChanged?: () => void }) {
                 style={{
                   width: 7, height: 7, borderRadius: "50%", flexShrink: 0,
                   background: STATE_COLOR[s.state] ?? "var(--dim2)",
-                  boxShadow: s.state === "up" ? "0 0 8px rgba(0,255,157,0.55)" : "none",
+                  boxShadow: "none",
                 }}
               />
               <span className="mono" style={{ width: 92, fontSize: 11 }}>{s.display}</span>

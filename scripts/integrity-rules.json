@@ -108,7 +108,7 @@
       },
       {
         "path": "frontend/src/styles.css",
-        "lines": 446,
+        "lines": 417,
         "kind": "accepted",
         "reason": "Flat stylesheet with no function seams; splitting into per-view CSS partials is cosmetic churn with import-order footguns and zero functional payoff. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
       },

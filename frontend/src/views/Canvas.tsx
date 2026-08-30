@@ -121,7 +121,7 @@ export default function Canvas() {
         {/* workflow list */}
         <div className="card" style={{ width: 240, fontSize: 11 }}>
           <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-            <h3 style={{ fontSize: 11, letterSpacing: 2, color: "var(--cyan)", margin: 0 }}>WORKFLOWS</h3>
+            <h3 style={{ fontSize: 11, letterSpacing: 0.6, color: "var(--muted)", margin: 0 }}>WORKFLOWS</h3>
             <button className="ghost" style={{ fontSize: 9, padding: "2px 6px" }} onClick={() => { setSelected(""); load(); }} title="reseed + reload">
               RESEED
             </button>
@@ -262,7 +262,7 @@ export default function Canvas() {
 
       {/* per-role bench (8e) — which model best at which node */}
       <div className="card" style={{ marginTop: 10, fontSize: 11 }}>
-        <h3 style={{ fontSize: 11, letterSpacing: 2, color: "var(--cyan)", margin: 0, marginBottom: 6 }}>
+        <h3 style={{ fontSize: 11, letterSpacing: 0.6, color: "var(--muted)", margin: 0, marginBottom: 6 }}>
           PER-ROLE BENCH <span className="dim">· best tok/s across runs, per node</span>
         </h3>
         {bench.length === 0 ? (
@@ -305,7 +305,7 @@ export default function Canvas() {
 
       {/* history */}
       <div className="card" style={{ marginTop: 10, fontSize: 11 }}>
-        <h3 style={{ fontSize: 11, letterSpacing: 2, color: "var(--cyan)", margin: 0, marginBottom: 6 }}>RUN HISTORY</h3>
+        <h3 style={{ fontSize: 11, letterSpacing: 0.6, color: "var(--muted)", margin: 0, marginBottom: 6 }}>RUN HISTORY</h3>
         {history.length === 0 && <div className="dim">no runs yet</div>}
         {history.map((r) => (
           <div key={r.id} className="row" style={{ gap: 8, padding: "3px 0" }}>

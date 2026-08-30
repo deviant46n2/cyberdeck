@@ -85,8 +85,8 @@ export default function Bringup() {
     <div className={`br-drawer ${failed ? "failed" : ""}`}>
       {/* Progress bar */}
       {(state.running || finished) && (
-        <div style={{ height: 2, background: "#1a1a2a", borderRadius: 1, marginBottom: 8, overflow: "hidden" }}>
-          <div style={{ height: "100%", width: `${progressPct}%`, background: failed ? "var(--oom)" : state.running ? "var(--magenta)" : "var(--pass)", transition: "width 0.3s ease", boxShadow: state.running ? "0 0 6px rgba(255,46,196,0.4)" : undefined }} />
+        <div style={{ height: 2, background: "var(--line)", borderRadius: 1, marginBottom: 8, overflow: "hidden" }}>
+          <div style={{ height: "100%", width: `${progressPct}%`, background: failed ? "var(--oom)" : state.running ? "var(--magenta)" : "var(--pass)", transition: "width 0.3s ease" }} />
         </div>
       )}
       {/* Header */}
@@ -119,8 +119,7 @@ export default function Bringup() {
               title={PHASE_LABEL[ph]}
               style={{
                 background:
-                  i < phaseIdx ? "var(--pass)" : i === phaseIdx ? "var(--magenta)" : "#23232f",
-                boxShadow: i === phaseIdx ? "0 0 8px rgba(255,46,196,0.5)" : undefined,
+                  i < phaseIdx ? "var(--pass)" : i === phaseIdx ? "var(--magenta)" : "var(--line)",
                 opacity: state.mode === "test" && (ph === "apply" || ph === "bench") ? 0.25 : 1,
               }}
             />
@@ -134,7 +133,7 @@ export default function Bringup() {
 
       {/* VRAM breakdown (always present after derive) */}
       {state.profile && state.result && state.result.fit && (
-        <div className="card" style={{ background: "#07070e", padding: 8, marginBottom: 10, fontSize: 11 }}>
+        <div className="card" style={{ background: "var(--bg)", padding: 8, marginBottom: 10, fontSize: 11 }}>
           <div className="mono" style={{ fontSize: 9, letterSpacing: 1, marginBottom: 6, color: "var(--dim2)" }}>
             VRAM BREAKDOWN
           </div>
@@ -234,7 +233,7 @@ export default function Bringup() {
 
       {/* Tweak panel — only when we have a profile but the run failed */}
       {hasProfile && failed && state.profile && (
-        <div className="card" style={{ background: "#07070e", padding: 8, marginTop: 8 }}>
+        <div className="card" style={{ background: "var(--bg)", padding: 8, marginTop: 8 }}>
           <div className="mono" style={{ fontSize: 9, letterSpacing: 1, marginBottom: 8, color: "var(--magenta)" }}>
             TWEAK &amp; RETRY
           </div>
@@ -244,7 +243,7 @@ export default function Bringup() {
 
       {/* Scan toast */}
       {scanVisible && (
-        <div className="card" style={{ background: "#07070e", padding: 8, marginTop: 8, cursor: "pointer" }}
+        <div className="card" style={{ background: "var(--bg)", padding: 8, marginTop: 8, cursor: "pointer" }}
              onClick={() => { setScanVisible(false); }}>
           <div className="mono" style={{ fontSize: 10, color: "var(--pass)" }}>
             {scanMsg}
@@ -287,7 +286,7 @@ function TweakPanel({
             type="number"
             value={ctx}
             onChange={(e) => setCtx(e.target.value)}
-            style={{ width: "100%", fontSize: 11, background: "#0a0a12", color: "#e8e8f0", border: "1px solid #2a2a3a", padding: "3px 6px" }}
+            style={{ width: "100%", fontSize: 11, background: "var(--bg)", color: "var(--text)", border: "1px solid var(--line)", padding: "3px 6px" }}
           />
         </div>
         <div style={{ width: 100 }}>
@@ -296,7 +295,7 @@ function TweakPanel({
             type="number"
             value={ngl}
             onChange={(e) => setNgl(e.target.value)}
-            style={{ width: "100%", fontSize: 11, background: "#0a0a12", color: "#e8e8f0", border: "1px solid #2a2a3a", padding: "3px 6px" }}
+            style={{ width: "100%", fontSize: 11, background: "var(--bg)", color: "var(--text)", border: "1px solid var(--line)", padding: "3px 6px" }}
           />
         </div>
         <div style={{ display: "flex", alignItems: "flex-end" }}>

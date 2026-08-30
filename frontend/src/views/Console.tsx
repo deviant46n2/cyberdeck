@@ -155,7 +155,7 @@ export default function Console({ unit }: { unit: string }) {
           onChange={(e) => setPrompt(e.target.value)}
           placeholder="e.g. add a CLI flag to deck fit that prints the KV cache size in GiB"
           rows={3}
-          style={{ width: "100%", fontFamily: "inherit", background: "#0a0a12", color: "#e8e8f0" }}
+          style={{ width: "100%", fontFamily: "inherit" }}
         />
         <div className="row" style={{ gap: 12, marginTop: 8, flexWrap: "wrap" }}>
           <div style={{ flex: 1, minWidth: 240 }}>
@@ -205,7 +205,7 @@ export default function Console({ unit }: { unit: string }) {
             </div>
           )}
           {sessions.map((s) => (
-            <div key={s.id} className="card" style={{ background: "#07070e" }}>
+            <div key={s.id} className="card" style={{ background: "var(--bg)" }}>
               <div
                 className="row"
                 style={{ justifyContent: "space-between", gap: 10, marginBottom: 8 }}

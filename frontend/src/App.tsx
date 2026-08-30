@@ -40,7 +40,7 @@ export default function App() {
 
   useEffect(() => {
     refresh();
-    const t = setTimeout(() => setBooted(true), 1200);
+    const t = setTimeout(() => setBooted(true), 500);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -65,8 +65,8 @@ export default function App() {
   return (
     <div className="app">
       <aside className="sidebar">
-        <div className="brand">CYBERDECK</div>
-        <div className="brand-sub">LOCAL LLM FLEET // deck v0.1</div>
+        <div className="brand">cyberdeck</div>
+        <div className="brand-sub">local llm fleet · v0.1</div>
         <nav className="nav">
           {VIEWS.map((v) => (
             <button
@@ -81,12 +81,11 @@ export default function App() {
             </button>
           ))}
         </nav>
-        <div className="nav-prompt">
-          <div><span className="mono" style={{color:"var(--pass)"}}>deck@local</span>:<span style={{color:"var(--cyan)"}}>~</span>$ ls ~/agents</div>
-          <div className="dim" style={{fontSize:10, marginTop:4}}>{profiles.length} loadout{profiles.length!==1?"s":""} · {models.length} model{models.length!==1?"s":""}</div>
-          <div style={{marginTop:8, display:"flex", gap:6, flexWrap:"wrap"}}>
-            <span className="mono" style={{fontSize:9, color:"var(--dim2)"}}>[{new Date().toLocaleTimeString([],{hour12:false})}]</span>
-            <span className="mono" style={{fontSize:9, color: models.length?"var(--pass)":"var(--warn)"}}>{models.length?"● indexed":"○ no models"}</span>
+        <div className="side-status">
+          <div>{models.length} model{models.length !== 1 ? "s" : ""} · {profiles.length} loadout{profiles.length !== 1 ? "s" : ""}</div>
+          <div className="status-line">
+            <span className={"dot " + (models.length ? "up" : "down")} />
+            <span>{models.length ? "vault indexed" : "vault empty — scan ~/models"}</span>
           </div>
         </div>
         <div className="spacer" />
@@ -122,8 +121,8 @@ export default function App() {
         className={"boot" + (booted ? " fade-out" : "")}
         style={{ pointerEvents: booted ? "none" : "auto" }}
       >
-        <h1>CYBERDECK</h1>
-        <p>BOOTING FLEET CONTROL</p>
+        <h1>cyberdeck</h1>
+        <p>loading fleet…</p>
       </div>
     </div>
   );

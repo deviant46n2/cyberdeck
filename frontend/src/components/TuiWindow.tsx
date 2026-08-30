@@ -73,9 +73,9 @@ export default function TuiWindow({
         zIndex: z,
         display: "flex",
         flexDirection: "column",
-        background: "#0a0a14",
-        border: "1px solid #232336",
-        borderRadius: 6,
+        background: "var(--panel)",
+        border: "1px solid var(--line-bright)",
+        borderRadius: 8,
         boxShadow: "0 14px 40px rgba(0,0,0,0.5)",
         overflow: "hidden",
       }}
@@ -89,8 +89,8 @@ export default function TuiWindow({
           alignItems: "center",
           gap: 6,
           padding: "4px 8px",
-          background: "#0e0e18",
-          borderBottom: "1px solid #1e1e2e",
+          background: "var(--panel-2)",
+          borderBottom: "1px solid var(--line)",
           userSelect: "none",
           flex: "none",
         }}

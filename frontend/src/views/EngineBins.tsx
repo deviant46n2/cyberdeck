@@ -41,7 +41,7 @@ export default function EngineBins({ onDone }: { onDone?: () => void }) {
   return (
     <div className="card" style={{ marginBottom: 10, fontSize: 11 }}>
       <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-        <h3 style={{ fontSize: 11, letterSpacing: 2, color: "var(--cyan)", margin: 0 }}>ENGINE BINARIES</h3>
+        <h3 style={{ fontSize: 11, letterSpacing: 0.6, color: "var(--muted)", margin: 0 }}>ENGINE BINARIES</h3>
         <span className="dim" style={{ fontSize: 9 }}>used by test/bringup/matrix when a profile's bin is missing</span>
       </div>
       {rows.map((r) => (
@@ -51,7 +51,7 @@ export default function EngineBins({ onDone }: { onDone?: () => void }) {
             value={vals[r.engine_id] ?? ""}
             onChange={(e) => setVals((v) => ({ ...v, [r.engine_id]: e.target.value }))}
             placeholder={`(engine default: ${r.engine_id === "llamacpp" ? "llama-server" : r.engine_id === "freetoken" ? "ft" : "ollama"})`}
-            style={{ flex: 1, background: "#0e0e18", border: "1px solid #232336", color: "var(--text)", padding: "4px 8px", fontSize: 11, fontFamily: "monospace" }}
+            style={{ flex: 1, background: "var(--bg)", border: "1px solid var(--line)", color: "var(--text)", padding: "4px 8px", fontSize: 11, fontFamily: "monospace" }}
           />
           <button
             className="ghost"

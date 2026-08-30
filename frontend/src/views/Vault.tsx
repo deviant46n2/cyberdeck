@@ -147,8 +147,8 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
                     <tr
                       key={m.path}
                       style={{
-                        ...(dup ? { background: "rgba(255,59,59,0.06)" } : undefined),
-                        ...(isLoaded ? { background: "rgba(0,255,157,0.10)", boxShadow: "inset 3px 0 0 var(--pass), 0 0 12px rgba(0,255,157,0.18)" } : undefined),
+                        ...(dup ? { background: "rgba(248,81,73,0.06)" } : undefined),
+                        ...(isLoaded ? { background: "rgba(63,185,80,0.1)", boxShadow: "inset 3px 0 0 var(--pass)" } : undefined),
                         opacity: isDeleting ? 0.3 : 1,
                         transition: "opacity 0.2s, background 0.2s",
                       }}

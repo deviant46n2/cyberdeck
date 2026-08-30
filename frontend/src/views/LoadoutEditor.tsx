@@ -458,7 +458,7 @@ export default function LoadoutEditor({
                   {fit.weights_ram_mb > 0 && <div>weights (RAM) <span style={{float:"right"}}>{fit.weights_ram_mb} MiB</span></div>}
                   <div>kv_cache <span style={{float:"right"}}>{fit.kv_mb} MiB</span></div>
                   <div>buffers <span style={{float:"right"}}>{fit.buffers_mb} MiB</span></div>
-                  <div style={{borderTop:"1px solid #1e1e2e", margin:"6px 0 4px", paddingTop:4}}>model VRAM <span style={{float:"right", color:"var(--magenta)"}}>{fit.model_vram_mb} MiB</span></div>
+                  <div style={{borderTop:"1px solid var(--line)", margin:"6px 0 4px", paddingTop:4}}>model VRAM <span style={{float:"right", color:"var(--magenta)"}}>{fit.model_vram_mb} MiB</span></div>
                   <div>desktop reserve <span style={{float:"right"}}>{fit.overhead_mb} MiB</span></div>
                   <div>available <span style={{float:"right", color: fit.verdict==="PASS"? "var(--pass)" : fit.verdict==="WARN"?"var(--warn)":"var(--oom)"}}>{fit.available_for_model_mb} MiB</span></div>
                 </div>
@@ -494,7 +494,7 @@ export default function LoadoutEditor({
             </div>
           )}
 
-          <div className="row" style={{gap:8, marginTop:14, borderTop:"1px solid #1a1a2e", paddingTop:12}}>
+          <div className="row" style={{gap:8, marginTop:14, borderTop:"1px solid var(--line)", paddingTop:12}}>
             <span className="tty-prompt" style={{fontSize:12}}>deck@local:~$</span>
             <button className="action" onClick={save}>SAVE</button>
             <button className="ghost" onClick={onClose}>CLOSE</button>

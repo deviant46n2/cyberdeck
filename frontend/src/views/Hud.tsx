@@ -217,7 +217,7 @@ export default function Hud({
   return (
     <div style={{display:"flex", flexDirection:"column", height:"calc(100vh - 44px)", maxWidth:760, margin:"0 auto", width:"100%"}}>
       {status.find((s)=>s.engine==="FreeToken")?.up===false && status.find((s)=>s.engine==="LlamaCpp")?.up && !harnessModel.includes("freetoken") && (
-        <div style={{background:"rgba(255,176,0,0.09)", border:"1px solid rgba(255,176,0,0.22)", color:"var(--warn)", padding:"7px 10px", fontSize:11, textAlign:"center", marginBottom:6}}>
+        <div style={{background:"rgba(210,153,34,0.1)", border:"1px solid rgba(210,153,34,0.3)", color:"var(--warn)", padding:"7px 10px", fontSize:11, textAlign:"center", marginBottom:6}}>
           freetoken :1919 is offline — defaulting harness to <b>llamacpp/qwen3.8-27b</b> (:18000 is live). Pick a model above to override.
         </div>
       )}
@@ -227,7 +227,7 @@ export default function Hud({
           value={loadout}
           onChange={(e) => setLoadout(e.target.value)}
           title="loadout"
-          style={{background:"#0e0e18", border:"1px solid #232336", color:"var(--text)", padding:"6px 10px", fontSize:12, fontFamily:"inherit", minWidth:140}}
+          style={{background:"var(--bg)", border:"1px solid var(--line)", color:"var(--text)", padding:"6px 10px", fontSize:12, fontFamily:"inherit", minWidth:140}}
         >
           <option value="">loadout — none</option>
           {profiles.map((p) => <option key={p.name} value={p.name}>{p.name} · {p.engine}</option>)}
@@ -236,7 +236,7 @@ export default function Hud({
           value={harnessModel}
           onChange={(e) => { setHarnessModel(e.target.value); if (e.target.value) setCustomModel(""); }}
           title="model — local GGUF/safetensors or ollama blob"
-          style={{background:"#0e0e18", border:"1px solid #232336", color:"var(--text)", padding:"6px 10px", fontSize:12, fontFamily:"inherit", minWidth:160}}
+          style={{background:"var(--bg)", border:"1px solid var(--line)", color:"var(--text)", padding:"6px 10px", fontSize:12, fontFamily:"inherit", minWidth:160}}
         >
           <option value="">model — {active ? "loadout default" : "auto"}</option>
           {models.map((m) => <option key={m.path} value={m.path}>{m.name}</option>)}
@@ -247,7 +247,7 @@ export default function Hud({
             value={customModel}
             onChange={(e) => setCustomModel(e.target.value)}
             placeholder="openrouter/anthropic/claude-3.5 or ollama/qwen3"
-            style={{background:"#0e0e18", border:"1px solid var(--cyan)", color:"var(--text)", padding:"6px 10px", fontSize:11, fontFamily:"inherit", minWidth:180}}
+            style={{background:"var(--bg)", border:"1px solid var(--magenta)", color:"var(--text)", padding:"6px 10px", fontSize:11, fontFamily:"inherit", minWidth:180}}
           />
         )}
         {models.length > 0 && localEngines.length > 0 && (
@@ -256,7 +256,7 @@ export default function Hud({
               value={bringupEngine}
               onChange={(e) => setBringupEngine(e.target.value as api.EngineId)}
               title="engine for one-click load"
-              style={{background:"#0e0e18", border:"1px solid #232336", color:"var(--text)", padding:"6px 10px", fontSize:11, fontFamily:"inherit", minWidth:90}}
+              style={{background:"var(--bg)", border:"1px solid var(--line)", color:"var(--text)", padding:"6px 10px", fontSize:11, fontFamily:"inherit", minWidth:90}}
             >
               {localEngines.map((en) => (
                 <option key={en.id} value={en.id}>{en.id === "llamacpp" ? "LCPP" : en.id === "freetoken" ? "FT" : en.id}</option>
@@ -297,7 +297,7 @@ export default function Hud({
               const verdictColor = r.fit_verdict === "PASS" ? "var(--pass)" : r.fit_verdict === "WARN" ? "var(--warn)" : r.fit_verdict === "OOM" ? "var(--oom)" : "var(--dim2)";
               return (
                 <span key={r.engine} className="mono" style={{display:"flex", alignItems:"center", gap:4, color:"var(--text)"}}>
-                  <span style={{width:6, height:6, borderRadius:"50%", background: r.state === "up" ? "var(--pass)" : r.state === "starting" ? "var(--warn)" : "var(--dim2)", boxShadow: r.state === "up" ? "0 0 6px rgba(0,255,157,0.5)" : "none"}} />
+                  <span style={{width:6, height:6, borderRadius:"50%", background: r.state === "up" ? "var(--pass)" : r.state === "starting" ? "var(--warn)" : "var(--dim2)", boxShadow: "none"}} />
                   <span>{r.profile}</span>
                   {r.fit_verdict && <span style={{color: verdictColor}}>{r.fit_verdict}</span>}
                   {b && <span style={{color:"var(--cyan)"}}>{b.tps.toFixed(1)} tok/s</span>}
@@ -318,7 +318,7 @@ export default function Hud({
         />
       )}
       {showAdvanced && (
-        <div style={{display:"flex", gap:12, alignItems:"center", justifyContent:"center", padding:"8px 12px", marginBottom:8, background:"#0c0c16", border:"1px solid #1e1e2e", fontSize:11, flexWrap:"wrap"}}>
+        <div style={{display:"flex", gap:12, alignItems:"center", justifyContent:"center", padding:"8px 12px", marginBottom:8, background:"var(--panel)", border:"1px solid var(--line)", fontSize:11, flexWrap:"wrap"}}>
           <span className="dim">ctx</span>
           <input type="range" min={2048} max={131072} step={2048} value={ctx} onChange={(e)=>setCtx(parseInt(e.target.value))} style={{width:160}} />
           <span className="mono" style={{fontSize:11}}>{ctx.toLocaleString()}</span>
@@ -336,7 +336,7 @@ export default function Hud({
       <div ref={sessionsRef} style={{flex:1, overflow:"auto", position:"relative", padding:"8px 4px 16px", minWidth:520}}>
         {!hasSessions ? (
           <div style={{height:"100%", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", textAlign:"center", padding:"40px 20px 20px"}}>
-            <div style={{fontSize:13, letterSpacing:4, color:"var(--magenta)", textShadow:"0 0 14px rgba(255,46,196,0.4)", marginBottom:8}}>CYBERDECK</div>
+            <div style={{fontSize:12, fontWeight:600, letterSpacing:0.5, color:"var(--muted)", marginBottom:8}}>AGENT CONSOLE</div>
             <div className="dim" style={{fontSize:12, marginBottom:24, letterSpacing:1}}>what should the agent do?</div>
             <div style={{display:"flex", gap:8, flexWrap:"wrap", justifyContent:"center", maxWidth:520}}>
               {[
@@ -345,7 +345,7 @@ export default function Hud({
                 "scaffold a new loadout for qwen3",
                 "explain this repo's engine setup",
               ].map((s)=> (
-                <button key={s} className="ghost" style={{fontSize:11, padding:"8px 12px", background:"#0e0e18"}} onClick={()=>setPrompt(s)}>{s}</button>
+                <button key={s} className="ghost" style={{fontSize:11, padding:"8px 12px"}} onClick={()=>setPrompt(s)}>{s}</button>
               ))}
             </div>
             {profiles.length > 0 && (
@@ -394,19 +394,19 @@ export default function Hud({
                   }}
                 >
                   <span style={{ color:"var(--dim2)", fontSize:10, userSelect:"none" }}>⠿</span>
-                  <div style={{ alignSelf:"flex-end", background:"rgba(255,46,196,0.10)", border:"1px solid rgba(255,46,196,0.18)", padding:"6px 12px", fontSize:13, lineHeight:1.5 }}>
+                  <div style={{ alignSelf:"flex-end", background:"rgba(68,147,248,0.12)", border:"1px solid rgba(68,147,248,0.25)", padding:"6px 12px", fontSize:13, lineHeight:1.5 }}>
                     {s.prompt}
                   </div>
                 </div>
                 {/* the TUI body */}
-                <div className="tui-card" style={{ background:"#0e0e18", border:"1px solid #1e1e2e", padding:"10px 12px", minHeight:48 }}>
+                <div className="tui-card" style={{ background:"var(--panel)", border:"1px solid var(--line)", padding:"10px 12px", minHeight:48 }}>
                   <div className="row" style={{ gap:6, marginBottom:6, flexWrap:"wrap" }}>
                     <span className={`dot ${s.running ? "up" : "down"}`} style={{ width:7, height:7 }} />
                     <select
                       value={s.model ?? ""}
                       onChange={(e) => setSessions((a) => a.map((x) => x.id === s.id ? { ...x, model: e.target.value } : x))}
                       title="model for THIS agent"
-                      style={{ background:"#060610", border:"1px solid #232336", color:"var(--text)", padding:"2px 6px", fontSize:11, fontFamily:"inherit", maxWidth:210 }}
+                      style={{ background:"var(--bg)", border:"1px solid var(--line)", color:"var(--text)", padding:"2px 6px", fontSize:11, fontFamily:"inherit", maxWidth:210 }}
                     >
                       <option value="">{s.running ? "using active model…" : "pick a model for this agent"}</option>
                       {models.map((m) => <option key={m.path} value={m.path}>{m.name}</option>)}
@@ -415,7 +415,7 @@ export default function Hud({
                     {!s.running && <button className="ghost" style={{ marginLeft:"auto", fontSize:10, padding:"3px 7px" }} onClick={()=>setSessions((a)=>a.filter((x)=>x.id!==s.id))}>dismiss</button>}
                     {s.running && <button className="ghost" style={{ marginLeft:"auto", fontSize:10, padding:"3px 7px" }} onClick={()=>api.opencodeStop(s.id)}>stop</button>}
                   </div>
-                  <div className="term" style={{ height:180, marginTop:0, background:"#060610", border:"1px solid #141428" }}>
+                  <div className="term" style={{ height:180, marginTop:0 }}>
                     {s.log.length===0 ? <span className="dim">starting…</span> : s.log.map((l,i)=><div key={i}>{l}</div>)}
                   </div>
                 </div>
@@ -434,14 +434,14 @@ export default function Hud({
           />
         ))}
         {tuiErr && (
-          <div style={{ position: "absolute", left: 8, bottom: 8, background:"rgba(255,59,59,0.10)", border:"1px solid rgba(255,59,59,0.25)", color:"var(--oom)", padding:"6px 10px", fontSize:11 }}>
+          <div style={{ position: "absolute", left: 8, bottom: 8, background:"rgba(248,81,73,0.1)", border:"1px solid rgba(248,81,73,0.3)", color:"var(--oom)", padding:"6px 10px", fontSize:11 }}>
             {tuiErr}
           </div>
         )}
       </div>
 
       {harnessErr && (
-        <div style={{background:"rgba(255,59,59,0.10)", border:"1px solid rgba(255,59,59,0.25)", color:"var(--oom)", padding:"8px 10px", fontSize:11, marginBottom:8}}>
+        <div style={{background:"rgba(248,81,73,0.1)", border:"1px solid rgba(248,81,73,0.3)", color:"var(--oom)", padding:"8px 10px", fontSize:11, marginBottom:8}}>
           harness error: {harnessErr}
         </div>
       )}
@@ -449,8 +449,8 @@ export default function Hud({
       <div style={{padding:"12px 0 18px", position:"sticky", bottom:0, background:"linear-gradient(180deg, transparent, var(--bg) 18%)"}}>
         <div style={{
           display:"flex", alignItems:"flex-end", gap:8,
-          background:"#10101a", border:"1px solid #232336",
-          padding:"8px 10px", boxShadow:"0 6px 24px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,46,196,0.06)",
+          background:"var(--panel-2)", border:"1px solid var(--line-bright)",
+          padding:"8px 10px", boxShadow:"0 6px 24px rgba(0,0,0,0.4)",
         }}>
           <textarea
             ref={inputRef}
