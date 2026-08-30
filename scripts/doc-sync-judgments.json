@@ -55,6 +55,10 @@
     {
       "commit": "23b55d0",
       "reason": "refactor(store): pure mechanical split of the 1276-line store.rs into per-table submodules (store/bench|engine_bin|hw|profiles|releases|residents|settings|workloads.rs) re-exported through store/mod.rs so the flat store::* caller surface is unchanged; ROI mapping in ROADMAP.md's refactor table (marked RESOLVED). No behavior or user-visible surface."
+    },
+    {
+      "commit": "098b133",
+      "reason": "feat downloads queue: the shared DownloadManager — the one-truth queue authority with MAX_ACTIVE=2, .part park/resume contract, shard-set-aware indexing and the STAGE/QUEUED/ACTIVE/DONE/ERROR state machine — is documented in feature-parity.md as the DOWNLOADS tab contract and ROADMAP.md; both the Tauri downloads door and `deck downloads run` are the two-doors surface AGENTS.md 'One truth, two doors' makes a documented architectural invariant. dl.ts store + api.ts wrappers are the UI door over that contract; precedent caee076/856df6c hub the same home for the feeds lane."
     }
   ]
 }

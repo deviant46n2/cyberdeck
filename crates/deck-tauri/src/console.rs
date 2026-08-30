@@ -141,13 +141,16 @@ pub fn opencode_run(
     );
 
     eprintln!("[deck] opencode_run: emitting opencode-started id={id}");
-    let _ = app.emit(
+    match app.emit(
         "opencode-started",
         OpStarted {
             id: id.clone(),
             prompt: prompt.to_string(),
         },
-    );
+    ) {
+        Ok(_) => eprintln!("[deck] opencode_run: emit ok id={id}"),
+        Err(e) => eprintln!("[deck] opencode_run: EMIT FAILED id={id}: {e}"),
+    }
 
     spawn_opcode_reader(app.clone(), id.clone(), "stdout", stdout);
     spawn_opcode_reader(app.clone(), id.clone(), "stderr", stderr);
@@ -192,4 +195,23 @@ pub fn opencode_stop(id: &str) -> anyhow::Result<()> {
     }
     SESSIONS.lock().unwrap().remove(id);
     Ok(())
+}
+
+/// Sweep every tracked session on app exit. Without this, a dying app leaves
+/// `opencode run` children orphaned (reparented to init) and they keep burning
+/// RAM indefinitely — an earlier OOM kill left two strays running for hours.
+pub fn kill_all() {
+    let sessions = {
+        let mut g = SESSIONS.lock().unwrap();
+        std::mem::take(&mut *g)
+    };
+    for s in sessions.values() {
+        let _ = std::process::Command::new("kill")
+            .arg("-TERM")
+            .arg(s.pid.to_string())
+            .status();
+    }
+    if !sessions.is_empty() {
+        eprintln!("[deck] opencode cleanup: terminated {} session(s)", sessions.len());
+    }
 }

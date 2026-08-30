@@ -46,9 +46,8 @@ export default function Loadouts({
 
   const edit = async (name: string) => {
     try {
-      const all = await api.listProfiles();
-      const full = all.find((p) => p.name === name);
-      if (full) setEditing(full as unknown as api.Profile);
+      const full = await api.profileGet(name);
+      if (full) setEditing(full);
     } catch (e) {
       setMsg(`open failed: ${String(e)}`);
     }

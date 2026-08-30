@@ -171,6 +171,35 @@ KV-qtype, MoE cache, or reasoning flags by hand.
 Net effect: **model + engine menu → working chat on the best-max-ctx config in
 a few seconds, with a benchmark row to prove it.** No flag surfing.
 
+### Flavors: one model file, many named loadouts (2026-08-30)
+
+The vault and the loadout registry used to be two unrelated truths: `models`
+keyed by file path, `profiles` with the model reference buried inside a JSON
+body and **no relationship to the vault**. A profile could point at a vanished
+file, and a vault row silently had zero loadouts — the multi-source-of-truth
+the user hit while flow-testing (a loaded model offering no path to edit its
+context).
+
+The resolve, adopting the same one-truth hinge already used for `active_profile`
+and the port map:
+
+- **A flavor = a named loadout bound to a vault model** via a new
+  `profiles.model_id → models.id` FK (backfilled by path match). One file hosts
+  N flavors — e.g. `qwen3.8-27b-14k` and `qwen3.8-27b-32k` — and **switching
+  between them is just `deck use <flavor>`** (single active truth, restarts the
+  slot unit; that is inherent to a systemd swap).
+- **Convergence rule:** saving or applying any loadout upserts its (local,
+  existing) model path into the vault. Applied loadouts always have a vault
+  row; the Ollama-blob case stops living off-book. Vault rows never silently
+  lose their flavors, and fit math stays the gatekeeper (a 27B Q4 cannot serve
+  a 131k flavor on 16 GB VRAM; the mechanism allows it, the fit verdict says
+  no).
+- **VAULT door:** each row renders its flavors (`name @ ctx`, active one
+  marked), click = apply, plus ADD FLAVOR → LoadoutEditor preloaded with the
+  model path. **CLI door:** `deck profile list --model <path>`.
+- Following chunk (Phase B): a model detail panel reachable from every view —
+  file facts, fit at current ctx, all flavors (apply/bench/edit), bench history.
+
 The engine menus (VAULT load/test buttons, DOWNLOADS "TEST WITH" picker, HUD /
 CONSOLE status pills) all derive from the `engine_list` registry — a runtime
 appears everywhere the moment it's registered; nothing is a hardcoded button.

@@ -81,6 +81,14 @@ fn delete_profile(name: String) -> Result<(), String> {
     deck_tauri::delete_profile(&name).map_err(|e| e.to_string())
 }
 
+/// Full loadout for the EDITOR. The list command returns summary rows that
+/// lack editor fields (model/ngl/ctx_ladder/caches); editing needs the real
+/// profile or the ADVANCED panel crashes on the first missing array.
+#[tauri::command]
+fn profile_get(name: String) -> Result<Option<deck_tauri::Profile>, String> {
+    deck_tauri::get_profile(&name).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn render_profile_unit(profile: deck_tauri::Profile) -> String {
     deck_tauri::render_profile_unit(profile)
@@ -546,6 +554,7 @@ fn main() {
             fit,
             save_profile,
             delete_profile,
+            profile_get,
             render_profile_unit,
             test_loadout,
             test_stop,
@@ -607,6 +616,11 @@ fn main() {
             workflow_history,
             workflow_per_role_bench
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running cyberdeck");
+        .build(tauri::generate_context!())
+        .expect("error while building cyberdeck")
+        .run(|_app_handle, event| {
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                deck_tauri::kill_all();
+            }
+        });
 }

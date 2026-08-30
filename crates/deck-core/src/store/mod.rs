@@ -56,7 +56,7 @@ pub fn models_dir() -> PathBuf {
 /// stay idempotent and ADD-only, so an older binary opening a newer DB still
 /// works (unknown tables/columns are simply unused) and a newer binary is the
 /// only one that advances the version.
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 /// Non-destructive forward migration. `ensure_schema_version` stamps the
 /// version at `SCHEMA_VERSION`; no steps are wired yet because every current
@@ -103,8 +103,13 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
             )?;
         }
     }
-    // Existing schema-creation logic continues below this point.
-    // Existing schema-creation logic continues below this point.
+    ensure_models_table(&conn)?;
+    Ok(conn)
+}
+
+/// The vault index table. Extracted so the profile store's tests (and any
+/// other store touch) can create it without opening a real file-backed DB.
+pub fn ensure_models_table(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS models (
             id INTEGER PRIMARY KEY,
@@ -123,7 +128,7 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
             scanned_at INTEGER
         );",
     )?;
-    Ok(conn)
+    Ok(())
 }
 
 /// Read the stamped schema version (defaults to `SCHEMA_VERSION` for a fresh

@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import * as api from "../api";
 import * as br from "../lib/br";
 import { useEngineList } from "../lib/engines";
+import LoadoutEditor, { defaultProfile } from "./LoadoutEditor";
 
 interface VaultProps {
   models: api.ModelRow[];
@@ -17,35 +18,94 @@ function shortLabel(id: api.EngineId, display: string): string {
   return display;
 }
 
+interface FlavorsCellProps {
+  flavors: api.ProfileRow[];
+  active: Set<string>;
+  onApply: (name: string) => void;
+  onAdd: () => void;
+}
+
+function FlavorsCell({ flavors, active, onApply, onAdd }: FlavorsCellProps) {
+  return (
+    <td>
+      <div style={{ display: "flex", gap: 4, flexWrap: "wrap", maxWidth: 240 }}>
+        {flavors.length === 0 ? (
+          <span className="dim" style={{ fontSize: 9, padding: "3px 0" }}>none</span>
+        ) : (
+          flavors.map((f) => {
+            const live = active.has(f.name);
+            return (
+              <button
+                key={f.name}
+                className={live ? "action" : "ghost"}
+                style={{ fontSize: 9, padding: "2px 6px" }}
+                title={`${live ? "● live — " : ""}${f.name} · ${f.engine} @ :${f.port} · ctx ${f.ctx.toLocaleString()} — click to apply`}
+                onClick={() => onApply(f.name)}
+              >
+                {f.name}
+              </button>
+            );
+          })
+        )}
+        <button
+          className="ghost"
+          style={{ fontSize: 9, padding: "2px 6px", borderColor: "var(--cyan)", color: "var(--cyan)" }}
+          title="add a flavor — a named loadout for this model (different ctx/engine/offload)"
+          onClick={onAdd}
+        >
+          + FLAVOR
+        </button>
+      </div>
+    </td>
+  );
+}
+
 export default function Vault({ models, dups, onRefresh, onReload }: VaultProps) {
   const [deleting, setDeleting] = useState<Set<string>>(new Set());
   const [flash, setFlash] = useState<string | null>(null);
   const [loadedPaths, setLoadedPaths] = useState<Set<string>>(new Set());
   const [loadedEngine, setLoadedEngine] = useState<Map<string, string>>(new Map());
+  const [profiles, setProfiles] = useState<api.ProfileRow[]>([]);
+  const [activeFlavors, setActiveFlavors] = useState<Set<string>>(new Set());
+  const [reloadTick, setReloadTick] = useState(0);
+  const [editing, setEditing] = useState<api.Profile | null>(null);
   const dupIds = new Set(dups.flatMap((d) => d.members));
   const localEngines = useEngineList("LocalPath");
+
+  // flavors = the loadouts bound to this model path (the model_id FK converges
+  // them; the vault groups by path for display).
+  const flavorMap = useMemo(() => {
+    const byPath = new Map<string, api.ProfileRow[]>();
+    for (const p of profiles) {
+      const arr = byPath.get(p.model);
+      if (arr) arr.push(p);
+      else byPath.set(p.model, [p]);
+    }
+    return byPath;
+  }, [profiles]);
 
   useEffect(() => {
     let alive = true;
     const poll = async () => {
       try {
-        const [slots, profiles] = await Promise.all([api.portMapStatus("127.0.0.1"), api.listProfiles()]);
-        const byName = new Map(profiles.map((p) => [p.name, p]));
+        const [slots, pro] = await Promise.all([api.portMapStatus("127.0.0.1"), api.listProfiles()]);
+        const byName = new Map(pro.map((p) => [p.name, p]));
         const paths = new Set<string>();
         const engMap = new Map<string, string>();
+        const active = new Set<string>();
         for (const s of slots) {
           if (s.state !== "down" && s.profile) {
             const pr = byName.get(s.profile);
-            if (pr) { paths.add(pr.model); engMap.set(pr.model, s.engine); }
+            if (pr) { paths.add(pr.model); engMap.set(pr.model, s.engine); active.add(s.profile); }
           }
         }
-        if (alive) { setLoadedPaths(paths); setLoadedEngine(engMap); }
+        if (alive) { setLoadedPaths(paths); setLoadedEngine(engMap); setProfiles(pro); setActiveFlavors(active); }
       } catch {}
     };
     void poll();
     const t = window.setInterval(() => void poll(), 10000);
     return () => { alive = false; window.clearInterval(t); };
-  }, []);
+  }, [reloadTick]);
 
   const load = (path: string, engine: api.EngineId) => {
     if (!confirm(`LOAD ${engine} — derive max-ctx, verify on test port, then go live?\n${path}`)) {
@@ -86,6 +146,43 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
     }
   };
 
+  const applyFlavor = async (name: string) => {
+    if (!confirm(`Apply flavor '${name}'?\n\nRestarts the live unit on its slot (takes .bak first).`)) return;
+    try {
+      await api.useProfile(name, false);
+      setFlash(name);
+      setTimeout(() => setFlash(null), 2000);
+    } catch (e) {
+      alert(`Apply failed: ${String(e)}`);
+    }
+  };
+
+  const addFlavor = (m: api.ModelRow) => {
+    const base = m.name || m.path.split("/").pop() || "model";
+    setEditing({
+      ...defaultProfile(),
+      name: `${base}`,
+      model: m.path,
+      alias: base,
+      ctx_ladder: [32768, 24576, 16384],
+    });
+  };
+
+  if (editing) {
+    return (
+      <LoadoutEditor
+        initial={editing}
+        modelPaths={models.map((m) => m.path)}
+        onClose={() => setEditing(null)}
+        onSaved={() => {
+          setEditing(null);
+          setReloadTick((t) => t + 1);
+          void onReload();
+        }}
+      />
+    );
+  }
+
   return (
     <>
       <div className="view-title">VAULT</div>
@@ -125,6 +222,7 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
               <th>TRAIN CTX</th>
               <th>SIZE</th>
               <th>PATH</th>
+              <th>FLAVORS</th>
               <th>LOAD</th>
               <th>DELETE</th>
             </tr>
@@ -132,7 +230,7 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
           <tbody>
             {models.length === 0 ? (
               <tr>
-                <td colSpan={8} className="dim">
+                <td colSpan={9} className="dim">
                   no models indexed — run a SCAN from HUD
                 </td>
               </tr>
@@ -160,6 +258,14 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
                     <td className="mono">{m.footprint_gib.toFixed(2)} GiB</td>
                     <td className="dim" style={{ maxWidth: 320, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {m.path}
+                    </td>
+                    <td>
+                      <FlavorsCell
+                        flavors={flavorMap.get(m.path) ?? []}
+                        active={activeFlavors}
+                        onApply={applyFlavor}
+                        onAdd={() => addFlavor(m)}
+                      />
                     </td>
                     <td>
                       <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>

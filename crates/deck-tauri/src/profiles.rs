@@ -49,6 +49,17 @@ pub fn save_profile(p: Profile) -> anyhow::Result<()> {
     deck_core::store::upsert_profile(&mut conn, &p)
 }
 
+/// Load a FULL saved loadout by name — the editor needs every field (model,
+/// bin, ngl, ctx_ladder, cache types…), not the summary row the list shows.
+/// Calling this replaces the previous row→Profile cast that handed the editor a
+/// stub missing `ctx_ladder` and crashed the ADVANCED toggle.
+pub fn get_profile(name: &str) -> anyhow::Result<Option<Profile>> {
+    let db = deck_core::store::default_db_path();
+    let conn = deck_core::store::open(&db)?;
+    deck_core::store::ensure_profile_schema(&conn)?;
+    deck_core::store::get_profile(&conn, name)
+}
+
 /// Remove a saved loadout by name.
 pub fn delete_profile(name: &str) -> anyhow::Result<()> {
     let db = deck_core::store::default_db_path();
@@ -74,6 +85,9 @@ pub fn use_profile(name: &str, dry_run: bool, managed: bool) -> anyhow::Result<U
     deck_core::store::ensure_profile_schema(&conn)?;
     let p = deck_core::store::get_profile(&conn, name)?
         .ok_or_else(|| anyhow::anyhow!("no loadout named '{name}'"))?;
+    // Convergence: an applied loadout must have a vault row (a profile saved
+    // while its file was remote picks the row up the moment it becomes local).
+    deck_core::store::ensure_profile_model(&conn, &p)?;
     deck_core::store::set_active(&mut conn, name)?;
     let unit = deck_engines::render_unit(&p);
     let mut rewired = Vec::new();

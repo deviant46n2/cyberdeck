@@ -87,7 +87,7 @@ pub use bringup::{
     bringup_start, test_model_start,
 };
 pub use compare::{CandidateStanding, CompareReport, ScoredTrial, compare_run};
-pub use console::{OpDone, OpLine, OpStarted, opencode_run, opencode_stop};
+pub use console::{OpDone, OpLine, OpStarted, kill_all, opencode_run, opencode_stop};
 pub use tui::{tui_resize, tui_spawn, tui_stop, tui_write};
 pub use downloads::{
     DownloadDone, DownloadErr, DownloadEvt, DownloadStarted, download_cancel, download_remove,
@@ -111,7 +111,7 @@ pub use workflow::{
     workflow_run, workflow_save, workflow_seed, workflow_stop,
 };
 pub use profiles::{
-    ProfileRow, UseResult, delete_profile, list_profiles, render_profile_unit, save_profile,
+    ProfileRow, UseResult, delete_profile, get_profile, list_profiles, render_profile_unit, save_profile,
     use_profile,
 };
 pub use scan::{

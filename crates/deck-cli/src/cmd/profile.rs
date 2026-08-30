@@ -71,14 +71,21 @@ pub(crate) fn import(engine: String, script: PathBuf, name: String) -> Result<()
     Ok(())
 }
 
-pub(crate) fn list(json: bool) -> Result<()> {
+pub(crate) fn list(json: bool, model: Option<&str>) -> Result<()> {
     let (_db, conn) = with_profiles_db()?;
-    let profiles = deck_core::store::list_profiles(&conn)?;
+    let mut profiles = deck_core::store::list_profiles(&conn)?;
+    if let Some(m) = model {
+        profiles.retain(|p| p.model == m);
+    }
     let active = deck_core::store::active_profile(&conn)?;
     if json {
         println!("{}", serde_json::to_string_pretty(&profiles)?);
     } else if profiles.is_empty() {
-        println!("no loadouts saved. use `deck profile import` or `deck profile new`.");
+        if model.is_some() {
+            println!("no loadouts bound to '{}'", model.unwrap());
+        } else {
+            println!("no loadouts saved. use `deck profile import` or `deck profile new`.");
+        }
     } else {
         for p in &profiles {
             let mark = if active.as_deref() == Some(&p.name) {

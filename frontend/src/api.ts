@@ -360,6 +360,8 @@ export const tuiStop = (id: string) => invoke<void>("tui_stop", { id });
 export const saveProfile = (p: Profile) => invoke<void>("save_profile", { profile: p });
 export const deleteProfile = (name: string) =>
   invoke<void>("delete_profile", { name });
+export const profileGet = (name: string) =>
+  invoke<Profile | null>("profile_get", { name });
 export const renderProfileUnit = (p: Profile) =>
   invoke<string>("render_profile_unit", { profile: p });
 

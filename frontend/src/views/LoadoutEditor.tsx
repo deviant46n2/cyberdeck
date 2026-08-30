@@ -69,7 +69,13 @@ export default function LoadoutEditor({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [p, setP] = useState<api.Profile>(initial);
+  const [p, setP] = useState<api.Profile>(() => ({
+    // Fill any hole a partial `initial` might carry (the ADVANCED panel must
+    // never crash on a missing array/field).
+    ...defaultProfile(),
+    ...initial,
+    ctx_ladder: initial.ctx_ladder ?? defaultProfile().ctx_ladder,
+  }));
   const [fit, setFit] = useState<api.FitRow | null>(null);
   const [fitErr, setFitErr] = useState("");
   const [unit, setUnit] = useState("");
@@ -299,7 +305,7 @@ export default function LoadoutEditor({
                   <div className="tty-label">ctx_ladder <span className="tty-dim">comma sep</span></div>
                   <input
                     className="tty-input"
-                    value={p.ctx_ladder.join(",")}
+                    value={(p.ctx_ladder ?? []).join(",")}
                     onChange={(e) =>
                       set(
                         "ctx_ladder",

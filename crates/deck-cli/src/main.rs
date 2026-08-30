@@ -472,10 +472,13 @@ enum ProfileCmd {
         #[arg(long, default_value = "imported")]
         name: String,
     },
-    /// List saved loadouts
+    /// List saved loadouts (optionally only those bound to a model path —
+    /// i.e. a model's *flavors*)
     List {
         #[arg(long)]
         json: bool,
+        #[arg(long)]
+        model: Option<String>,
     },
 }
 
@@ -510,7 +513,7 @@ fn main() -> Result<()> {
                 script,
                 name,
             } => cmd::profile::import(engine, script, name),
-            ProfileCmd::List { json } => cmd::profile::list(json),
+            ProfileCmd::List { json, model } => cmd::profile::list(json, model.as_deref()),
         },
         Commands::Use {
             name,

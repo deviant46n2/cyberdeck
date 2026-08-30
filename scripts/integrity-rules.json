@@ -125,6 +125,12 @@
         "reason": "Single-screen marketplace page component; the only cross-view helper (verdictClass) was already extracted to lib/ui.ts and shardSet to lib/shards.ts. Further split is prop-drilling churn. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
       },
       {
+        "path": "frontend/src/views/Vault.tsx",
+        "lines": 333,
+        "kind": "accepted",
+        "reason": "Single-screen VAULT component: the model index table (name/quant/arch/ctx/size/path) plus the flavors column (FlavorsCell sub-component) and the LOAD/TEST/STOP/DELETE cells the flagship 'pick a model, click an engine' flow lives in. The flavors interaction was extracted to a dedicated sub-component; splitting the table from its row actions would scatter one page's interactions. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
+      },
+      {
         "path": "frontend/src/views/Hud.tsx",
         "lines": 495,
         "kind": "accepted",
