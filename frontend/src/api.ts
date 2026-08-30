@@ -331,6 +331,7 @@ export const opencodeRun = (p: {
   dir: string;
   auto: boolean;
   model: string;
+  engine: string;
 }) => invoke<void>("opencode_run", p);
 export const opencodeStop = (id: string) =>
   invoke<void>("opencode_stop", { id });

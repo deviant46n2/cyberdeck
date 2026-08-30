@@ -13,8 +13,9 @@ pub mod agent;
 mod bench;
 mod bringup;
 mod compare;
-mod console;
+pub mod console;
 mod downloads;
+mod experiment;
 mod feeds;
 mod fit;
 mod hardware;
@@ -92,6 +93,7 @@ pub use downloads::{
     DownloadDone, DownloadErr, DownloadEvt, DownloadStarted, download_cancel, download_remove,
     download_start,
 };
+pub use experiment::experiment_start;
 pub use fit::{BrowseFitResult, FitRow, HwInfo, browse_fit_remote, fit, hw_info};
 pub use market::{
     MarketFileRow, MarketHit, SignalRow, browse_org, market_files, market_search, signals_check,

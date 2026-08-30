@@ -180,7 +180,7 @@ export default function Hud({
     // race opencodeRun against a 15s timeout so a down engine never freezes the HUD
     const withTimeout = <T,>(p: Promise<T>, ms: number, msg: string) => Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new Error(msg)), ms))]);
     try {
-      await withTimeout(api.opencodeRun({ prompt: snap, dir, auto, model: chosen }), 15000, `opencode harness timed out after 15s — is ${eng} on its port UP?`);
+      await withTimeout(api.opencodeRun({ prompt: snap, dir, auto, model: chosen, engine: eng }), 15000, `opencode harness timed out after 15s — is ${eng} on its port UP?`);
       setPrompt("");
       setTimeout(() => inputRef.current?.focus(), 50);
     } catch (e) {

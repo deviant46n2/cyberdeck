@@ -61,6 +61,13 @@ pub fn bringup_reset() {
     BRINGUP_RUNNING.store(false, Ordering::SeqCst);
 }
 
+/// Acquire the shared single-flight lock for a pipeline variant (the
+/// experiment door's download→bringup flow shares it so a TEST can't start
+/// mid-derive). Callers own the reset via `bringup_reset()`.
+pub(crate) fn try_acquire() -> bool {
+    !BRINGUP_RUNNING.swap(true, Ordering::SeqCst)
+}
+
 struct BringupGuard;
 impl Drop for BringupGuard {
     fn drop(&mut self) {
@@ -161,7 +168,7 @@ pub fn bringup_start(
 /// Persist the derived profile and bring it live via systemd (BRINGUP step 3).
 /// Emits the apply phase and a confirmation line; the caller wraps failures
 /// with the fit breakdown it holds.
-fn save_and_apply(
+pub(crate) fn save_and_apply(
     app2: &tauri::AppHandle,
     p: &Profile,
     line: &impl Fn(String),
@@ -193,7 +200,7 @@ fn save_and_apply(
 /// (`deck_engines::measure_generation_tps`: scrape, then a 192-token
 /// probe generation if the idle gauge reads 0). Returns the measured
 /// tok/s, or None when the probe itself fails.
-fn bench_and_record(app2: &tauri::AppHandle, p: &Profile, line: &impl Fn(String)) -> Option<f64> {
+pub(crate) fn bench_and_record(app2: &tauri::AppHandle, p: &Profile, line: &impl Fn(String)) -> Option<f64> {
     let _ = app2.emit(
         "bringup-phase",
         BringupPhase {
@@ -253,7 +260,7 @@ fn bench_and_record(app2: &tauri::AppHandle, p: &Profile, line: &impl Fn(String)
 /// `save_on_fail` mirrors bringup's trick of persisting the derived profile so
 /// the tweak panel can retry; TEST leaves the loadout list alone.
 #[allow(clippy::type_complexity)]
-fn derive_and_verify(
+pub(crate) fn derive_and_verify(
     app2: &tauri::AppHandle,
     model: &str,
     eng: Engine,

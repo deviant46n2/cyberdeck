@@ -2,7 +2,7 @@
 
 use std::io::BufRead;
 
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 use tauri::Emitter;
 
 /// Emitted when a session starts, so the UI can open a tab before output flows.
@@ -10,6 +10,25 @@ use tauri::Emitter;
 pub struct OpStarted {
     pub id: String,
     pub prompt: String,
+}
+
+/// Engine pin for a chat/converse session.
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
+pub enum Engine {
+    LlamaCpp,
+    FreeToken,
+    Ollama,
+}
+
+impl Engine {
+    fn default_port(&self) -> u16 {
+        match self {
+            Engine::LlamaCpp => 18000,
+            Engine::FreeToken => 1919,
+            Engine::Ollama => 11434,
+        }
+    }
+    fn host(&self) -> &'static str { "127.0.0.1" }
 }
 
 #[derive(Clone, Serialize)]
@@ -30,6 +49,7 @@ pub struct OpDone {
 /// waiter thread that holds the lock during `wait`.
 struct Session {
     pid: u32,
+    engine: Engine,
     child: std::sync::Mutex<Option<std::process::Child>>,
 }
 
@@ -72,6 +92,7 @@ pub fn opencode_run(
     prompt: &str,
     dir: &str,
     auto: bool,
+    engine: Engine,
     model: Option<&str>,
 ) -> anyhow::Result<()> {
     let mut cmd = std::process::Command::new("opencode");
@@ -114,6 +135,7 @@ pub fn opencode_run(
         id.clone(),
         Session {
             pid,
+            engine,
             child: std::sync::Mutex::new(Some(child)),
         },
     );

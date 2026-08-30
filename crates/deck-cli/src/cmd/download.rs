@@ -1,7 +1,8 @@
 //! `deck download <repo>`: resolve a repo's .gguf files, pick one, and
 //! stream it resumably into `~/models`. Single-file, blocking, progress
-//! to stderr. The queue manager stays in the Tauri app; the CLI door
-//! makes the first step of the loop reproducible headlessly.
+//! to stderr (delegates to the same shared manager as the app). For the
+//! bounded multi-worker queue (and shard-set-aware indexing), use
+//! `deck downloads run <repo>`.
 
 use anyhow::Result;
 use std::time::Instant;

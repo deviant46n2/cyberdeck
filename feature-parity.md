@@ -430,7 +430,7 @@ landed stay listed as `DONE` for history.
 | 2 | **Concurrent chat across residents** | Direction §2 | generalize HUD/CONSOLE: per-session engine+model pin, token streaming (not just opencode lines), live retarget of next message | M |
 | 3 | **Bench-aware chat header** | Direction §3 | for each resident show tok/s + fit in chat header, so you can see where to type — **DONE (2026-08-28):** HUD top bar now shows per-resident fit verdict (PASS/WARN/OOM) + latest tok/s + live state dot; PORT MAP card also shows fit verdict column | S |
 | 4 | **Compare / A·B bench** | Odysseus §4 | `deck bench compare` CLI + tab; blind-random same prompts across residents, tok/s + score, agent synthesis — **compare CLI landed: blind scoring over the `matrix` grid, per-candidate failures surfaced; tab + agent synthesis still open** | M |
-| 4.5 | **Bench CLI doors + scoreboard** | W2 convenience | `deck bench best` (best tok/s per model × engine), `deck bench record`, `deck download <repo>` (resumable, single-file, curl resume) — **DONE (2026-08-28):** CLI doors + Bench.tsx scoreboard grouped by model × engine (best/latest/avg/tok/s + runs), raw history list, and a record-now form; `deck download` picks the largest .gguf (or --file/--quant match) and streams into ~/models | M |
+| 4.5 | **Bench CLI doors + scoreboard** | W2 convenience | `deck bench best` (best tok/s per model × engine), `deck bench record`, `deck download <repo>`, `deck downloads run/list/discard` (resumable) — **DONE (2026-08-30):** CLI doors + Bench.tsx scoreboard grouped by model × engine (best/latest/avg/tok/s + runs), raw history list, and a record-now form; `deck download` picks the largest .gguf (or --file/--quant match) and streams into ~/models. The download queue is a shared `DownloadManager` (deck-feeds) driving BOTH the DOWNLOADS tab and the CLI (`deck downloads run` = queue + shard-set-aware index-on-landing; `list` = parked `.part` resume points; `discard` = drop a parked `.part`) — one truth, two doors | M |
 | 5 | **Autotune headless** | Advantage B3 | sweep ctx/kv/ngl/ubatch on test port, score by objective, `APPLY` best — feeds the rec header | M |
 | 6 | Deep-research skill | §3 | agent skill: search→read→synthesize→report | S |
 | 7 | MCP picker per session | §1 | expose opencode MCP servers in agent panel | S |
@@ -465,6 +465,25 @@ foundational storage/API work lands before polling/automation.
 | O6 | **Agent READ/ANALYZE tool surface** | Typed Tauri/CLI verbs the agent can call: `hw / models / engines / bench / feeds / releases / relevance`. No raw shell needed for inspection. Permission = READ/ANALYZE (always allowed). | S |
 | O7 | **Agent MODIFY + EXECUTE (controlled)** | Agent can `settings set`, `download <repo>`, `bench matrix/compare`, `bringup` through typed APIs — each audit-logged, reversible where applicable, requiring explicit user consent for destructive/system-level ops (disk spend, unit writes). Permission = MODIFY CYBERDECK / EXECUTE CONTROLLED OPS. | M |
 | O8 | **Experiment recommendations** | "Worth testing" list: top-N scored releases that fit hardware + beat current bench for a workload. One-click → `bringup` → `bench` → compare. Closes the Discovery→Experiment loop. | M |
+
+### #6. Benchmarking: Replace, Don't Expand
+
+Cross-cutting benchmark strategy (benchmark-centric differentiator, `Advantage B`):
+do not grow the in-house measurement/eval surface. **M (2-4 days focused, then
+ongoing).**
+
+- **Audit** existing benchmarking code against `llama-bench` / `local_bench` /
+  `lm-evaluation-harness`; categorize each piece **delete / replace / retain**.
+- Design a thin extensible **benchmark-provider interface**; add adapters for
+  external tools; **normalize** results into the cyberdeck data model.
+- Preserve **provenance** (provider + version) and raw artifacts; enable
+  **cross-provider comparison** without claiming direct equivalence.
+- Keep cyberdeck-specific **real-world workloads** as a first-class mechanism.
+
+Horizon rows wired to it: **O5** polls provider adapters for new results; **O6**
+can query provider results; **O7** can initiate a benchmark sweep via an adapter;
+**O8** surfaces adapter-provided results alongside native bench. Provenance for
+all stored results and provider comparison info rides the same rows.
 
 **Horizon 3 — Long-term (explicitly not now):**
 

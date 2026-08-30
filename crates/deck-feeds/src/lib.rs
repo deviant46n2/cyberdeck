@@ -20,6 +20,7 @@
 //! dependency.
 
 mod download;
+mod manager;
 pub mod feeds;
 mod market;
 mod ollama;
@@ -27,6 +28,9 @@ mod probe;
 mod watchlist;
 
 pub use download::{Cancel, download_file_progress, shard_set_of};
+pub use manager::{
+    DlEvent, DlJob, DlStatus, DownloadManager, MAX_ACTIVE, ProbeFn, Sink, StreamFn,
+};
 pub use market::{
     MarketFile, SearchHit, model_files, parse_search, parse_siblings, remote_file_size,
     search_models,

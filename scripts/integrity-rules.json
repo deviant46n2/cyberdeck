@@ -64,6 +64,12 @@
         "reason": "Cohesive download concern: Cancel handle + .part resumable streaming + shard-set grouping share one state contract (the .part park/resume invariant). Splitting would separate files that MUST stay in step. 1 over the soft heuristic from dense doc, not a seam. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
       },
       {
+        "path": "crates/deck-feeds/src/manager.rs",
+        "lines": 646,
+        "kind": "accepted",
+        "reason": "The shared DownloadManager queue authority (one truth, two doors — AGENTS.md 'One truth, two doors'): bounded pump + priority queue + .part park/resume semantics + epoch guards against stale-worker clobbering of relaunched lanes + the offline test block with injectable stream fakes. The race/epoch/resume invariants are the 'why' docs the module must carry; splitting the worker from the registry or the pump from the queue would separate the single-flight slots from the workers they supervise (same rationale as the parked deck-engines/src/workflow.rs executor). AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
+      },
+      {
         "path": "crates/deck-tauri/src/bringup.rs",
         "lines": 404,
         "kind": "accepted",
@@ -156,6 +162,12 @@
         "lines": 336,
         "kind": "accepted",
         "reason": "Single CANVAS view component (node cards + SVG edges + RUN/STOP door + per-role bench table), mirroring the accepted Hud/Bringup/LoadoutEditor view entries; split would force prop-drilling across one page. AGENTS.md COHESION > ARBITRARY LINE COUNT"
+      },
+      {
+        "path": "frontend/src/views/Console.tsx",
+        "lines": 344,
+        "kind": "accepted",
+        "reason": "Single CONSOLE view component (agent session logs + skill surface + engine telemetry + bench history + last rendered unit), restored as the working agent console after a compare-clone regression; mirroring the accepted Hud/Bringup/Canvas view entries. Split would scatter the one live-session contract between the sessions grid and its event listeners. AGENTS.md COHESION > ARBITRARY LINE COUNT"
       }
     ],
     "artifact-hygiene": [],

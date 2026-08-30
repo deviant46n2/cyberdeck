@@ -192,6 +192,21 @@ async fn apply_cached_profile(
     deck_tauri::apply_cached_profile(&app, profile, fit).map_err(|e| e.to_string())
 }
 
+/// One-click TEST/LOAD straight from a MARKET repo file: download (shared
+/// queue, resume-aware) → derive → verify → [apply → bench]. Streams the
+/// same `bringup-*` events as the local-file pipeline.
+#[tauri::command]
+async fn experiment_start(
+    repo_id: String,
+    rfilename: String,
+    engine: String,
+    apply: bool,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    deck_tauri::experiment_start(&app, &repo_id, &rfilename, &engine, apply)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 async fn bench_now(
     engine: String,
@@ -248,6 +263,7 @@ fn opencode_run(
     dir: String,
     auto: bool,
     model: String,
+    engine: String,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     let model_opt = if model.is_empty() {
@@ -255,7 +271,16 @@ fn opencode_run(
     } else {
         Some(model.as_str())
     };
-    deck_tauri::opencode_run(&app, &prompt, &dir, auto, model_opt).map_err(|e| e.to_string())
+    let engine_opt = if engine.is_empty() {
+        deck_tauri::console::Engine::LlamaCpp
+    } else {
+        match engine.as_str() {
+            "freetoken" => deck_tauri::console::Engine::FreeToken,
+            "ollama" => deck_tauri::console::Engine::Ollama,
+            _ => deck_tauri::console::Engine::LlamaCpp,
+        }
+    };
+    deck_tauri::opencode_run(&app, &prompt, &dir, auto, engine_opt, model_opt).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -531,6 +556,7 @@ fn main() {
             bringup_start,
             test_model_start,
             apply_cached_profile,
+            experiment_start,
             bench_now,
             bench_history,
             compare_run,

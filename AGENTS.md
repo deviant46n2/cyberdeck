@@ -79,7 +79,9 @@ what to use, and what changed — per `feature-parity.md`.
      NEVER indexed (scanner ignores it) — it is a parked resume point.
      STOP keeps the `.part`; START resumes via `curl -C -`; discard drops it.
    - Multi-part GGUF shard sets index into the vault ONLY once every member
-     has landed (set-aware indexing in `frontend/src/lib/dl.ts`).
+     has landed (set-aware indexing in the shared queue authority —
+     `crates/deck-feeds/src/manager.rs`, surfaced via the DOWNLOADS tab and
+     `deck downloads run`).
    - MAX_ACTIVE = 2 concurrent downloads; a priority queue
      (`queued|active|paused|done|error`) with reorder is the download
      manager's contract (see DOWNLOADS tab).
@@ -87,8 +89,9 @@ what to use, and what changed — per `feature-parity.md`.
 3. **One truth, two doors.** The Tauri app and `deck` CLI are both front-ends
    over `deck-core`/`deck-engines`/`deck-feeds`. A capability shipped through
    one door must be reachable from both — or be a deliberate, documented
-   UI-only exception (the download-manager/bringup tests were UI-only in the
-   2026-08-26 session; that's tracked as a debt-ledger item, not a precedent).
+   UI-only exception (the download-manager queue is one truth: the shared
+   `DownloadManager` in deck-feeds drives both the Tauri downloads door and
+   `deck downloads`; the CLI's durable STOP surface is on-disk `.part` files).
 
 4. **The port/alias contract.** `deck use` binds an engine to a fixed slot
    (:18000 llamacpp, :1919 freetoken, ...) and rewires clients. Never leave a

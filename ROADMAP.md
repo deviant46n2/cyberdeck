@@ -573,6 +573,37 @@ No rewrite of `fit` estimation, `scanner`, or `systemd` generation — they are 
 * **Social / community benchmark datasets** — requires stable hardware profiles and schema first (Phase 8 horizon).
 * **Excessive dashboards / Documents/Email from Odysseus parity SKIPs** — `feature-parity.md` correctly SKIPs document editor, email, notes/calendar/gallery/auth; re-introducing them crowds the driver.
 * **Custom mega-store / orchestration framework** — extend `dl.ts`/`br.ts` stores incrementally; do not introduce a giant frontend state object.
+* **Agent-harness forks or bundles** — `opencode` stays an external binary behind a runner seam; no forking, no vendoring, no embedding a second agent.
+* **Copycat features or hypothetical-user features** — nothing added merely because another AI app has it, and nothing optimized for a user who does not exist yet; the personal workflow is the only optimization target until it is excellent.
+
+> **FUTURE.md backlog:** ideas that are deliberately *not* active roadmap work
+> live in `FUTURE.md` (Tamagotchi, model lifecycle/storage, artifact system,
+> job queue, question engine, compute-budget funnel, self-configuring
+> workflows, workflow evolution, personalized objectives, override capture,
+> obsolescence, import/export). Nothing there is a commitment. Several of the
+> same ideas that *are* roadmap-shaped are already covered by phases above and
+> are cross-referenced, not duplicated. Promotion path: survive real-core-loop
+> use first, then become a phase here.
+
+---
+
+## Architectural Invariants (preserve now, implement never-until-needed)
+
+Cheap habits that keep future options open *without* building anything:
+
+1. **Results are immutable + self-describing.** `matrix_runs`/`node_runs` are
+   INSERT-only history. A stored result must never be mutated or reinterpreted
+   under the *current* workflow/model/engine config — snapshot the config
+   (or a version id) inside the row at run time, so "workflow v7 result" always
+   means v7. The additive-schema plan already implies this; make it a rule.
+2. **Agent is an abstraction seam, not a hardcode.** Executors talk to a runner
+   interface (`AgenticRunner`/`StatelessRunner`), never `opencode` by name;
+   record agent identity + version as run provenance so the harness can become
+   a benchmarkable variable later.
+3. **Telemetry rides the result rows.** Keep perf fields (`tok_s`, `ttft_ms`,
+   `gen_tokens`, `peak_vram`) on `node_runs`/`matrix_runs` even when the UI
+   does not show them yet — downstream consumers (Tamagotchi, observability)
+   all read from the same rows.
 
 ---
 

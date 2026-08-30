@@ -163,7 +163,7 @@ enum Commands {
     ///
     /// Picks the largest .gguf (or one matching --file/--quant), then
     /// streams it into `~/models` with curl resume. Single-file — the
-    /// bounded queue stays in the Tauri app.
+    /// bounded queue is `deck downloads run`.
     Download {
         /// HuggingFace repo id (e.g. `unsloth/Qwen3.8-GGUF`)
         #[arg()]
@@ -177,6 +177,43 @@ enum Commands {
         /// Resolve and print the pick without downloading
         #[arg(long, default_value_t = false)]
         dry_run: bool,
+    },
+    /// The download-manager door: queue-run a repo file (and its shard set)
+    /// under a bounded worker pool, or manage parked `.part` resume points.
+    Downloads {
+        #[command(subcommand)]
+        action: DownloadsCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum DownloadsCmd {
+    /// Queue a repo's picked .gguf (and its full shard set) under a bounded
+    /// worker pool, stream progress, and index each completed set into the
+    /// vault. Resumes any existing `.part` automatically.
+    Run {
+        /// HuggingFace repo id (e.g. `unsloth/Qwen3.8-GGUF`)
+        #[arg()]
+        repo: String,
+        /// Pick this exact filename (or suffix-match) to resolve the set from
+        #[arg(long)]
+        file: Option<String>,
+        /// Filter by quant token in the filename (e.g. `Q3_K_XL`)
+        #[arg(long)]
+        quant: Option<String>,
+        /// Download only; do NOT index landed files into the vault
+        #[arg(long, default_value_t = false)]
+        no_index: bool,
+    },
+    /// List parked `.part` resume points in ~/models (durable STOP surface)
+    List {
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    /// Drop a parked `.part` resume point (name, or name.part)
+    Discard {
+        #[arg()]
+        name: String,
     },
 }
 
@@ -571,6 +608,13 @@ fn main() -> Result<()> {
         },
         Commands::Download { repo, file, quant, dry_run } => {
             cmd::download::run(&repo, file.as_deref(), quant.as_deref(), dry_run)
+        }
+        Commands::Downloads { action } => match action {
+            DownloadsCmd::Run { repo, file, quant, no_index } => {
+                cmd::downloads::run(&repo, file.as_deref(), quant.as_deref(), no_index)
+            }
+            DownloadsCmd::List { json } => cmd::downloads::list(json),
+            DownloadsCmd::Discard { name } => cmd::downloads::discard(&name),
         }
     }
 }

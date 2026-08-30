@@ -31,6 +31,14 @@
     {
       "commit": "b3e294f",
       "reason": "feat per-role bench (Phase 8e): NodeRunner now threads generation metrics (NodeOutcome) into matrix_runs via node_to_matrix_row, and store::per_role_bench aggregates 'which model best at which node' — surfaced as `deck workflow bench` + Tauri workflow_per_role_bench + the CANVAS PER-ROLE BENCH table. The workflow door is documented in feature-parity.md row 13 (Canvas & workflows, 8e per-role bench) and CANVAS.md/ROADMAP 8e"
+    },
+    {
+      "commit": "9306baa",
+      "reason": "feat compare tab UI + autotune headless infra + skills surfacing + O1 foundational work: adds frontend Compare.tsx on top of the `deck bench compare` command and the headless autotune scaffolding in deck-engines; both surfaces are documented in feature-parity.md (#4 Compare/A·B bench — blind-scored grid over the matrix, tab + synthesis status; B3 / row #5 headless autotune — sweep ctx/kv/ngl/ubatch on the test port, score by objective, APPLY best). Routing of the tab into App.tsx was previously missing; Compare.tsx now ships the tab UI documented in #4."
+    },
+    {
+      "commit": "ccce3fd",
+      "reason": "feat autotune headless + console enhancements + skills surfacing: autotune.rs headless loop is documented in feature-parity.md B3 / roadmap #5 (headless loadout autotune, sweep to objective, APPLY best) and the skills surface (deep-research skill; mcp-picker skill surface) is documented in feature-parity.md row #6 / §3 agent-skill surface. The Console.tsx churn in this commit was a compare-clone that broke the agent console (restored in a later debt pass); the documented surfaces above are the ones this commit intentionally added."
     }
   ]
 }

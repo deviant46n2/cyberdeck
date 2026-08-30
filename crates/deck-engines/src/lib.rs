@@ -23,6 +23,7 @@ mod unit;
 
 pub mod status;
 
+pub mod autotune;
 pub mod compare;
 pub mod evaluation;
 pub mod grid;

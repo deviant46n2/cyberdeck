@@ -1,10 +1,17 @@
-//! The download manager: registry + worker threads streaming into ~/models.
+//! Tauri door over the shared `DownloadManager`: maps `DlEvent`s to the
+//! `dl-start` / `dl-progress` / `dl-done` / `dl-error` bus and keeps the
+//! command surface (`download_start` / `download_cancel` / `download_remove`)
+//! byte-compatible with the frontend store's expectations.
+//!
+//! One truth, two doors: the queue authority lives in `deck-feeds` and is
+//! shared with the CLI (`deck downloads`); this module is a thin adapter.
 
-use std::sync::Mutex;
-use std::time::Instant;
+use std::sync::Arc;
 
 use serde::Serialize;
 use tauri::Emitter;
+
+use deck_feeds::{DlEvent, DlStatus, DownloadManager};
 
 #[derive(Serialize)]
 pub struct DownloadStarted {
@@ -37,151 +44,139 @@ pub struct DownloadErr {
     pub error: String,
 }
 
-struct DlJob {
-    cancel: std::sync::Arc<deck_feeds::Cancel>,
+/// The shared queue authority, streaming through the real curl implementation.
+static MANAGER: std::sync::LazyLock<Arc<DownloadManager>> =
+    std::sync::LazyLock::new(DownloadManager::real);
+
+/// (repo_id, rfilename) for a key, for event payloads the manager doesn't
+/// carry (progress/done/error). Falls back to empty strings when the row is
+/// already gone — the frontend tolerates that on the no-entry path.
+fn row_of(key: &str) -> (String, String) {
+    MANAGER
+        .list()
+        .iter()
+        .find(|j| j.key == key)
+        .map(|j| (j.repo_id.clone(), j.rfilename.clone()))
+        .unwrap_or_default()
 }
 
-/// Active background downloads keyed by `{repo_id}/{rfilename}`. Jobs remove
-/// themselves on completion/error/cancel.
-static DOWNLOADS: std::sync::LazyLock<Mutex<std::collections::HashMap<String, DlJob>>> =
-    std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+fn key_of(evt: &DlEvent) -> &str {
+    match evt {
+        DlEvent::Started { key, .. }
+        | DlEvent::Progress { key, .. }
+        | DlEvent::Done { key, .. }
+        | DlEvent::Error { key, .. } => key,
+    }
+}
 
-const DL_EMIT_BYTES: u64 = 4 * 1024 * 1024;
-const DL_EMIT_MS: u64 = 400;
+/// Route manager events onto the frontend's `dl-*` bus. Idempotent — each
+/// `download_start` re-installs the same emitter.
+fn ensure_sink(app: &tauri::AppHandle) {
+    let app2 = app.clone();
+    MANAGER.set_sink(Arc::new(move |evt: &DlEvent| {
+        let key = key_of(evt).to_string();
+        let (repo_id, rfilename) = row_of(&key);
+        match evt {
+            DlEvent::Started { .. } => {
+                let _ = app2.emit(
+                    "dl-start",
+                    DownloadEvt {
+                        key: key.clone(),
+                        repo_id,
+                        rfilename,
+                        done: 0,
+                        total: 0,
+                    },
+                );
+            }
+            DlEvent::Progress { done, total, .. } => {
+                let _ = app2.emit(
+                    "dl-progress",
+                    DownloadEvt {
+                        key,
+                        repo_id,
+                        rfilename,
+                        done: *done,
+                        total: *total,
+                    },
+                );
+            }
+            DlEvent::Done { path, .. } => {
+                let _ = app2.emit(
+                    "dl-done",
+                    DownloadDone {
+                        key,
+                        repo_id,
+                        rfilename,
+                        path: path.display().to_string(),
+                    },
+                );
+            }
+            DlEvent::Error { error, .. } => {
+                let _ = app2.emit("dl-error", DownloadErr { key, error: error.clone() });
+            }
+        }
+    }));
+}
 
 /// Begin a background download of one repo file into `~/models`. Returns
 /// immediately; progress flows as `dl-start` / `dl-progress` / `dl-done` /
-/// `dl-error` events tagged with `key`. Re-requesting an active transfer is
-/// rejected so double-clicks can't duplicate it.
+/// `dl-error` events tagged with `key`. Idempotent: a queued or running key is
+/// left alone, a paused one resumes, an errored one restarts, and a completed
+/// one reports its existing `dl-done` so a fresh frontend session converges.
 pub fn download_start(
     app: &tauri::AppHandle,
     repo_id: &str,
     rfilename: &str,
 ) -> anyhow::Result<DownloadStarted> {
+    ensure_sink(app);
     let key = format!("{repo_id}/{rfilename}");
-    {
-        let mut g = DOWNLOADS.lock().unwrap();
-        if g.contains_key(&key) {
-            anyhow::bail!("already downloading {key}");
-        }
-        g.insert(
-            key.clone(),
-            DlJob {
-                cancel: std::sync::Arc::new(deck_feeds::Cancel::new()),
-            },
-        );
-    }
-
-    // Row shows up instantly; total/progress refine as the worker streams.
-    let _ = app.emit(
-        "dl-start",
-        DownloadEvt {
-            key: key.clone(),
-            repo_id: repo_id.to_string(),
-            rfilename: rfilename.to_string(),
-            done: 0,
-            total: 0,
-        },
-    );
-
-    let app2 = app.clone();
-    let key2 = key.clone();
-    let repo = repo_id.to_string();
-    let rf = rfilename.to_string();
-    std::thread::spawn(move || {
-        let cancel = match DOWNLOADS.lock().unwrap().get(&key2) {
-            Some(j) => j.cancel.clone(),
-            None => return, // cancelled before the worker even started
-        };
-
-        // Best-effort size probe up front so the UI can show a real percentage
-        // immediately rather than waiting for the first body bytes.
-        let probed_total = deck_feeds::remote_file_size(&repo, &rf).unwrap_or(0);
-        if !cancel.cancelled() {
-            let _ = app2.emit(
-                "dl-progress",
-                DownloadEvt {
-                    key: key2.clone(),
-                    repo_id: repo.clone(),
-                    rfilename: rf.clone(),
-                    done: 0,
-                    total: probed_total,
+    let existing = MANAGER
+        .list()
+        .iter()
+        .find(|j| j.key == key)
+        .map(|j| (j.status, j.path.clone()))
+        .clone();
+    match existing {
+        Some((DlStatus::Done, Some(path))) => {
+            // Already on disk — surface it so the frontend doesn't wait for a
+            // dl-start that will never come.
+            let (repo, rf) = row_of(&key);
+            let _ = app.emit(
+                "dl-done",
+                DownloadDone {
+                    key: key.clone(),
+                    repo_id: repo,
+                    rfilename: rf,
+                    path: path.display().to_string(),
                 },
             );
+            return Ok(DownloadStarted { key });
         }
-
-        // Emit on ≥4 MiB deltas or ≥400 ms gaps; interior ticks are dropped so
-        // a fast NVMe-backed connection doesn't flood the event bus.
-        let mut last_emit_done: u64 = 0;
-        let mut last_emit_at = Instant::now();
-        let mut emit_progress = |done: u64, total: u64| {
-            let due = done.saturating_sub(last_emit_done) >= DL_EMIT_BYTES
-                || done < last_emit_done // stream restarted (defensive)
-                || last_emit_at.elapsed().as_millis() >= DL_EMIT_MS as u128;
-            if done == 0 || due {
-                last_emit_done = done;
-                last_emit_at = Instant::now();
-                let _ = app2.emit(
-                    "dl-progress",
-                    DownloadEvt {
-                        key: key2.clone(),
-                        repo_id: repo.clone(),
-                        rfilename: rf.clone(),
-                        done,
-                        total,
-                    },
-                );
-            }
-        };
-
-        let result = deck_feeds::download_file_progress(
-            &repo,
-            &rf,
-            &deck_core::store::models_dir(),
-            (probed_total > 0).then_some(probed_total),
-            &mut emit_progress,
-            &cancel,
-        );
-
-        // Free the registry slot BEFORE emitting the terminal event so an
-        // immediate STOP→START (resume) re-entry isn't rejected as a duplicate.
-        DOWNLOADS.lock().unwrap().remove(&key2);
-
-        match result {
-            Ok(path) => {
-                let _ = app2.emit(
-                    "dl-done",
-                    DownloadDone {
-                        key: key2.clone(),
-                        repo_id: repo.clone(),
-                        rfilename: rf.clone(),
-                        path: path.display().to_string(),
-                    },
-                );
-            }
-            Err(e) => {
-                let msg = e.to_string();
-                let _ = app2.emit(
-                    "dl-error",
-                    DownloadErr {
-                        key: key2.clone(),
-                        error: msg,
-                    },
-                );
-            }
+        Some((DlStatus::Done, None)) => {
+            // Row kept after clear happened mid-flight; restart it.
+            MANAGER.enqueue(repo_id, rfilename)?;
         }
-    });
-
+        Some((DlStatus::Paused, _)) => {
+            MANAGER.start(&key)?;
+        }
+        Some(_) => {
+            // queued / active: carry on; dl-start will confirm the launch.
+        }
+        None => {
+            MANAGER.enqueue(repo_id, rfilename)?;
+        }
+    }
     Ok(DownloadStarted { key })
 }
 
-/// Cancel an active transfer (keeping its `.part` for later resume) and anyhow
-/// drop any partial file for `rfilename` from the model directory. Used by the
+/// Cancel an active transfer (keeping its `.part` for later resume) and drop
+/// any partial file for `rfilename` from the model directory. Used by the
 /// download manager's REMOVE action. Best-effort: succeeds even when the
 /// transfer already finished or no `.part` exists.
 pub fn download_remove(key: &str, rfilename: &str) -> anyhow::Result<()> {
-    // No-op when not currently active (the worker already removed its slot).
-    let _ = download_cancel(key);
+    // Cancel + forget the row if present (in-flight workers notice the cancel).
+    let _ = MANAGER.discard(key);
     let name = std::path::Path::new(rfilename)
         .file_name()
         .map(|f| f.to_string_lossy().into_owned())
@@ -194,16 +189,22 @@ pub fn download_remove(key: &str, rfilename: &str) -> anyhow::Result<()> {
 }
 
 /// Request cancellation of an active download. The worker notices at its next
-/// chunk boundary and emits `dl-error` with "cancelled".
+/// chunk boundary and emits `dl-error` with "cancelled". Stopping a row that
+/// isn't runnable anymore is a no-op.
 pub fn download_cancel(key: &str) -> anyhow::Result<()> {
-    let hit = DOWNLOADS
-        .lock()
-        .unwrap()
-        .get(key)
-        .map(|j| j.cancel.cancel());
-    if hit.is_some() {
-        Ok(())
-    } else {
-        anyhow::bail!("no active download '{key}'")
-    }
+    MANAGER.stop(key)
+}
+
+/// Snapshot of specific queue rows for in-process orchestrators (the
+/// experiment door waits on a shard set this way): (key, status, landed path,
+/// error message when failed).
+pub fn download_states(
+    keys: &[String],
+) -> Vec<(String, DlStatus, Option<std::path::PathBuf>, Option<String>)> {
+    MANAGER
+        .list()
+        .into_iter()
+        .filter(|j| keys.contains(&j.key))
+        .map(|j| (j.key, j.status, j.path, j.error))
+        .collect()
 }
