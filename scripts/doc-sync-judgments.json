@@ -67,6 +67,10 @@
     {
       "commit": "18c7dcc",
       "reason": "refactor(console): mechanical split of the orphan reaper out of console.rs into console_reaper.rs (marker constant + /proc chain-walk + its unit tests); the reaper never touches the SESSIONS registry so it is one clean lifecycle seam. No behavior or user-visible surface change; doc-less, consistent with the 68f44be judgment."
+    },
+    {
+      "commit": "e07e0d0",
+      "reason": "fix(tauri): black window on NVIDIA/Wayland — sets WEBKIT_DISABLE_DMABUF_RENDERER=1 before WebKit init because this machine's webkit GBM/DMA-BUF scanout fails ('Failed to create GBM buffer'), leaving every launch black. Internal launch-environment robustness, no API/config/behavioral surface the docs describe; doc-less by definition."
     }
   ]
 }
