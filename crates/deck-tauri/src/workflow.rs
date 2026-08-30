@@ -105,6 +105,25 @@ pub fn workflow_history(workflow_id: Option<&str>) -> anyhow::Result<Vec<wfstore
     wfstore::list_workflow_runs(&conn, workflow_id)
 }
 
+/// Per-role bench (Phase 8e): aggregate matrix_runs for this workflow's roles —
+/// "which model best at which node" for the canvas.
+pub fn workflow_per_role_bench(
+    workflow_id: &str,
+) -> anyhow::Result<Vec<deck_core::store::RoleBenchRow>> {
+    let db = default_db_path();
+    let conn = open(&db)?;
+    wfstore::ensure_wf_schema(&conn)?;
+    let wf = wfstore::get_workflow(&conn, workflow_id)?
+        .ok_or_else(|| anyhow::anyhow!("workflow '{workflow_id}' not found"))?;
+    let mut roles: Vec<&str> = Vec::new();
+    for n in &wf.nodes {
+        if !n.role_id.is_empty() && !roles.contains(&n.role_id.as_str()) {
+            roles.push(n.role_id.as_str());
+        }
+    }
+    deck_core::store::per_role_bench(&conn, &roles)
+}
+
 /// Run `wf` once against `runner`, persisting the run + node rows. Returns the
 /// executor report. Mirrors the CLI door's persistence so both doors leave the
 /// same shape of rows; the caller is responsible for surfacing events.
@@ -159,6 +178,14 @@ fn execute_and_persist(
             order_idx: nr.order_idx as i64,
         };
         wfstore::insert_node_run(conn, &nrow)?;
+    }
+    // Phase 8e: record a per-role bench row for each engine-backed node so
+    // matrix_runs accumulates "which model best at which role" for the canvas
+    // (mirrors the CLI door — one truth, two doors).
+    for nr in &report.node_results {
+        if let Some(row) = deck_engines::node_to_matrix_row(wf, nr, now()) {
+            deck_core::store::insert_matrix_run(conn, &row)?;
+        }
     }
 
     let status = report.status;
@@ -318,8 +345,13 @@ mod tests {
 
     impl deck_engines::NodeRunner for EchoRunner {
         fn name(&self) -> &'static str { "echo" }
-        fn run(&self, _node: &WorkflowNode, inputs: &[Message]) -> Result<String, String> {
-            Ok(inputs.iter().map(|m| m.text.clone()).collect::<Vec<_>>().join("|"))
+        fn run(&self, _node: &WorkflowNode, inputs: &[Message]) -> Result<deck_engines::NodeOutcome, String> {
+            Ok(deck_engines::NodeOutcome {
+                text: inputs.iter().map(|m| m.text.clone()).collect::<Vec<_>>().join("|"),
+                tps: Some(12.5),
+                ttft_ms: Some(40),
+                gen_tokens: 60,
+            })
         }
     }
 
@@ -339,5 +371,13 @@ mod tests {
         let nodes = wfstore::list_node_runs(&conn, &runs[0].id).unwrap();
         assert_eq!(nodes.len(), 2);
         assert!(nodes.iter().all(|n| n.status == "done"));
+        // Phase 8e: the stateless metrics landed as per-role matrix rows, so the
+        // canvas can show "which model best at which node" after one run.
+        let roles: Vec<&str> = wf.nodes.iter().map(|n| n.role_id.as_str()).collect();
+        let bench = deck_core::store::per_role_bench(&conn, &roles).unwrap();
+        assert!(!bench.is_empty(), "per-role bench rows should be recorded");
+        assert!(bench.iter().all(|b| b.model == "qwen3.8-27b@Q3_K_XL" || !b.model.is_empty()));
+        let ok = deck_core::store::per_role_bench(&conn, &[]).unwrap();
+        assert!(ok.is_empty());
     }
 }

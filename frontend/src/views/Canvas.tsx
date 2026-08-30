@@ -24,6 +24,7 @@ export default function Canvas() {
   const [msg, setMsg] = useState("");
   const [status, setStatus] = useState<Map<string, string>>(new Map());
   const [history, setHistory] = useState<api.WfRunRow[]>([]);
+  const [bench, setBench] = useState<api.RoleBenchRow[]>([]);
 
   const load = useCallback(async () => {
     try {
@@ -65,6 +66,14 @@ export default function Canvas() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!selected) {
+      setBench([]);
+      return;
+    }
+    api.workflowPerRoleBench(selected).then(setBench).catch(() => setBench([]));
+  }, [selected]);
 
   const run = async () => {
     if (!selected) return;
@@ -232,6 +241,49 @@ export default function Canvas() {
           )}
           {msg && <div style={{ color: "var(--oom)", marginTop: 8, fontSize: 10 }}>{msg}</div>}
         </div>
+      </div>
+
+      {/* per-role bench (8e) — which model best at which node */}
+      <div className="card" style={{ marginTop: 10, fontSize: 11 }}>
+        <h3 style={{ fontSize: 11, letterSpacing: 2, color: "var(--cyan)", margin: 0, marginBottom: 6 }}>
+          PER-ROLE BENCH <span className="dim">· best tok/s across runs, per node</span>
+        </h3>
+        {bench.length === 0 ? (
+          <div className="dim">no per-role bench yet — run this workflow (stateless) a few times to accumulate tok/s per node</div>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>ROLE</th>
+                <th>MODEL</th>
+                <th>BEST</th>
+                <th>AVG</th>
+                <th>LAST</th>
+                <th>RUNS</th>
+              </tr>
+            </thead>
+            <tbody>
+              {bench.map((b) => {
+                const bestInRole = bench
+                  .filter((x) => x.role_id === b.role_id)
+                  .every((x) => b.best_tps >= x.best_tps);
+                return (
+                  <tr key={`${b.role_id}:${b.model}:${b.engine}`}>
+                    <td className="mono" style={{ color: "var(--cyan)" }}>{b.role_id}</td>
+                    <td className="mono">
+                      {b.model}
+                      {bestInRole && <span className="badge pass" style={{ marginLeft: 6 }}>BEST</span>}
+                    </td>
+                    <td className="mono" style={{ color: "var(--pass)" }}>{b.best_tps.toFixed(1)}</td>
+                    <td className="mono dim">{b.avg_tps.toFixed(1)}</td>
+                    <td className="mono dim">{b.last_tps.toFixed(1)}</td>
+                    <td className="mono dim">{b.runs}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
       </div>
 
       {/* history */}

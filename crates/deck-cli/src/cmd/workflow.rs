@@ -128,6 +128,13 @@ pub fn run(id: &str, runner: &str, dir: Option<&Path>, model: Option<&str>) -> R
         };
         deck_core::wfstore::insert_node_run(&conn, &nrow)?;
     }
+    // Phase 8e: record a per-role bench row for each engine-backed node so
+    // matrix_runs accumulates "which model best at which role" for the canvas.
+    for nr in &report.node_results {
+        if let Some(row) = deck_engines::node_to_matrix_row(&wf, nr, now()) {
+            deck_core::store::insert_matrix_run(&conn, &row)?;
+        }
+    }
     // Persist the run's terminal status. `report.status` already folds
     // per-node failures into Partial/Stopped — do not conflate "all nodes ran"
     // with "all nodes succeeded".
@@ -180,6 +187,40 @@ pub fn history(wf: Option<&str>, json: bool) -> Result<()> {
             format!("{:?}", r.status),
             r.tokens_used,
             if r.output.is_empty() { "" } else { &r.output }
+        );
+    }
+    Ok(())
+}
+
+/// Per-role bench (8e): which model best at which node for this workflow, from
+/// matrix_runs accumulated across runs.
+pub fn bench(id: &str, json: bool) -> Result<()> {
+    let db = deck_core::store::default_db_path();
+    let conn = deck_core::store::open(&db)?;
+    let wf = deck_core::wfstore::get_workflow(&conn, id)?
+        .ok_or_else(|| anyhow::anyhow!("workflow '{id}' not found"))?;
+    let mut roles: Vec<&str> = Vec::new();
+    for n in &wf.nodes {
+        if !n.role_id.is_empty() && !roles.contains(&n.role_id.as_str()) {
+            roles.push(n.role_id.as_str());
+        }
+    }
+    let rows = deck_core::store::per_role_bench(&conn, &roles)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&rows)?);
+        return Ok(());
+    }
+    if rows.is_empty() {
+        println!(
+            "no per-role bench yet for '{}' — run it (stateless) a few times first",
+            wf.id
+        );
+        return Ok(());
+    }
+    for r in &rows {
+        println!(
+            "{:<12} {:<10} tok/s best {:.1} avg {:.1} last {:.1}  ({} runs, {}ms)",
+            r.role_id, r.model, r.best_tps, r.avg_tps, r.last_tps, r.runs, r.last_wall_ms
         );
     }
     Ok(())

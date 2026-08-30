@@ -491,6 +491,16 @@ async fn workflow_get(
     blocking(move || deck_tauri::workflow_get(&workflow_id).map_err(|e| e.to_string())).await
 }
 
+#[tauri::command]
+async fn workflow_per_role_bench(
+    workflow_id: String,
+) -> Result<Vec<deck_core::store::RoleBenchRow>, String> {
+    blocking(move || {
+        deck_tauri::workflow_per_role_bench(&workflow_id).map_err(|e| e.to_string())
+    })
+    .await
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -559,7 +569,8 @@ fn main() {
             workflow_get,
             workflow_run,
             workflow_stop,
-            workflow_history
+            workflow_history,
+            workflow_per_role_bench
         ])
         .run(tauri::generate_context!())
         .expect("error while running cyberdeck");

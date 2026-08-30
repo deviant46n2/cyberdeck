@@ -41,7 +41,7 @@ pub use systemd::{
     apply, backup_existing, backup_file, install, reload_daemon, restore_last_good, start, stop,
 };
 pub use unit::{build_args, render_unit};
-pub use workflow::{AgenticRunner, ExecReport, NodeResult, NodeRunner, StatelessRunner, execute};
+pub use workflow::{AgenticRunner, ExecReport, NodeOutcome, NodeResult, NodeRunner, StatelessRunner, execute, node_to_matrix_row};
 
 #[cfg(test)]
 mod tests {

@@ -529,3 +529,16 @@ export const workflowRun = (workflowId: string, runner: string, dir?: string | n
 export const workflowStop = (runId: string) => invoke<void>("workflow_stop", { runId });
 export const workflowHistory = (workflowId?: string | null) =>
   invoke<WfRunRow[]>("workflow_history", { workflowId: workflowId ?? null });
+export interface RoleBenchRow {
+  role_id: string;
+  engine: string;
+  model: string;
+  runs: number;
+  best_tps: number;
+  avg_tps: number;
+  last_tps: number;
+  last_wall_ms: number;
+  last_ttft_ms: number | null;
+}
+export const workflowPerRoleBench = (workflowId: string) =>
+  invoke<RoleBenchRow[]>("workflow_per_role_bench", { workflowId });

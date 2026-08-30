@@ -30,6 +30,12 @@ pub struct NodeResult {
     pub error: String,
     pub wall_ms: u64,
     pub order_idx: u64,
+    /// Generation tokens/sec when the runner can report it (stateless only).
+    pub tps: Option<f64>,
+    /// Time to first token (ms) when the engine reports it.
+    pub ttft_ms: Option<u64>,
+    /// Generated tokens this node produced (0 when not measurable).
+    pub gen_tokens: u64,
 }
 
 /// Aggregate result of one `execute` pass over a graph.
@@ -42,6 +48,18 @@ pub struct ExecReport {
     pub tokens_used: u64,
 }
 
+/// What a node runner produces for one node. `text` is the node's payload;
+/// the metric fields are `Option`/`0` when the runner can't measure them
+/// (e.g. an agentic session reports text but no tok/s). This is what lets a
+/// workflow run feed the per-role bench (8e) without faking numbers.
+#[derive(Debug, Clone)]
+pub struct NodeOutcome {
+    pub text: String,
+    pub tps: Option<f64>,
+    pub ttft_ms: Option<u64>,
+    pub gen_tokens: u64,
+}
+
 // ---------------------------------------------------------------- runner
 
 /// Executes a single node given its resolved upstream messages. Text-only for
@@ -49,7 +67,7 @@ pub struct ExecReport {
 /// Implementors must be `Send + Sync` so wave nodes can run pooled.
 pub trait NodeRunner: Send + Sync {
     fn name(&self) -> &'static str;
-    fn run(&self, node: &WorkflowNode, inputs: &[Message]) -> Result<String, String>;
+    fn run(&self, node: &WorkflowNode, inputs: &[Message]) -> Result<NodeOutcome, String>;
 }
 
 /// Build a node's prompt from its Role + upstream inputs. The role provides the
@@ -88,7 +106,7 @@ impl NodeRunner for StatelessRunner {
     fn name(&self) -> &'static str {
         "stateless"
     }
-    fn run(&self, node: &WorkflowNode, inputs: &[Message]) -> Result<String, String> {
+    fn run(&self, node: &WorkflowNode, inputs: &[Message]) -> Result<NodeOutcome, String> {
         let engine = Engine::parse(&node.binding.engine.clone().unwrap_or_default())
             .ok_or_else(|| format!("unsupported engine '{}'", node.binding.engine.clone().unwrap_or_default()))?;
         let host = "127.0.0.1".to_string();
@@ -103,7 +121,12 @@ impl NodeRunner for StatelessRunner {
             node.exec.max_tokens.min(self.max_tokens).max(16),
         );
         if s.ok {
-            Ok(s.text)
+            Ok(NodeOutcome {
+                text: s.text,
+                tps: s.tok_s,
+                ttft_ms: s.ttft_ms,
+                gen_tokens: s.gen_tokens.unwrap_or(0),
+            })
         } else {
             Err(s.error.unwrap_or_else(|| "generation failed".into()))
         }
@@ -124,7 +147,7 @@ impl NodeRunner for AgenticRunner {
     fn name(&self) -> &'static str {
         "agentic"
     }
-    fn run(&self, node: &WorkflowNode, inputs: &[Message]) -> Result<String, String> {
+    fn run(&self, node: &WorkflowNode, inputs: &[Message]) -> Result<NodeOutcome, String> {
         let mut cmd = std::process::Command::new("opencode");
         cmd.arg("run");
         cmd.arg("--dir").arg(&self.dir);
@@ -135,7 +158,12 @@ impl NodeRunner for AgenticRunner {
         cmd.arg(&prompt);
         let out = cmd.output().map_err(|e| format!("spawn opencode: {e}"))?;
         if out.status.success() {
-            Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+            Ok(NodeOutcome {
+                text: String::from_utf8_lossy(&out.stdout).trim().to_string(),
+                tps: None,
+                ttft_ms: None,
+                gen_tokens: 0,
+            })
         } else {
             let err = String::from_utf8_lossy(&out.stderr);
             Err(err.trim().to_string())
@@ -201,13 +229,15 @@ pub fn execute(
             let t = Instant::now();
             let outcome = runner.run(node, &inputs);
             let wall_ms = t.elapsed().as_millis() as u64;
-            let (text, err, ok) = match outcome {
-                Ok(t) => (t, String::new(), true),
-                Err(e) => (String::new(), e, false),
+            let (text, err, ok, tps, ttft_ms, gen_tokens) = match outcome {
+                Ok(o) => (o.text, String::new(), true, o.tps, o.ttft_ms, o.gen_tokens),
+                Err(e) => (String::new(), e, false, None, None, 0),
             };
             any_error |= !ok;
             order += 1;
-            tokens_used += (text.len() / 4) as u64; // ~4 chars/token heuristic
+            // prefer the engine's own token count when the runner reports one;
+            // fall back to the ~4 chars/token heuristic for runners with none.
+            tokens_used += if gen_tokens > 0 { gen_tokens } else { (text.len() / 4) as u64 };
             node_results.push(NodeResult {
                 node_id: node_id.clone(),
                 ok,
@@ -215,6 +245,9 @@ pub fn execute(
                 error: err.clone(),
                 wall_ms,
                 order_idx: order,
+                tps,
+                ttft_ms,
+                gen_tokens,
             });
             messages.insert(
                 node_id.clone(),
@@ -249,6 +282,46 @@ pub fn execute(
     })
 }
 
+/// Build a bench row for one executed node (Phase 8e). It records the node's
+/// role, model and metrics into matrix_runs so per-role history accumulates
+/// and the canvas can show which model is best at which node. Returns None
+/// when the node has no binding engine (agentic/synthetic), because there is
+/// nothing engine-backed to benchmark. tok_s_kind is "wall" because the
+/// runner reports a single tok/s figure without its provenance.
+pub fn node_to_matrix_row(
+    wf: &Workflow,
+    nr: &NodeResult,
+    at: i64,
+) -> Option<deck_core::store::MatrixRow> {
+    let node = wf.nodes.iter().find(|n| n.id == nr.node_id)?;
+    let binding = &node.binding;
+    Some(deck_core::store::MatrixRow {
+        engine: binding.engine.clone().unwrap_or_default(),
+        model: binding.model_ref.clone(),
+        ctx: 0,
+        task: node.role_id.clone(),
+        run: 1,
+        verdict: if nr.ok { "ok".into() } else { "error".into() },
+        summary: format!("workflow node {}", node.id),
+        gen_tokens: if nr.gen_tokens > 0 { Some(nr.gen_tokens) } else { None },
+        prompt_tokens: None,
+        tok_s: nr.tps,
+        tok_s_kind: "wall".into(),
+        wall_ms: nr.wall_ms,
+        output: if nr.ok { nr.text.clone() } else { String::new() },
+        at,
+        workload_id: None,
+        hardware_profile_id: None,
+        engine_version: None,
+        prompt_tps: None,
+        ttft_ms: nr.ttft_ms,
+        peak_vram_mb: None,
+        model_rev: None,
+        sampling_json: None,
+        role_id: Some(node.role_id.clone()),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -261,9 +334,9 @@ mod tests {
         fn name(&self) -> &'static str {
             "echo"
         }
-        fn run(&self, node: &WorkflowNode, inputs: &[Message]) -> Result<String, String> {
+        fn run(&self, node: &WorkflowNode, inputs: &[Message]) -> Result<NodeOutcome, String> {
             let up: Vec<String> = inputs.iter().map(|m| m.text.clone()).collect();
-            Ok(format!("{}|{}", node.id, up.join(";")))
+            Ok(NodeOutcome { text: format!("{}|{}", node.id, up.join(";")), tps: None, ttft_ms: None, gen_tokens: 0 })
         }
     }
 
@@ -325,5 +398,29 @@ mod tests {
         let p = build_prompt(&EchoRunner, &node, &[m]);
         assert!(p.contains("r"));
         assert!(p.contains("hello upstream"));
+    }
+
+    #[test]
+    fn node_to_matrix_row_records_role_metrics() {
+        let wf = seed_coding_review();
+        let nr = NodeResult {
+            node_id: "n1".into(),
+            ok: true,
+            text: "reviewed".into(),
+            error: String::new(),
+            wall_ms: 1234,
+            order_idx: 1,
+            tps: Some(62.5),
+            ttft_ms: Some(88),
+            gen_tokens: 512,
+        };
+        let row = node_to_matrix_row(&wf, &nr, 1755500000).unwrap();
+        // n1 binds role + a model (from the seed); role_id threaded for 8e
+        assert_eq!(row.role_id.as_deref(), Some(wf.nodes[0].role_id.as_str()));
+        assert_eq!(row.model, wf.nodes[0].binding.model_ref);
+        assert_eq!(row.tok_s, Some(62.5));
+        assert_eq!(row.ttft_ms, Some(88));
+        assert_eq!(row.gen_tokens, Some(512));
+        assert_eq!(row.wall_ms, 1234);
     }
 }

@@ -487,6 +487,24 @@ pub struct MatrixRow {
     pub role_id: Option<String>,
 }
 
+/// One role's accumulated bench (Phase 8e): best/avg tok/s across the models the
+/// canvas has run against that role, so a canvas can show "which model best at
+/// which node" and Phase 4 recommend has per-role signal. Aggregated from
+/// `matrix_runs` where `role_id` is set.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RoleBenchRow {
+    pub role_id: String,
+    pub engine: String,
+    pub model: String,
+    pub runs: u64,
+    pub best_tps: f64,
+    pub avg_tps: f64,
+    /// Tok/s of the most recent run in this role/model group.
+    pub last_tps: f64,
+    pub last_wall_ms: u64,
+    pub last_ttft_ms: Option<u64>,
+}
+
 fn ensure_column(conn: &Connection, table: &str, col: &str, ddl: &str) -> Result<()> {
     let mut stmt = conn.prepare(&format!("SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name='{col}'"))?;
     let exists: i64 = stmt.query_row([], |r| r.get(0))?;
@@ -568,6 +586,60 @@ pub fn insert_matrix_run(conn: &Connection, row: &MatrixRow) -> Result<i64> {
         ],
     )?;
     Ok(conn.last_insert_rowid())
+}
+
+/// Aggregate per-role bench for the given role ids (Phase 8e). Only rows with a
+/// measurable `tok_s` count (stateless engine runs); returns best/avg/last per
+/// role+model, ordered role then best tok/s desc, so "which model best at which
+/// node" is one query.
+pub fn per_role_bench(conn: &Connection, roles: &[&str]) -> Result<Vec<RoleBenchRow>> {
+    ensure_matrix_schema(conn)?;
+    if roles.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = std::iter::repeat_n("?", roles.len()).collect::<Vec<_>>().join(",");
+    let sql = format!(
+        "SELECT role_id, engine, model,
+                COUNT(*),
+                MAX(tok_s),
+                AVG(tok_s),
+                (SELECT tok_s FROM matrix_runs m2
+                  WHERE m2.role_id = matrix_runs.role_id AND m2.model = matrix_runs.model
+                    AND m2.engine = matrix_runs.engine
+                  ORDER BY m2.at DESC, m2.id DESC LIMIT 1) AS last_tps,
+                (SELECT wall_ms FROM matrix_runs m2
+                  WHERE m2.role_id = matrix_runs.role_id AND m2.model = matrix_runs.model
+                    AND m2.engine = matrix_runs.engine
+                  ORDER BY m2.at DESC, m2.id DESC LIMIT 1) AS last_wall,
+                (SELECT ttft_ms FROM matrix_runs m2
+                  WHERE m2.role_id = matrix_runs.role_id AND m2.model = matrix_runs.model
+                    AND m2.engine = matrix_runs.engine
+                  ORDER BY m2.at DESC, m2.id DESC LIMIT 1) AS last_ttft
+         FROM matrix_runs
+         WHERE role_id IN ({placeholders}) AND tok_s IS NOT NULL
+         GROUP BY role_id, engine, model
+         ORDER BY role_id, MAX(tok_s) DESC",
+        placeholders = placeholders
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(rusqlite::params_from_iter(roles.iter().copied()), |r| {
+        Ok(RoleBenchRow {
+            role_id: r.get(0)?,
+            engine: r.get(1)?,
+            model: r.get(2)?,
+            runs: r.get(3)?,
+            best_tps: r.get(4)?,
+            avg_tps: r.get(5)?,
+            last_tps: r.get(6)?,
+            last_wall_ms: r.get(7)?,
+            last_ttft_ms: r.get(8)?,
+        })
+    })?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
 }
 
 /// A single live throughput measurement pulled from a running engine's
@@ -1161,5 +1233,44 @@ mod tests {
         let mut stmt = conn.prepare("SELECT count(*) FROM evaluations WHERE matrix_run_id=?1").unwrap();
         let n: i64 = stmt.query_row([id], |r| r.get(0)).unwrap();
         assert_eq!(n, 1);
+    }
+
+    fn matrix_row(role: &str, model: &str, tps: Option<f64>) -> MatrixRow {
+        MatrixRow {
+            engine: "llamacpp".into(), model: model.into(), ctx: 0, task: role.into(), run: 1,
+            verdict: "ok".into(), summary: "workflow node".into(), gen_tokens: Some(100), prompt_tokens: None,
+            tok_s: tps, tok_s_kind: "wall".into(), wall_ms: 500, output: String::new(), at: 0,
+            workload_id: None, hardware_profile_id: None, engine_version: None, prompt_tps: None, ttft_ms: Some(40), peak_vram_mb: None, model_rev: None, sampling_json: None, role_id: Some(role.into()),
+        }
+    }
+
+    #[test]
+    fn per_role_bench_aggregates_best_avg_last() {
+        let conn = Connection::open_in_memory().expect("mem");
+        ensure_matrix_schema(&conn).unwrap();
+        // role "r1" run against two models (fast then slow); role "r2" one model
+        insert_matrix_run(&conn, &matrix_row("r1", "qwen-fast", Some(80.0))).unwrap();
+        insert_matrix_run(&conn, &matrix_row("r1", "qwen-fast", Some(60.0))).unwrap();
+        insert_matrix_run(&conn, &matrix_row("r1", "qwen-slow", Some(30.0))).unwrap();
+        insert_matrix_run(&conn, &matrix_row("r2", "qwen-slow", Some(20.0))).unwrap();
+        // a row with NULL tok_s must not pollute the aggregation
+        insert_matrix_run(&conn, &matrix_row("r1", "agent-node", None)).unwrap();
+
+        let rows = per_role_bench(&conn, &["r1"]).unwrap();
+        // r1 has two models; r2 excluded by the role filter
+        assert_eq!(rows.len(), 2);
+        let fast = rows.iter().find(|r| r.model == "qwen-fast").unwrap();
+        assert_eq!(fast.runs, 2);
+        assert_eq!(fast.best_tps, 80.0);
+        assert!((fast.avg_tps - 70.0).abs() < 1e-9);
+        assert_eq!(fast.last_tps, 60.0); // most recent of the two
+        let slow = rows.iter().find(|r| r.model == "qwen-slow").unwrap();
+        assert_eq!(slow.runs, 1);
+        // ordered best-first within the role
+        assert_eq!(rows[0].role_id, "r1");
+        assert!(rows[0].best_tps >= rows[1].best_tps);
+
+        let empty = per_role_bench(&conn, &[]).unwrap();
+        assert!(empty.is_empty());
     }
 }

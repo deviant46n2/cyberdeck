@@ -312,6 +312,13 @@ enum WorkflowCmd {
         #[arg(long)]
         json: bool,
     },
+    /// Per-role bench (8e): which model best at which node, from matrix_runs
+    Bench {
+        /// Workflow id
+        id: String,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -543,6 +550,7 @@ fn main() -> Result<()> {
             WorkflowCmd::List { json } => cmd::workflow::list(json),
             WorkflowCmd::Run { id, runner, dir, model } => cmd::workflow::run(&id, &runner, dir.as_deref(), model.as_deref()),
             WorkflowCmd::History { workflow, json } => cmd::workflow::history(workflow.as_deref(), json),
+            WorkflowCmd::Bench { id, json } => cmd::workflow::bench(&id, json),
         },
         Commands::Hardware { action } => match action {
             HardwareCmd::Profile { json } => cmd::hardware::profile(json),

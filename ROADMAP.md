@@ -487,7 +487,7 @@ Which pieces already exist: download `.part`+resume, metadata inspect, fit, deri
 
 * **8d — Canvas UI shell — LANDED (2026-08-30):** minimal DOM canvas rendering saved workflows; per-node positioned cards (roles bound to models) + SVG edges for the graph, and a RUN/STOP door that fans out to the Tauri background executor behind `wf-*` events. `reactflow` stays an optional renderer; xterm.js panes come with the fuller 8d (agentic node sessions). Tauri twin landed: `deck-tauri/src/workflow.rs` (background run registry + `wf-*` events + `workflow_{seed,save,list,get,run,stop,history}`), registered in `src-tauri` + `api.workflow*`, with a headless persistence test. `Run workflow` now drives the DAG end-to-end from the CANVAS view.
 
-* **8e — model matrix / per-role bench:** a workflow the user has run against several models accumulates per-role benchmark rows (`role_id` on `matrix_runs` feeds Phase 4 recommend) so the canvas can show "which model best at which node".
+* **8e — model matrix / per-role bench — LANDED (2026-08-30):** a workflow the user has run against several models accumulates per-role benchmark rows (`role_id` on `matrix_runs` feeds Phase 4 recommend) so the canvas can show "which model best at which node". `NodeRunner::run` now returns a `NodeOutcome` (text + tps/ttft/gen_tokens) so the executor threads generation metrics instead of discarding them; both doors record a `matrix_runs` row per engine-backed node on every run (`node_to_matrix_row`), and `store::per_role_bench` aggregates best/avg/last tok/s per role+model (NULL-tok_s agentic rows excluded). Surfaced as `deck workflow bench <id>` + Tauri `workflow_per_role_bench` + a PER-ROLE BENCH table in the CANVAS view (BEST badge per role).
 
 * **8f — branch / loop / supervisor:** conditional routing (`WorkflowEdge.condition`, reserved in the 8c model), a loop construct policed by `ExecSettings.max_iterations`, and a supervisor node that can spawn/retry sub-workflows.
 
@@ -537,7 +537,7 @@ Which pieces already exist: download `.part`+resume, metadata inspect, fit, deri
 | O4 HUD what changed lane | M | S | Low | P1 | FEEDS view + recency gate landed; DISK/fit-at-ctx enrichment open |
 | Phase 8 Canvas — draggable TUIs (8a) | M | S | Low | P1 DONE | HUD multi-agent, zen+local side-by-side, embedded `opencode attach` TUIs |
 | Phase 8 Canvas — workflow foundation (8c) | M | M | Med | P1 DONE | Role/Model/DAG scheduler + headless executor + `deck workflow` CLI; Phase 0 schema gate |
-| Phase 8 Canvas — UI shell (8d), matrix (8e), branch/loop (8f) | M | M–L | Med | P2 | 8d DONE (Tauri `workflow_*` + `wf-*` + CANVAS view); 8e per-role bench + 8f branch/loop remain |
+| Phase 8 Canvas — UI shell (8d), matrix (8e), branch/loop (8f) | M | M–L | Med | P2 | 8d+8e DONE (canvas + per-role bench); 8f branch/loop remain |
 | Phase 7c agent EXECUTE (consented) | M | M | High | P2 | Needs experiment + audit solid |
 | Phase 9 daemon/autonomous/self-heal | M | M–L | High | P3 | Long-term; do not start early |
 
