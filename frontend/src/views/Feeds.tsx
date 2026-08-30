@@ -6,6 +6,13 @@ import { LAST_SEEN_KEY, isNewSince, parseLastSeen } from "../lib/feeds";
 
 const SCORE_COLOR = (s: number) => (s >= 0.65 ? "var(--pass)" : s >= 0.4 ? "var(--warn)" : "var(--dim2)");
 
+/** GGUF files that are auxiliary artifacts, not the model itself. */
+const AUX_GGUF = /(mmproj|imatrix|embedding|babble|clip|vision_tower|text_encoder)/i;
+/** Desktop VRAM reservation (MiB) — mirrors deck-core fit's reserve. */
+const RESERVE_MB = 1600;
+/** KV-cache floor (MiB) the pick reserves so the quant can actually run. */
+const KV_FLOOR_MB = 1024;
+
 /** FEEDS — online intelligence lane (O4).
  *
  * Surfaces the release catalog ranked by relevance to *this* hardware and
@@ -32,22 +39,33 @@ export default function Feeds() {
   const [dlBusy, setDlBusy] = useState<string | null>(null);
   const [dlMsg, setDlMsg] = useState<string>("");
 
-  /** Queue the quant this row scored: the smallest GGUF in the repo, shard-set
-   * aware — the same shared-manager path MARKET uses (CLI door: `deck download`).
+  /** Queue the quant this row scored: the best *model* GGUF that fits this
+   * box (artifacts like mmproj/imatrix excluded), shard-set aware — the same
+   * shared-manager path MARKET uses (CLI door: `deck download`).
+   * The pick is the largest quant under VRAM headroom, so the download
+   * delivers what the score promised, not the smallest auxiliary file.
    * The pick matches the row's own FITS/DISK evaluation, so the download delivers
    * what the score promised. */
   const download = async (repoId: string) => {
     setDlBusy(repoId);
     try {
-      const ff = await api.marketFiles(repoId);
-      const ggufs = ff
-        .filter((f) => f.rfilename.toLowerCase().endsWith(".gguf") && f.size)
-        .sort((a, b) => (a.size ?? Infinity) - (b.size ?? Infinity));
-      if (ggufs.length === 0) {
-        setDlMsg(`${repoId}: no GGUF files in repo — nothing to queue`);
+      const [ff, hw] = await Promise.all([api.marketFiles(repoId), api.hwInfo().catch(() => null)]);
+      const all = ff.filter((f) => f.rfilename.toLowerCase().endsWith(".gguf") && f.size);
+      // Auxiliary artifacts (mmproj vision towers, imatrix calibration dumps,
+      // embedding/clip towers) are real GGUFs but not the model — never queue
+      // them as the scored release's model.
+      const models = all.filter((f) => !AUX_GGUF.test(f.rfilename));
+      if (models.length === 0) {
+        setDlMsg(`${repoId}: no model GGUF in repo — only auxiliary files (mmproj/imatrix)`);
         return;
       }
-      const pick = ggufs[0].rfilename;
+      const bySizeAsc = [...models].sort((a, b) => (a.size ?? 0) - (b.size ?? 0));
+      // Best quant that fits: the largest model quant still under VRAM
+      // headroom (desktop reserve + a KV floor). Falls back to the smallest
+      // when even that overshoots.
+      const vramMb = hw?.vram_mb ?? 16000;
+      const capBytes = (vramMb - RESERVE_MB - KV_FLOOR_MB) * 1024 * 1024;
+      const pick = (bySizeAsc.filter((f) => (f.size ?? 0) <= capBytes).pop() ?? bySizeAsc[0]).rfilename;
       const parts = shardSet(pick, ff.map((f) => f.rfilename));
       if (parts.length > 1) {
         void dls.enqueueSequence(repoId, parts);

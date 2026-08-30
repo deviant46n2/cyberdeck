@@ -91,7 +91,7 @@ pub use console::{OpDone, OpLine, OpStarted, opencode_run, opencode_stop};
 pub use tui::{tui_resize, tui_spawn, tui_stop, tui_write};
 pub use downloads::{
     DownloadDone, DownloadErr, DownloadEvt, DownloadStarted, download_cancel, download_remove,
-    download_start,
+    download_start, download_states_json, DownloadState,
 };
 pub use experiment::experiment_start;
 pub use fit::{BrowseFitResult, FitRow, HwInfo, browse_fit_remote, fit, hw_info};

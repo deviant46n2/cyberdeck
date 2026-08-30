@@ -197,6 +197,17 @@ export const downloadCancel = (key: string) =>
 /** Cancel (if active) and drop the partial `.part` for a download. */
 export const downloadRemove = (key: string, rfilename: string) =>
   invoke<void>("download_remove", { key, rfilename });
+/** Authoritative backend state for a set of keys — used to reconcile the dl
+ * store after launch so a dropped event can't pin a row in `queued`. */
+export const downloadStates = (keys: string[]) =>
+  invoke<DownloadState[]>("download_states", { keys });
+
+export interface DownloadState {
+  key: string;
+  status: "queued" | "active" | "paused" | "done" | "error";
+  path: string | null;
+  error: string | null;
+}
 
 /** Index an explicit set of landed files into the vault (no full rescan). */
 export const indexDownloaded = (paths: string[]) =>

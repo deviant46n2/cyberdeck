@@ -22,6 +22,7 @@ const apiMock = vi.hoisted(() => ({
   downloadCancel: vi.fn<() => Promise<void>>(() => Promise.resolve()),
   downloadRemove: vi.fn<() => Promise<void>>(() => Promise.resolve()),
   indexDownloaded: vi.fn<() => Promise<number>>(() => Promise.resolve(0)),
+  downloadStates: vi.fn<(keys: string[]) => Promise<unknown[]>>(() => Promise.resolve([])),
 }));
 
 vi.mock("../api", () => apiMock);
@@ -55,6 +56,7 @@ describe("dl.ts download store", () => {
     apiMock.downloadCancel.mockImplementation(() => Promise.resolve());
     apiMock.downloadRemove.mockImplementation(() => Promise.resolve());
     apiMock.indexDownloaded.mockImplementation(() => Promise.resolve(0));
+    apiMock.downloadStates.mockImplementation(() => Promise.resolve([]));
   });
 
   it("enqueue adds a queued entry and launches it within MAX_ACTIVE", async () => {
@@ -173,6 +175,23 @@ describe("dl.ts download store", () => {
     dl.stop("r/a.gguf");
     expect(dl.getSnapshot().find((e) => e.key === "r/a.gguf")?.status).toBe("done");
     expect(apiMock.downloadCancel).not.toHaveBeenCalled();
+  });
+
+  it("launch-time reconcile converges a transfer whose dl-done was dropped", async () => {
+    // Backend finished while the dl-done event never reached the store — the
+    // row would sit in "queued" forever without the authoritative reconcile.
+    const dl = await freshStore();
+    apiMock.downloadStates.mockImplementation((keys: string[]) =>
+      Promise.resolve([
+        { key: keys[0], status: "done", path: "~/models/a.gguf", error: null },
+      ]),
+    );
+    dl.enqueue("r", "a.gguf");
+    await flush();
+    const row = dl.getSnapshot().find((e) => e.key === "r/a.gguf");
+    expect(row?.status).toBe("done");
+    expect(row?.path).toBe("~/models/a.gguf");
+    expect(apiMock.indexDownloaded).toHaveBeenCalledWith(["~/models/a.gguf"]);
   });
 
   it("an 'already downloading' launch error flips the entry active and pumps", async () => {

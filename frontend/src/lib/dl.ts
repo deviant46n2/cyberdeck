@@ -107,11 +107,91 @@ function fireDone(path: string) {
   doneCbs.forEach((cb) => cb(path));
 }
 
+/** Terminal lifecycle for a landed key: mark done, drop from the run queue,
+ * index (set-aware), fire the rescan callback. Shared by the `dl-done` event
+ * handler and the launch-time reconcile so both paths converge identically. */
+function finalizeDone(key: string, landed: string, repoId?: string, rfilename?: string) {
+  const e = entryFor(key);
+  if (e) {
+    e.status = "done";
+    e.done = e.total > 0 ? e.total : e.done;
+    if (landed) e.path = landed;
+  } else {
+    entries.set(key, {
+      repoId: repoId ?? "",
+      rfilename: rfilename ?? "",
+      key,
+      name: key,
+      total: 0,
+      done: 0,
+      speed: 0,
+      startedAt: Date.now(),
+      status: "done",
+      path: landed || undefined,
+    });
+    addToQueue(key);
+  }
+  const i = order.indexOf(key);
+  if (i >= 0) order.splice(i, 1);
+  void indexOnLanded(key, landed);
+  fireDone(landed);
+  bump();
+  pump();
+}
+
+/** Converge a key's store row to the backend's authoritative state. Events
+ * (`dl-start`/`dl-done`/…) remain the live channel; this is the safety net
+ * so a single dropped event can never leave a completed transfer pinned in
+ * `queued` while its `dl-done` never arrives. */
+function reconcile(key: string, st: api.DownloadState) {
+  const e = entryFor(key);
+  if (!e) return;
+  switch (st.status) {
+    case "done":
+      if (e.status !== "done") finalizeDone(key, st.path ?? "");
+      break;
+    case "paused":
+      e.status = "paused";
+      bump();
+      break;
+    case "error":
+      if (e.status !== "error") {
+        e.status = "error";
+        e.err = st.error ?? "failed";
+        bump();
+        pump();
+      }
+      break;
+    case "active":
+      if (e.status !== "active") {
+        e.status = "active";
+        bump();
+        pump();
+      }
+      break;
+    default:
+      // queued: the store row already matches — events confirm the launch.
+      break;
+  }
+}
+
 function launch(key: string) {
   const e = entries.get(key);
   if (!e) return;
   api
     .downloadStart(e.repoId, e.rfilename)
+    .then(async () => {
+      // Convergence net: read the backend's authoritative state right after
+      // start resolves so a dropped start/done event converges immediately.
+      // Best-effort — events remain the primary channel.
+      try {
+        const states = await api.downloadStates([key]);
+        const st = states.find((s) => s.key === key);
+        if (st) reconcile(key, st);
+      } catch {
+        /* reconcile is best-effort */
+      }
+    })
     .catch((err) => {
       const msg = String(err);
       const cur = entries.get(key);
@@ -395,34 +475,7 @@ export function init(): void {
   });
 
   listen<EvPayload>("dl-done", ({ payload }) => {
-    const e = entryFor(payload.key);
-    const landed = payload.path ?? "";
-    if (e) {
-      e.status = "done";
-      e.done = e.total > 0 ? e.total : e.done;
-      if (landed) e.path = landed;
-    } else {
-      entries.set(payload.key, {
-        repoId: payload.repo_id,
-        rfilename: payload.rfilename,
-        key: payload.key,
-        name: payload.key,
-        total: 0,
-        done: 0,
-        speed: 0,
-        startedAt: Date.now(),
-        status: "done",
-        path: landed || undefined,
-      });
-      addToQueue(payload.key);
-    }
-    const i = order.indexOf(payload.key);
-    if (i >= 0) order.splice(i, 1);
-    // Index the landed file(s) immediately (set-aware, see above).
-    void indexOnLanded(payload.key, landed);
-    fireDone(landed);
-    bump();
-    pump();
+    finalizeDone(payload.key, payload.path ?? "", payload.repo_id, payload.rfilename);
   });
 
   listen<EvPayload>("dl-error", ({ payload }) => {

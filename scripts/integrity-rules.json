@@ -177,6 +177,12 @@
         "lines": 344,
         "kind": "accepted",
         "reason": "Single CONSOLE view component (agent session logs + skill surface + engine telemetry + bench history + last rendered unit), restored as the working agent console after a compare-clone regression; mirroring the accepted Hud/Bringup/Canvas view entries. Split would scatter the one live-session contract between the sessions grid and its event listeners. AGENTS.md COHESION > ARBITRARY LINE COUNT"
+      },
+      {
+        "path": "frontend/src/lib/dl.test.ts",
+        "lines": 304,
+        "kind": "accepted",
+        "reason": "Unit tests for the download-state machine: the hoisted event-bus mock harness plus per-scenario tests for enqueue/pump/event/reconcile/discard/priority. The bus-capture + flush helpers ARE the harness every test shares; splitting the file would duplicate the event-bus wiring and the fresh-store-by-module-reset setup. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
       }
     ],
     "artifact-hygiene": [],

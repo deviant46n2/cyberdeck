@@ -39,6 +39,22 @@
     {
       "commit": "ccce3fd",
       "reason": "feat autotune headless + console enhancements + skills surfacing: autotune.rs headless loop is documented in feature-parity.md B3 / roadmap #5 (headless loadout autotune, sweep to objective, APPLY best) and the skills surface (deep-research skill; mcp-picker skill surface) is documented in feature-parity.md row #6 / §3 agent-skill surface. The Console.tsx churn in this commit was a compare-clone that broke the agent console (restored in a later debt pass); the documented surfaces above are the ones this commit intentionally added."
+    },
+    {
+      "commit": "760c676",
+      "reason": "fix(cli) downloads run misreport — bug-fix in the CLI door's event-drain loop (the manager sets status before emitting its terminal event, so the poll loop could exit first and report a successful download as 'no files landed'). No API/behavior surface changed; `deck downloads run` now reports the truth it always performed."
+    },
+    {
+      "commit": "caee076",
+      "reason": "feat(feeds) DL action — the discover→download handoff (feed row queues the scored quant into the shared DownloadManager, shard-set aware, via the MARKET path; CLI door `deck downloads run`) is documented in ROADMAP.md's O4 row + Partial LANDED entry. FEEDS is the UI door over the documented two-doors download-manager contract; precedent 856df6c hubs this same home for the feeds lane."
+    },
+    {
+      "commit": "5e25875",
+      "reason": "ui: full redesign — pure visual pass (styles.css token rewrite to the dark graphite palette + hardcoded-color/hue sweep across App/Hud/Bringup/Console/Vault/Canvas/PortMap/EngineBins/LoadoutEditor/TuiPane/TuiWindow). Deliberately preserved every class/token name; zero API/config/behavioral surface by design."
+    },
+    {
+      "commit": "23b55d0",
+      "reason": "refactor(store): pure mechanical split of the 1276-line store.rs into per-table submodules (store/bench|engine_bin|hw|profiles|releases|residents|settings|workloads.rs) re-exported through store/mod.rs so the flat store::* caller surface is unchanged; ROI mapping in ROADMAP.md's refactor table (marked RESOLVED). No behavior or user-visible surface."
     }
   ]
 }

@@ -149,6 +149,14 @@ fn download_start(
     deck_tauri::download_start(&app, &repo_id, &rfilename).map_err(|e| e.to_string())
 }
 
+/// Authoritative state for keys — the frontend reconciles the store against
+/// this after enqueueing so a dropped `dl-start`/`dl-done` event can't leave
+/// a row pinned in `queued` forever.
+#[tauri::command]
+fn download_states(keys: Vec<String>) -> Vec<deck_tauri::DownloadState> {
+    deck_tauri::download_states_json(&keys)
+}
+
 #[tauri::command]
 fn download_cancel(key: String) -> Result<(), String> {
     deck_tauri::download_cancel(&key).map_err(|e| e.to_string())
@@ -550,6 +558,7 @@ fn main() {
             browse_org,
             market_files,
             download_start,
+            download_states,
             download_cancel,
             download_remove,
             index_downloaded,

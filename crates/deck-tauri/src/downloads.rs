@@ -195,6 +195,39 @@ pub fn download_cancel(key: &str) -> anyhow::Result<()> {
     MANAGER.stop(key)
 }
 
+/// Authoritative per-row state for the frontend's launch-time reconcile.
+#[derive(Clone, Serialize)]
+pub struct DownloadState {
+    pub key: String,
+    pub status: String,
+    pub path: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Serialize-safe snapshot of specific queue rows for the Tauri door — the
+/// frontend converges the dl store against this after enqueueing, so a
+/// dropped `dl-*` event can never pin a row in `queued` while the backend
+/// completed. (The raw-tuple `download_states` stays for in-process doors.)
+pub fn download_states_json(keys: &[String]) -> Vec<DownloadState> {
+    MANAGER
+        .list()
+        .into_iter()
+        .filter(|j| keys.contains(&j.key))
+        .map(|j| DownloadState {
+            key: j.key.clone(),
+            status: match j.status {
+                DlStatus::Queued => "queued".into(),
+                DlStatus::Active => "active".into(),
+                DlStatus::Paused => "paused".into(),
+                DlStatus::Done => "done".into(),
+                DlStatus::Error => "error".into(),
+            },
+            path: j.path.map(|p| p.display().to_string()),
+            error: j.error.clone(),
+        })
+        .collect()
+}
+
 /// Snapshot of specific queue rows for in-process orchestrators (the
 /// experiment door waits on a shard set this way): (key, status, landed path,
 /// error message when failed).
