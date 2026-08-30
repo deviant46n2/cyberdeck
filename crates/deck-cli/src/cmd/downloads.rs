@@ -47,11 +47,7 @@ pub fn run(repo: &str, file: Option<&str>, quant: Option<&str>, no_index: bool) 
 
     let mut last_emit = std::collections::HashMap::new();
     let start = Instant::now();
-    while mgr
-        .list()
-        .iter()
-        .any(|j| matches!(j.status, DlStatus::Queued | DlStatus::Active | DlStatus::Paused))
-    {
+    let mut drain = |landed: &mut Vec<String>| {
         while let Ok(e) = rx.try_recv() {
             match e {
                 DlEvent::Started { key, .. } => eprintln!("→ {key}"),
@@ -78,11 +74,22 @@ pub fn run(repo: &str, file: Option<&str>, quant: Option<&str>, no_index: bool) 
                 }
             }
         }
+    };
+    while mgr
+        .list()
+        .iter()
+        .any(|j| matches!(j.status, DlStatus::Queued | DlStatus::Active | DlStatus::Paused))
+    {
+        drain(&mut landed);
         std::thread::sleep(Duration::from_millis(150));
         if start.elapsed().as_secs() > 600 {
             anyhow::bail!("downloads did not drain within 10 minutes");
         }
     }
+    // The manager sets a job's status before emitting its terminal event, so
+    // the poll loop above can exit with a Done/Error still in the channel —
+    // drain once more or a successful download reads as "no files landed".
+    drain(&mut landed);
 
     if landed.is_empty() && !set.is_empty() {
         // All members errored/cancelled — nothing landed, nothing to index.
