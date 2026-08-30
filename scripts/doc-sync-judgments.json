@@ -59,6 +59,14 @@
     {
       "commit": "098b133",
       "reason": "feat downloads queue: the shared DownloadManager — the one-truth queue authority with MAX_ACTIVE=2, .part park/resume contract, shard-set-aware indexing and the STAGE/QUEUED/ACTIVE/DONE/ERROR state machine — is documented in feature-parity.md as the DOWNLOADS tab contract and ROADMAP.md; both the Tauri downloads door and `deck downloads run` are the two-doors surface AGENTS.md 'One truth, two doors' makes a documented architectural invariant. dl.ts store + api.ts wrappers are the UI door over that contract; precedent caee076/856df6c hub the same home for the feeds lane."
+    },
+    {
+      "commit": "68f44be",
+      "reason": "fix(console) reap agent orphans on startup (re-split into console_reaper in 18c7dcc, same story): internal agent-lifecycle robustness — SIGKILL/OOM killed the app before the ExitRequested cleanup so spawned `opencode run` sessions reparented to init and kept streaming against the resident units (observed pinning the GPU at 99% for ~40 min after a dead app). The console is already documented in feature-parity.md §3 (agent-skill surface); this is crash-recovery machinery under that surface with no API/config/flag change and no user-visible behavior beyond not-leaking processes. Pure infra, doc-less by definition."
+    },
+    {
+      "commit": "18c7dcc",
+      "reason": "refactor(console): mechanical split of the orphan reaper out of console.rs into console_reaper.rs (marker constant + /proc chain-walk + its unit tests); the reaper never touches the SESSIONS registry so it is one clean lifecycle seam. No behavior or user-visible surface change; doc-less, consistent with the 68f44be judgment."
     }
   ]
 }
