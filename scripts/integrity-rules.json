@@ -18,38 +18,45 @@
     "line-limit": [
       {
         "path": "crates/deck-cli/src/cmd/bench.rs",
-        "lines": 322,
+        "lines": 323,
         "kind": "accepted",
         "reason": "The bench command door: record/list/matrix/compare plus the grid plumbing they share (GridOpts, build_cells, quant_files, parse_tasks) in one CLI door. Splitting would scatter one bench surface and duplicate the shared grid parsing. AGENTS.md 'File & Function Size Limits' and 'COHESION > ARBITRARY LINE COUNT'"
       },
       {
         "path": "crates/deck-cli/src/main.rs",
-        "lines": 327,
+        "lines": 620,
         "kind": "accepted",
-        "reason": "The CLI entry: clap subcommand/flag enums + dispatch only, exactly the dispatch-door shape AGENTS.md mandates for deck-cli; splitting the enums across modules for ~27 lines over the soft heuristic is coupling for nothing. Mirrors the src-tauri main.rs accepted entry. AGENTS.md 'File & Function Size Limits' and 'COHESION > ARBITRARY LINE COUNT'"
+        "reason": "The CLI entry: clap subcommand/flag enums + dispatch only, exactly the dispatch-door shape AGENTS.md mandates for deck-cli — eleven command enums (Commands/Downloads/Bench/Workloads/Workflow/Hardware/Settings/Feeds/Engine/Profile) plus a top-level match dispatch. The door has to name every subcommand somewhere; spreading the enums across modules for near-line poverty is coupling for nothing. Mirrors the src-tauri main.rs accepted entry. AGENTS.md 'File & Function Size Limits' and 'COHESION > ARBITRARY LINE COUNT'"
       },
       {
         "path": "crates/deck-core/src/gguf.rs",
-        "lines": 699,
+        "lines": 721,
+        "since": "2026-08-28T16:28:25-05:00",
         "reason": "pre-existing at tool introduction (2026-08-28); parked — revisit on next touching change"
       },
       {
         "path": "crates/deck-core/src/profile.rs",
-        "lines": 420,
+        "lines": 562,
         "kind": "accepted",
         "reason": "Profile type + derive/parse logic is one cohesive domain module within the deck-core layering. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
       },
       {
         "path": "crates/deck-core/src/safetensors.rs",
-        "lines": 301,
+        "lines": 303,
         "kind": "accepted",
         "reason": "safetensors model-dir reader — a single-purpose parser just over the soft heuristic. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
       },
       {
-        "path": "crates/deck-core/src/store.rs",
-        "lines": 347,
+        "path": "crates/deck-core/src/store/mod.rs",
+        "lines": 495,
         "kind": "accepted",
-        "reason": "Single-domain sqlite persistence module (model/profile/bench tables); splitting would scatter one store's invariants. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
+        "reason": "Connection plumbing (open/schema_version) + the models index + prune + engine-resident store + the test block of the split store module; every domain table (releases/hw/workloads/settings/bench/engine_bin/profiles/residents) lives in its own per-table submodule re-exported here per the ROADMAP refactor table, so the flat `store::*` caller surface is unchanged. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
+      },
+      {
+        "path": "crates/deck-core/src/store/bench.rs",
+        "lines": 332,
+        "kind": "accepted",
+        "reason": "Measurement persistence domain: MatrixRow/RoleBenchRow/BenchRow/Evaluation structs + matrix_runs/bench/evaluations tables + per_role_bench aggregation, carved whole out of the former store.rs megafile per the ROADMAP refactor table (file move only, logic unchanged, re-exported through store/mod.rs). One bench concern. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
       },
       {
         "path": "crates/deck-engines/src/health.rs",
@@ -71,31 +78,31 @@
       },
       {
         "path": "crates/deck-tauri/src/bringup.rs",
-        "lines": 404,
+        "lines": 556,
         "kind": "accepted",
         "reason": "Single shared derive→verify→apply pipeline guarded by the single-flight BRINGUP_RUNNING lock; splitting would move derive_and_verify across a module boundary and couple bringup to test. AGENTS.md 'File & Function Size Limits' and 'COHESION > ARBITRARY LINE COUNT'"
       },
       {
         "path": "crates/deck-tauri/src/test.rs",
-        "lines": 309,
+        "lines": 312,
         "kind": "accepted",
         "reason": "The loadout test harness: the single-flight TEST_CHILD slot (test_profile/test_stop both operate it) plus the boot-watch verdict policy. Reader threads were deduped into spawn_output_reader; the file is one lifecycle contract. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
       },
       {
         "path": "crates/deck-tauri/src/workflow.rs",
-        "lines": 343,
+        "lines": 395,
         "kind": "accepted",
         "reason": "The Tauri canvas door: the wf-* event-emitting background run registry (execution + persist + stop, single-flight per workflow) plus the seed/save/list/get/run/stop/history serialization surface. One registry+lifecycle contract in the style of downloads.rs/bringup.rs — splitting would separate the single-flight guard from the workers it supervises. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
       },
       {
         "path": "frontend/src/api.ts",
-        "lines": 305,
+        "lines": 546,
         "kind": "accepted",
         "reason": "The single invoke door — views never shell out directly, they go through api.ts → Tauri invoke (AGENTS.md 'UI never shells out directly'). Each function is a 1-5 line wrapper; splitting would scatter the adapter contract."
       },
       {
         "path": "frontend/src/lib/dl.ts",
-        "lines": 450,
+        "lines": 455,
         "kind": "accepted",
         "reason": "The download-manager store is the single source of truth for download state (AGENTS.md: dl.ts is the voter store, mutations go through its methods, never ad-hoc). shardSet was extracted to lib/shards.ts; the remaining queue/event/pump core is one cohesive unit by contract."
       },
@@ -107,19 +114,19 @@
       },
       {
         "path": "frontend/src/views/Bringup.tsx",
-        "lines": 308,
+        "lines": 323,
         "kind": "accepted",
         "reason": "Single bring-up drawer component (derive→verify→apply→bench phases + VRAM breakdown + tweak panel). The entire bring-up UX lives here; splitting would scatter the phase-dot flow and the apply/bench actions. AGENTS.md COHESION > ARBITRARY LINE COUNT"
       },
       {
         "path": "frontend/src/views/Market.tsx",
-        "lines": 528,
+        "lines": 529,
         "kind": "accepted",
         "reason": "Single-screen marketplace page component; the only cross-view helper (verdictClass) was already extracted to lib/ui.ts and shardSet to lib/shards.ts. Further split is prop-drilling churn. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
       },
       {
         "path": "frontend/src/views/Hud.tsx",
-        "lines": 361,
+        "lines": 495,
         "kind": "accepted",
         "reason": "Single HUD dashboard: model index, port map residency, fit verdicts, signals, bringup status card. The top-level fleet overview composites many sub-views; splitting would force prop-drilling across the main page. AGENTS.md COHESION > ARBITRARY LINE COUNT"
       },
@@ -131,19 +138,21 @@
       },
       {
         "path": "src-tauri/src/main.rs",
-        "lines": 338,
+        "lines": 603,
         "kind": "accepted",
         "reason": "Thin #[tauri::command] adapter — each function is 3-8 lines of scaffold over a deck_tauri call; the adapter-layer shape is mandated by AGENTS.md 'src-tauri — thin binary entry'"
       },
       {
         "path": "crates/deck-core/src/workflow.rs",
         "lines": 779,
-        "reason": "PARKED over the 600 hard limit (was 538 before Phase 8f): one cohesive domain module holding the Role/Binding/Node/Edge data model, the EdgePredicate branch language, the bounded-loop-aware DAG scheduler (plan/validate/has_cycle) and the seed templates. Splitting the predicate into edgepred.rs is the split-plan tripwire if a touching change lands; the graph model + scheduler stay a single unit. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
+        "since": "2026-08-30T01:32:22-05:00",
+        "reason": "PARKED over the 600 hard limit (was 538 before Phase 8f): one cohesive domain module holding the Role/Binding/Node/Edge data model, the EdgePredicate branch language, the bounded-loop-aware DAG scheduler (plan/validate/has_cycle) and the seed templates. Splitting the predicate into edgepred.rs is the split-plan tripwire, so revisit on next touching change; the graph model + scheduler stay a single unit. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
       },
       {
         "path": "crates/deck-engines/src/workflow.rs",
         "lines": 849,
-        "reason": "PARKED over the 600 hard limit (was 426 before Phase 8f): one cohesive executor module — NodeRunner trait + Stateless/Agentic runners, the branch-skip + bounded-loop DAG driver (run_pass), node_to_matrix_row, and their tests. Runners depend on the driver's NodeOutcome contract; splitting the test block out is the split-plan tripwire if a touching change lands. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
+        "since": "2026-08-30T01:32:22-05:00",
+        "reason": "PARKED over the 600 hard limit (was 426 before Phase 8f): one cohesive executor module — NodeRunner trait + Stateless/Agentic runners, the branch-skip + bounded-loop DAG driver (run_pass), node_to_matrix_row, and their tests. Runners depend on the driver's NodeOutcome contract; splitting the test block out is the split-plan tripwire, so revisit on next touching change. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
       },
       {
         "path": "crates/deck-core/src/relevance.rs",
