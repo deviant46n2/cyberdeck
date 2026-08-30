@@ -1,11 +1,40 @@
 //! Agentic console: concurrent `opencode run` sessions.
 
 use std::io::BufRead;
+use std::os::unix::process::CommandExt as _;
 
 use serde::{Serialize, Deserialize};
 use tauri::Emitter;
 
 use crate::console_reaper::AGENT_MARKER;
+
+/// `PR_SET_PDEATHSIG(SIGKILL)`: the agent dies the moment its parent (this app)
+/// dies, by ANY exit path — clean shutdown, crash, or OOM-kill. Combined with
+/// the own-process-group setup, an app death can no longer orphan an `opencode
+/// run` on the GPU (observed four times; the in-app reaper only runs at startup
+/// and `kill_all` only on a clean exit, so both missed crashes).
+const PR_SET_PDEATHSIG: libc::c_int = 1;
+const SIGKILL: libc::c_int = 9;
+
+/// Configure an own process group + parent-death SIGKILL on `cmd`. `stderr`
+/// inherits the app's, so a prctl failure is visible in the dev console even
+/// though pre_exec runs in the forked (not yet exec'd) child.
+fn pdeathsig(cmd: &mut std::process::Command) {
+    cmd.process_group(0);
+    unsafe {
+        cmd.pre_exec(|| {
+            if libc::prctl(PR_SET_PDEATHSIG, SIGKILL as libc::c_ulong) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            // Race guard: if the parent died between fork and prctl, no one is
+            // left to die-for — do it ourselves instead of orphaning.
+            if libc::getppid() == 1 {
+                libc::_exit(1);
+            }
+            Ok(())
+        });
+    }
+}
 
 /// Emitted when a session starts, so the UI can open a tab before output flows.
 #[derive(Clone, Serialize)]
@@ -113,6 +142,7 @@ pub fn opencode_run(
     cmd.arg(prompt);
     cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
+    pdeathsig(&mut cmd);
 
     let mut child = match cmd.spawn() {
         Ok(c) => {
@@ -161,15 +191,18 @@ pub fn opencode_run(
     let app_done = app.clone();
     let id_done = id.clone();
     std::thread::spawn(move || {
-        let code = {
+        // Take the child OUT from under the lock, then drop the guard: waiting
+        // on the session must not hold SESSIONS, or opencode_stop (and the
+        // next spawn) would block for the whole session runtime instead of
+        // being able to look up the pid and TERM→KILL it.
+        let child = {
             let mut g = SESSIONS.lock().unwrap();
-            match g
-                .get_mut(&id_done)
+            g.get_mut(&id_done)
                 .and_then(|s| s.child.lock().unwrap().take())
-            {
-                Some(mut c) => c.wait().map(|s| s.code().unwrap_or(-1)).unwrap_or(-1),
-                None => -1,
-            }
+        };
+        let code = match child {
+            Some(mut c) => c.wait().map(|s| s.code().unwrap_or(-1)).unwrap_or(-1),
+            None => -1,
         };
         eprintln!("[deck] opencode_run: session {id_done} exited code={code}");
         SESSIONS.lock().unwrap().remove(&id_done);
@@ -206,31 +239,35 @@ fn is_still_opencode(pid: u32) -> bool {
         .unwrap_or(false)
 }
 
-/// SIGTERM a session, then escalate to SIGKILL after a 5s grace window (on a
-/// background thread, so an interactive STOP stays snappy). `opencode run`
-/// ignores SIGTERM, so without the escalation a stopped-looking session keeps
-/// burning GPU on the resident until it is killed externally.
-pub fn term_then_kill(pid: u32) {
+/// SIGTERM a session's whole process group, then escalate to SIGKILL the group
+/// after a 5s grace window (on a background thread, so an interactive STOP
+/// stays snappy). `opencode run` ignores SIGTERM (and its npm/python children
+/// would survive a leader-only kill), so the escalation both kills hard AND
+/// follows the group.
+pub fn term_then_kill(pgid: u32) {
     let _ = std::process::Command::new("kill")
         .arg("-TERM")
-        .arg(pid.to_string())
+        .arg("--")
+        .arg(format!("-{pgid}"))
         .status();
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_secs(5));
-        if is_still_opencode(pid) {
+        if is_still_opencode(pgid) {
             let _ = std::process::Command::new("kill")
                 .arg("-KILL")
-                .arg(pid.to_string())
+                .arg("--")
+                .arg(format!("-{pgid}"))
                 .status();
         }
     });
 }
 
-/// Sweep every tracked session on app exit. Without this, a dying app leaves
-/// `opencode run` children orphaned (reparented to init) and they keep burning
-/// RAM indefinitely — an earlier OOM kill left two strays running for hours.
-/// This runs synchronously (bounded ~3s) so the exit path actually completes:
-/// a detached escalator thread would die with the process before its SIGKILL.
+/// Sweep every tracked session group on app exit. Without this, a dying app
+/// leaves `opencode run` children orphaned (reparented to init) and they keep
+/// burning RAM indefinitely — an earlier OOM kill left two strays running for
+/// hours. This runs synchronously (bounded ~3s) so the exit path actually
+/// completes; a detached escalator thread would die with the process before
+/// its SIGKILL. (Crash exits are covered by the pdeathsig on each run.)
 pub fn kill_all() {
     let sessions = {
         let mut g = SESSIONS.lock().unwrap();
@@ -243,7 +280,8 @@ pub fn kill_all() {
     for s in sessions.values() {
         let _ = std::process::Command::new("kill")
             .arg("-TERM")
-            .arg(s.pid.to_string())
+            .arg("--")
+            .arg(format!("-{}", s.pid))
             .status();
     }
     std::thread::sleep(std::time::Duration::from_secs(3));
@@ -251,7 +289,8 @@ pub fn kill_all() {
         if is_still_opencode(s.pid) {
             let _ = std::process::Command::new("kill")
                 .arg("-KILL")
-                .arg(s.pid.to_string())
+                .arg("--")
+                .arg(format!("-{}", s.pid))
                 .status();
         }
     }
