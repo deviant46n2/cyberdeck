@@ -439,8 +439,9 @@ landed stay listed as `DONE` for history.
 | 10 | Provider picker (Ollama/API) | §1 | generic OpenAI-compatible provider alongside llamacpp/FreeToken | S |
 | 11 | Skills surfacing | §1 | list `~/.config/opencode/skills` in agent panel | XS |
 | 12 | Scheduled bench/watch | §7 sliver | cron-style auto `deck bench` + SIGNALS on interval | S |
+| 13 | Canvas & workflows (Phase 8) | ROADMAP Phase 8 | role-bound node DAG: `deck workflow {save --seed|--file, list, run, history, bench}` + Tauri `workflow_*`/`wf-*` + CANVAS view — **DONE (2026-08-30):** 8c headless DAG (roles/bindings/nodes/edges, wfstore persistence), 8e per-role bench (`matrix_runs` via `role_id`, `deck workflow bench`), 8f branch+loop (`Edge.condition` predicate routing with skip-on-gate + bounded `loop_edge` back-edge policed by `max_iterations`/token budget; supervisor deferred). Graph JSON is the source of truth; full docs live in CANVAS.md | L |
 
-Effort: `XS` <30 min · `S` <1 day · `M` 2–4 days.
+Effort: `XS` <30 min · `S` <1 day · `M` 2–4 days · `L` 3–7 days.
 
 ### Online intelligence roadmap (NEW — horizons)
 

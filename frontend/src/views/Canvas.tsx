@@ -47,14 +47,16 @@ export default function Canvas() {
         if (!mounted) return;
         setStatus((m) => {
           const next = new Map(m);
-          next.set(e.payload.node_id, e.payload.ok ? "ok" : `ERR ${e.payload.error}`);
+          if (e.payload.skipped) next.set(e.payload.node_id, "skipped");
+          else next.set(e.payload.node_id, e.payload.ok ? "ok" : `ERR ${e.payload.error}`);
           return next;
         });
       });
       const listenDone = await listen<api.WfDoneEvt>("wf-done", (e) => {
         if (!mounted) return;
         setBusy(null);
-        setMsg(`${e.payload.status}: ${e.payload.nodes_ok} ok / ${e.payload.nodes_failed} failed · ${e.payload.tokens_used} tokens`);
+        const iters = e.payload.iterations ? ` · ${e.payload.iterations} loop iterations` : "";
+        setMsg(`${e.payload.status}: ${e.payload.nodes_ok} ok / ${e.payload.nodes_failed} failed · ${e.payload.tokens_used} tokens${iters}`);
         load();
       });
       un = [listenNode, listenDone];
@@ -193,14 +195,29 @@ export default function Canvas() {
                     const x2 = NODE_W / 2 + b.pos.x;
                     const y2 = NODE_H / 2 + b.pos.y;
                     const ct = (a.pos.y < b.pos.y ? 1 : -1) * 40;
+                    const edgeLabel = e.loop_edge ? "⟲ loop" : e.condition ? `? ${e.condition}` : null;
+                    const col = e.loop_edge ? "var(--magenta)" : e.condition ? "var(--warn, #d9a441)" : "var(--dim2)";
                     return (
-                      <path
-                        key={e.id}
-                        d={`M ${x1} ${y1} C ${x1} ${y1 + ct}, ${x2} ${y2 - ct}, ${x2} ${y2}`}
-                        fill="none"
-                        stroke="var(--dim2)"
-                        strokeWidth={1.5}
-                      />
+                      <g key={e.id}>
+                        <path
+                          d={`M ${x1} ${y1} C ${x1} ${y1 + ct}, ${x2} ${y2 - ct}, ${x2} ${y2}`}
+                          fill="none"
+                          stroke={col}
+                          strokeWidth={1.5}
+                        />
+                        {edgeLabel && (
+                          <text
+                            x={(x1 + x2) / 2}
+                            y={(y1 + y2) / 2 - 6}
+                            textAnchor="middle"
+                            fontSize={9}
+                            fill={col}
+                            fontFamily="var(--font-mono, monospace)"
+                          >
+                            {edgeLabel}
+                          </text>
+                        )}
+                      </g>
                     );
                   })}
                 </svg>
@@ -218,7 +235,7 @@ export default function Canvas() {
                         height: NODE_H,
                         padding: "8px 10px",
                         background: "var(--panel)",
-                        border: `1px solid ${st === "ok" ? "var(--pass)" : st ? "var(--oom)" : "var(--dim2)"}`,
+                        border: `1px solid ${st === "ok" ? "var(--pass)" : st === "skipped" ? "var(--warn, #d9a441)" : st ? "var(--oom)" : "var(--dim2)"}`,
                         borderRadius: 6,
                         boxShadow: "0 2px 10px rgba(0,0,0,0.35)",
                         display: "flex",
@@ -232,7 +249,7 @@ export default function Canvas() {
                       </div>
                       <span className="mono" style={{ fontSize: 9, color: "var(--text)" }}>{n.binding.model_ref}</span>
                       {n.binding.engine && <span className="mono dim" style={{ fontSize: 8 }}>@ {n.binding.engine}</span>}
-                      {st && <span className="mono" style={{ fontSize: 8, color: st === "ok" ? "var(--pass)" : "var(--oom)" }}>{st}</span>}
+                      {st && <span className="mono" style={{ fontSize: 8, color: st === "ok" ? "var(--pass)" : st === "skipped" ? "var(--warn, #d9a441)" : "var(--oom)" }}>{st}</span>}
                     </div>
                   );
                 })}

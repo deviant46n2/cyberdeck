@@ -489,7 +489,10 @@ Which pieces already exist: download `.part`+resume, metadata inspect, fit, deri
 
 * **8e — model matrix / per-role bench — LANDED (2026-08-30):** a workflow the user has run against several models accumulates per-role benchmark rows (`role_id` on `matrix_runs` feeds Phase 4 recommend) so the canvas can show "which model best at which node". `NodeRunner::run` now returns a `NodeOutcome` (text + tps/ttft/gen_tokens) so the executor threads generation metrics instead of discarding them; both doors record a `matrix_runs` row per engine-backed node on every run (`node_to_matrix_row`), and `store::per_role_bench` aggregates best/avg/last tok/s per role+model (NULL-tok_s agentic rows excluded). Surfaced as `deck workflow bench <id>` + Tauri `workflow_per_role_bench` + a PER-ROLE BENCH table in the CANVAS view (BEST badge per role).
 
-* **8f — branch / loop / supervisor:** conditional routing (`WorkflowEdge.condition`, reserved in the 8c model), a loop construct policed by `ExecSettings.max_iterations`, and a supervisor node that can spawn/retry sub-workflows.
+* **8f — branch / loop — LANDED (2026-08-30, branch + loop; supervisor deferred):** conditional routing and a bounded loop construct, both on serialized (never-executed) predicates.
+  - **Branch** (`WorkflowEdge.condition`): a safe, code-free predicate language (`EdgePredicate`: `contains:`, `not_contains:`, `starts_with:`, `is_empty`, `not_empty`, `always`) evaluated against a node's produced text. A downstream node is **skipped** when *every* incoming edge is a conditional that evaluated false — the "reviewer on condition" pattern. Unconditional fan-in is byte-for-byte backward compatible.
+  - **Loop**: an explicit `loop_edge` back-edge (never a raw cycle — the scheduler refuses those) whose (continue) predicate closes the body; re-execution is bounded by `ExecSettings.max_iterations` (0 = disabled, validated) and the token budget. The loop source's output is carried back into the loop target as an input, enabling "Dev ⟲ Reviewer until DONE". `ExecReport` reports `iterations`; skipped nodes carry `NodeResult.skipped`.
+  - **Supervisor** (spawn/retry sub-workflows) is deliberately deferred — out of this session's scope.**
 
 *Code:* `crates/deck-core/src/workflow.rs` (domain + DAG scheduler), `crates/deck-core/src/wfstore.rs` (persistence), `crates/deck-engines/src/workflow.rs` (executor + runners), `crates/deck-cli/src/cmd/workflow.rs` (CLI door); LANDED: `crates/deck-tauri/src/workflow.rs` + `src-tauri` `workflow_*` commands (background runs + `wf-*` events) — the Tauri twin of the CLI door, reachable from the 8d CANVAS view. `deck workflow save` seeds the `residents`-agnostic Coding Review template this UI renders.
 
@@ -497,11 +500,13 @@ Which pieces already exist: download `.part`+resume, metadata inspect, fit, deri
 
 *Frontend:* LANDED (8d shell): `frontend/src/views/Canvas.tsx` + route in `App.tsx`.
 
-*Tests:* (landed) DAG scheduler linear/fan-in-fan-out/cycle; wfstore role+workflow+run round-trips; executor fan-in payload, stop, runner errors; CLI smoke (seed→list→run→history); Tauri `execute_and_persist` headless two-node chain. Pending: 8d canvas drag persists.
+*Tests:* (landed) DAG scheduler linear/fan-in-fan-out/cycle; wfstore role+workflow+run round-trips; executor fan-in payload, stop, runner errors; CLI smoke (seed→list→run→history); Tauri `execute_and_persist` headless two-node chain. 8f adds: EdgePredicate parse/eval; scheduler accepts loop back-edges + rejects raw cycles; executor branch-skip + budget; bounded loop terminate-by-predicate / cap-by-max_iterations / stop-by-token-budget; backward-compat unconditional-never-skips. Pending: 8d canvas drag persists; supervisor (deferred).
 
 *Dep:* Phase 2 workloads + Phase 4 recommend (to pick per-node model) + Phase 7a `agent_tools`; HUD concurrent sessions are green.
 
 *DoD (8d target):* User runs `deck workflow save --seed`, opens `CANVAS`, drags the `coding-review` DAG nodes, `Run workflow` → `coder` emits → `reviewer` auto-spins on `qwen3.6 :1919` with its own `xterm` log, both visible and movable.
+
+*DoD (8f landed):* a workflow with `Edge.condition` + a `loop_edge` back-edge (e.g. `dev → rev ⟲ rev` with `not_contains:DONE`, capped by `max_iterations`) imports via `deck workflow save --file`, renders loop/condition markers in CANVAS, and runs end-to-end: the body re-executes while the predicate holds and stops on the terminate predicate, the token budget, or the iteration cap — with skipped downstream nodes reported but not benchmarked.
 
 ---
 
@@ -537,7 +542,7 @@ Which pieces already exist: download `.part`+resume, metadata inspect, fit, deri
 | O4 HUD what changed lane | M | S | Low | P1 | FEEDS view + recency gate landed; DISK/fit-at-ctx enrichment open |
 | Phase 8 Canvas — draggable TUIs (8a) | M | S | Low | P1 DONE | HUD multi-agent, zen+local side-by-side, embedded `opencode attach` TUIs |
 | Phase 8 Canvas — workflow foundation (8c) | M | M | Med | P1 DONE | Role/Model/DAG scheduler + headless executor + `deck workflow` CLI; Phase 0 schema gate |
-| Phase 8 Canvas — UI shell (8d), matrix (8e), branch/loop (8f) | M | M–L | Med | P2 | 8d+8e DONE (canvas + per-role bench); 8f branch/loop remain |
+| Phase 8 Canvas — UI shell (8d), matrix (8e), branch/loop (8f) | M | M–L | Med | P2 | 8d+8e DONE (canvas + per-role bench); 8f branch+loop DONE, supervisor remains |
 | Phase 7c agent EXECUTE (consented) | M | M | High | P2 | Needs experiment + audit solid |
 | Phase 9 daemon/autonomous/self-heal | M | M–L | High | P3 | Long-term; do not start early |
 

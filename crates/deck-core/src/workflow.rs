@@ -153,7 +153,67 @@ impl WorkflowNode {
     }
 }
 
-/// A directed connection `from → to`. The `condition` (V1.5) is reserved.
+/// A serialized predicate string evaluated against a node's output text for
+/// conditional routing (Phase 8f). Devoid of code: it is parsed into an
+/// [`EdgePredicate`], never executed. The string form is the persisted shape on
+/// `WorkflowEdge.condition`.
+///
+/// V1.5 supported forms (case-sensitive on the substring):
+///   - `"always"` / empty / missing → always route.
+///   - `"contains:<sub>"`        → route when output contains `<sub>`.
+///   - `"not_contains:<sub>"`    → route when output does NOT contain `<sub>`.
+///   - `"starts_with:<sub>"`     → route when output starts with `<sub>`.
+///   - `"is_empty"`              → route when output is blank (trimmed).
+///   - `"not_empty"`             → route when output has non-blank content.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EdgePredicate {
+    Always,
+    Contains(String),
+    NotContains(String),
+    StartsWith(String),
+    IsEmpty,
+    NotEmpty,
+}
+
+impl EdgePredicate {
+    /// Parse a serialized predicate string. Returns `Always` for missing/empty
+    /// input (unconditional edge). Errors on an unrecognized operator.
+    pub fn parse(raw: &str) -> Result<EdgePredicate, String> {
+        let s = raw.trim();
+        if s.is_empty() || s.eq_ignore_ascii_case("always") {
+            return Ok(EdgePredicate::Always);
+        }
+        let (op, arg) = match s.split_once(':') {
+            Some((o, a)) => (o, Some(a)),
+            None => (s, None),
+        };
+        match (op, arg) {
+            ("contains", Some(a)) => Ok(EdgePredicate::Contains(a.to_string())),
+            ("not_contains", Some(a)) => Ok(EdgePredicate::NotContains(a.to_string())),
+            ("starts_with", Some(a)) => Ok(EdgePredicate::StartsWith(a.to_string())),
+            ("is_empty", None) => Ok(EdgePredicate::IsEmpty),
+            ("not_empty", None) => Ok(EdgePredicate::NotEmpty),
+            _ => Err(format!("unknown edge predicate '{raw}'")),
+        }
+    }
+
+    /// Evaluate the predicate against a node's produced output text.
+    pub fn eval(&self, text: &str) -> bool {
+        match self {
+            EdgePredicate::Always => true,
+            EdgePredicate::Contains(sub) => text.contains(sub),
+            EdgePredicate::NotContains(sub) => !text.contains(sub),
+            EdgePredicate::StartsWith(sub) => text.starts_with(sub),
+            EdgePredicate::IsEmpty => text.trim().is_empty(),
+            EdgePredicate::NotEmpty => !text.trim().is_empty(),
+        }
+    }
+}
+
+/// A directed connection `from → to`. The `condition` (Phase 8f) is a serialized
+/// predicate that routes only when the producer's output satisfies it; the
+/// `loop_edge` flag marks a bounded back-edge that closes a loop body (never a
+/// raw cycle — the scheduler validates this).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WorkflowEdge {
     pub id: String,
@@ -164,9 +224,15 @@ pub struct WorkflowEdge {
     pub from_port: String,
     #[serde(default)]
     pub to_port: String,
-    /// Reserved: serialized predicate for conditional routing (V1.5).
+    /// Serialized predicate for conditional routing (Phase 8f). `None`/empty =
+    /// unconditional (backward compatible with V1 documents).
     #[serde(default)]
     pub condition: Option<String>,
+    /// When true, this edge is a bounded back-edge closing a loop body (Phase
+    /// 8f). The scheduler only permits back-edges to close cycles, never a raw
+    /// cyclic graph, and `max_iterations` (0 = none) bounds the body.
+    #[serde(default)]
+    pub loop_edge: bool,
 }
 
 // ---------------------------------------------------------------- Workflow
@@ -225,39 +291,87 @@ pub struct Workflow {
 fn default_version() -> u32 { 1 }
 
 impl Workflow {
-    /// `true` if the graph contains a cycle (V1 refuses cycles entirely).
+    /// `true` if the graph contains a cycle **not** closed by a loop back-edge.
+    /// Loop back-edges (`edge.loop_edge`) are the only permitted way to close a
+    /// cycle (Phase 8f); this predicate reports a genuine, invalid raw cycle.
     pub fn has_cycle(&self) -> bool {
-        let mut indeg: HashMap<String, usize> = HashMap::new();
-        for n in &self.nodes {
-            indeg.entry(n.id.clone()).or_insert(0);
+        has_unpermitted_cycle(self)
+    }
+
+    /// The single loop back-edge (Phase 8f), if any. V1.5 supports exactly one
+    /// bounded loop; `validate` rejects workflows with more.
+    pub fn loop_edges(&self) -> impl Iterator<Item = &WorkflowEdge> {
+        self.edges.iter().filter(|e| e.loop_edge)
+    }
+
+    /// Structural validation for Phase 8f: no raw cycles, loop back-edges are
+    /// well-formed (≤ 1, must close a cycle, need `max_iterations >= 1`), and
+    /// every edge's condition parses. Returns the first problem found.
+    pub fn validate(&self) -> Result<(), String> {
+        if has_unpermitted_cycle(self) {
+            return Err("workflow has a raw cycle (only a loop back-edge may close a cycle)".into());
         }
-        let mut adj: HashMap<String, Vec<String>> = HashMap::new();
+        let loop_edges: Vec<&WorkflowEdge> = self.edges.iter().filter(|e| e.loop_edge).collect();
+        if loop_edges.len() > 1 {
+            return Err("V1.5 supports at most one loop back-edge".into());
+        }
+        if let Some(le) = loop_edges.first() {
+            if self.exec_settings.max_iterations == 0 {
+                return Err("loop back-edge present but exec_settings.max_iterations is 0 (loops disabled)".into());
+            }
+            // Loop edge must not also be self-flagged uselessly, and must connect real nodes.
+            if !self.nodes.iter().any(|n| n.id == le.from)
+                || !self.nodes.iter().any(|n| n.id == le.to)
+            {
+                return Err(format!("loop edge '{}' references unknown node", le.id));
+            }
+        }
         for e in &self.edges {
-            adj.entry(e.from.clone()).or_default().push(e.to.clone());
-            *indeg.entry(e.to.clone()).or_insert(0) += 1;
+            if let Some(c) = &e.condition {
+                EdgePredicate::parse(c)
+                    .map_err(|msg| format!("edge '{}': {msg}", e.id))?;
+            }
         }
-        // Kahn's algorithm — if we can't empty the queue, a cycle exists.
-        let mut q: Vec<String> = indeg
-            .iter()
-            .filter(|(_, d)| **d == 0)
-            .map(|(k, _)| k.clone())
-            .collect();
-        let mut seen = 0usize;
-        while let Some(u) = q.pop() {
-            seen += 1;
-            if let Some(next) = adj.get(&u) {
-                for v in next {
-                    if let Some(d) = indeg.get_mut(v) {
-                        *d -= 1;
-                        if *d == 0 {
-                            q.push(v.clone());
-                        }
+        Ok(())
+    }
+}
+
+/// Pure cycle check over the graph with loop back-edges removed. Returns `true`
+/// when a cycle that is NOT closed by a loop back-edge exists (an invalid graph).
+fn has_unpermitted_cycle(wf: &Workflow) -> bool {
+    let mut indeg: HashMap<String, usize> = HashMap::new();
+    for n in &wf.nodes {
+        indeg.entry(n.id.clone()).or_insert(0);
+    }
+    let mut adj: HashMap<String, Vec<String>> = HashMap::new();
+    for e in &wf.edges {
+        if e.loop_edge {
+            continue; // loop back-edges never count toward a raw cycle
+        }
+        adj.entry(e.from.clone()).or_default().push(e.to.clone());
+        *indeg.entry(e.to.clone()).or_insert(0) += 1;
+    }
+    // Kahn's algorithm — if we can't empty the queue, a cycle exists.
+    let mut q: Vec<String> = indeg
+        .iter()
+        .filter(|(_, d)| **d == 0)
+        .map(|(k, _)| k.clone())
+        .collect();
+    let mut seen = 0usize;
+    while let Some(u) = q.pop() {
+        seen += 1;
+        if let Some(next) = adj.get(&u) {
+            for v in next {
+                if let Some(d) = indeg.get_mut(v) {
+                    *d -= 1;
+                    if *d == 0 {
+                        q.push(v.clone());
                     }
                 }
             }
         }
-        seen != self.nodes.len()
     }
+    seen != wf.nodes.len()
 }
 
 // ---------------------------------------------------------------- Messages
@@ -324,20 +438,32 @@ pub struct DryPlan {
     pub successors: HashMap<String, Vec<String>>,
     /// Node ids that are unreachable (no path from any source) — safe to warn.
     pub unreachable: Vec<String>,
+    /// The single bounded loop back-edge (Phase 8f), if any. The executor re-runs
+    /// the body while its (continue) predicate holds, bounded by `max_iterations`
+    /// and the token budget.
+    pub loop_back_edge: Option<WorkflowEdge>,
 }
 
-/// Pure topological plan for a workflow. Refuses cycles.
+/// Pure topological plan for a workflow. Refuses raw cycles; loop back-edges
+/// are excluded from the body topology (so the graph's forward skeleton is a
+/// DAG) and reported to the executor separately.
 ///
 /// Fan-in semantics (V1): a node is "ready" only when **all** its predecessors
 /// have produced output (conjunction). A fan-out simply copies the source's
 /// message to every downstream edge. Waves are the maximal sets of nodes whose
 /// inputs are all satisfied and independent, greedy-packed subject to no cross
 /// dependency within a wave.
+///
+/// Phase 8f: `plan` is branch-aware in that conditional edges still count as
+/// predecessors for wave ordering (the topology is static); deciding whether a
+/// downstream node actually runs/skips happens at execution time against the
+/// produced text. The returned `loop_back_edge` names the bounded loop (if any).
 pub fn plan(wf: &Workflow) -> Result<DryPlan, String> {
-    if wf.has_cycle() {
-        return Err("workflow has a cycle; V1 only supports DAGs".into());
+    if has_unpermitted_cycle(wf) {
+        return Err("workflow has a raw cycle; only a loop back-edge may close a cycle".into());
     }
-    // adjacency
+    let loop_back_edge = wf.loop_edges().next().cloned();
+    // adjacency over the forward skeleton (loop back-edges excluded)
     let mut pred: HashMap<String, Vec<String>> = HashMap::new();
     let mut succ: HashMap<String, Vec<String>> = HashMap::new();
     for n in &wf.nodes {
@@ -345,6 +471,9 @@ pub fn plan(wf: &Workflow) -> Result<DryPlan, String> {
         succ.entry(n.id.clone()).or_default();
     }
     for e in &wf.edges {
+        if e.loop_edge {
+            continue;
+        }
         succ.entry(e.from.clone()).or_default().push(e.to.clone());
         pred.entry(e.to.clone()).or_default().push(e.from.clone());
     }
@@ -383,7 +512,7 @@ pub fn plan(wf: &Workflow) -> Result<DryPlan, String> {
     }
 
     // any node not visited is unreachable (isolated or sink that never got a
-    // path cleared — in a DAG after Kahn this means it was never enqueued)
+    // path cleared — after Kahn this means it was never enqueued)
     let unreachable: Vec<String> = wf
         .nodes
         .iter()
@@ -396,6 +525,7 @@ pub fn plan(wf: &Workflow) -> Result<DryPlan, String> {
         predecessors: pred,
         successors: succ,
         unreachable,
+        loop_back_edge,
     })
 }
 
@@ -456,7 +586,7 @@ pub fn seed_coding_review() -> Workflow {
                 exec: NodeExec::default(),
             },
         ],
-        edges: vec![WorkflowEdge { id: "e1".into(), from: "n1".into(), to: "n2".into(), from_port: "output".into(), to_port: "input".into(), condition: None }],
+        edges: vec![WorkflowEdge { id: "e1".into(), from: "n1".into(), to: "n2".into(), from_port: "output".into(), to_port: "input".into(), condition: None, loop_edge: false }],
         exec_settings: ExecSettings::default(),
         template: true,
     }
@@ -533,6 +663,117 @@ mod tests {
         ModelBinding { role_id: role.into(), model_ref: "x@Q4".into(), engine: None, overrides_json: String::new(), active: true }
     }
     fn e(id: &str, from: &str, to: &str) -> WorkflowEdge {
-        WorkflowEdge { id: id.into(), from: from.into(), to: to.into(), from_port: "output".into(), to_port: "input".into(), condition: None }
+        WorkflowEdge { id: id.into(), from: from.into(), to: to.into(), from_port: "output".into(), to_port: "input".into(), condition: None, loop_edge: false }
+    }
+
+    #[test]
+    fn predicate_parse_roundtrip() {
+        assert_eq!(EdgePredicate::parse("").unwrap(), EdgePredicate::Always);
+        assert_eq!(EdgePredicate::parse("always").unwrap(), EdgePredicate::Always);
+        assert_eq!(
+            EdgePredicate::parse("contains:patch").unwrap(),
+            EdgePredicate::Contains("patch".into())
+        );
+        assert_eq!(
+            EdgePredicate::parse("not_contains:ERR").unwrap(),
+            EdgePredicate::NotContains("ERR".into())
+        );
+        assert_eq!(
+            EdgePredicate::parse("starts_with:OK").unwrap(),
+            EdgePredicate::StartsWith("OK".into())
+        );
+        assert_eq!(EdgePredicate::parse("is_empty").unwrap(), EdgePredicate::IsEmpty);
+        assert_eq!(EdgePredicate::parse("not_empty").unwrap(), EdgePredicate::NotEmpty);
+        assert!(EdgePredicate::parse("bogus:x").is_err());
+    }
+
+    #[test]
+    fn predicate_eval_routes_on_output_text() {
+        assert!(EdgePredicate::Always.eval("anything"));
+        assert!(EdgePredicate::Contains("patch".into()).eval("here is a patch"));
+        assert!(!EdgePredicate::Contains("patch".into()).eval("no diff here"));
+        assert!(EdgePredicate::NotContains("ERR".into()).eval("all good"));
+        assert!(!EdgePredicate::NotContains("ERR".into()).eval("ERR: failed"));
+        assert!(EdgePredicate::StartsWith("OK".into()).eval("OK done"));
+        assert!(!EdgePredicate::StartsWith("OK".into()).eval("no"));
+        assert!(EdgePredicate::IsEmpty.eval("   \n "));
+        assert!(!EdgePredicate::IsEmpty.eval("text"));
+        assert!(EdgePredicate::NotEmpty.eval("text"));
+        assert!(!EdgePredicate::NotEmpty.eval(""));
+    }
+
+    #[test]
+    fn loop_back_edge_allows_bounded_cycle() {
+        // n1 -> n2 plus a loop back-edge n2 -> n1 -> forms a closed body.
+        // Because the back-edge is a loop_edge, this is a PERMITTED cycle, not a
+        // raw one — plan() must accept it and expose it, while has_cycle is false.
+        let wf = Workflow {
+            id: "review-loop".into(),
+            name: "Review Loop".into(),
+            description: String::new(),
+            version: 1,
+            nodes: vec![
+                WorkflowNode { id: "dev".into(), role_id: "p".into(), binding: binding("dev"), kind: NodeKind::Stateless, pos: NodePos::default(), exec: NodeExec::default() },
+                WorkflowNode { id: "rev".into(), role_id: "p".into(), binding: binding("rev"), kind: NodeKind::Stateless, pos: NodePos::default(), exec: NodeExec::default() },
+            ],
+            edges: vec![
+                e_with("e1", "dev", "rev", None, false),
+                e_with("e2", "rev", "dev", Some("not_contains:DONE".into()), true),
+            ],
+            exec_settings: ExecSettings { max_iterations: 4, ..Default::default() },
+            template: false,
+        };
+        assert!(!wf.has_cycle(), "loop back-edge must not report a raw cycle");
+        assert_eq!(wf.validate(), Ok(()));
+        let p = plan(&wf).expect("plan with a loop back-edge accepted");
+        // forward skeleton is a DAG: dev -> rev
+        assert_eq!(p.waves[0], vec!["dev"]);
+        assert_eq!(p.waves[1], vec!["rev"]);
+        let back = p.loop_back_edge.as_ref().expect("loop edge surfaced");
+        assert_eq!(back.from, "rev");
+        assert_eq!(back.to, "dev");
+    }
+
+    #[test]
+    fn raw_cycle_without_loop_edge_rejected() {
+        let wf = Workflow {
+            id: "bad".into(),
+            name: "Bad".into(),
+            description: String::new(),
+            version: 1,
+            nodes: vec![
+                WorkflowNode { id: "a".into(), role_id: "p".into(), binding: binding("a"), kind: NodeKind::Stateless, pos: NodePos::default(), exec: NodeExec::default() },
+                WorkflowNode { id: "b".into(), role_id: "p".into(), binding: binding("b"), kind: NodeKind::Stateless, pos: NodePos::default(), exec: NodeExec::default() },
+            ],
+            edges: vec![e("e1", "a", "b"), e("e2", "b", "a")],
+            exec_settings: ExecSettings::default(),
+            template: false,
+        };
+        assert!(wf.has_cycle());
+        assert!(plan(&wf).is_err());
+        assert!(wf.validate().is_err());
+    }
+
+    #[test]
+    fn loop_edge_requires_max_iterations() {
+        let wf = Workflow {
+            id: "loop-nobudget".into(),
+            name: "Loop no budget".into(),
+            description: String::new(),
+            version: 1,
+            nodes: vec![
+                WorkflowNode { id: "a".into(), role_id: "p".into(), binding: binding("a"), kind: NodeKind::Stateless, pos: NodePos::default(), exec: NodeExec::default() },
+                WorkflowNode { id: "b".into(), role_id: "p".into(), binding: binding("b"), kind: NodeKind::Stateless, pos: NodePos::default(), exec: NodeExec::default() },
+            ],
+            edges: vec![e("e1", "a", "b"), e_with("e2", "b", "a", None, true)],
+            exec_settings: ExecSettings::default(), // max_iterations == 0
+            template: false,
+        };
+        assert!(!wf.has_cycle());
+        assert!(wf.validate().is_err(), "loop with max_iterations 0 must be rejected");
+    }
+
+    fn e_with(id: &str, from: &str, to: &str, condition: Option<String>, loop_edge: bool) -> WorkflowEdge {
+        WorkflowEdge { id: id.into(), from: from.into(), to: to.into(), from_port: "output".into(), to_port: "input".into(), condition, loop_edge }
     }
 }

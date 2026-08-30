@@ -530,9 +530,10 @@ struct Message {
 - **Cancellation** is **downward propagation**: `workflow stop` → cancel the
   in-flight wavefront (SIGTERM opencode sessions via `opencode_stop`, kill
   stateless probes) → mark remaining node runs `cancelled` → run `stopped`.
-- **Runaway safeguards** (loops are V2, but the budget plumbing ships in V1 so
-  loops land on top of it): `exec_settings` carries `max_iterations`,
-  `budget_tokens` (sum of consumed tokens across node runs), `budget_wall_s`,
+- **Runaway safeguards** (landed with the 8f bounded loop): `exec_settings`
+  carries `max_iterations` (0 = loops disabled; a `loop_edge` requires ≥ 1),
+  `budget_tokens` (sum of consumed tokens across node runs, enforced across
+  body passes — exceeding it stops the run as `Stopped`), `budget_wall_s`,
   and a global per-run token counter. Manual stop is always available (top bar +
   CLI `workflow stop`).
 
@@ -548,21 +549,12 @@ struct Message {
   metrics + linked `matrix_run_id` give a full postmortem. Replay = re-run with
   the same snapshot bindings.
 
-### 6.7 Loops & conditional branches (14–15) — extension points, not V1
+### 6.7 Loops & conditional branches (14–15) — LANDED (8f: branch + bounded loop)
 
-- **Loops** are represented as an explicit `Loop` construct (a subgraph with a
-  back-edge + a termination predicate on budget), NOT as a cycle in the raw
-  node graph. The scheduler refuses raw cycles in V1 (error), and V1.5+ adds a
-  `loop` node type whose body is a nested subgraph — the budget guardrails from
-  §6.5 already police it.
-- **Conditionals** are an `Edge.condition` (e.g. `output.contains("patch")`) or
-  a `Router` node. V1 ships unconditional edges; the Edge type already has a
-  `condition: Option<fn-ish serialized predicate>` slot so adding it later
-  doesn't change the edge shape (backward compatible).
-- The **reviewer-on-condition** example (the user's motivating case) is a V1.5
-  feature: `Primary-Developer →condition → Architecture-Reviewer`. The V1
-  version (unconditional linear `Dev → Reviewer`) already validates the whole
-  Role/Model/measurement stack.
+- **Loops** are represented as an explicit `Loop` construct — a **bounded back-edge** (`WorkflowEdge.loop_edge`, 2026-08-30) whose (continue) predicate closes the body, NOT as a cycle in the raw node graph. The scheduler refuses raw cycles (error) and only `loop_edge` backs a cycle; the body re-executes while the predicate holds, bounded by `ExecSettings.max_iterations` (0 = disabled) and the token budget. The loop source's output is carried back into the loop target as an input (the "Dev ⟲ Reviewer" fix-loop). Multi-loop subgraphs and a nested subgraph `loop` node remain a future extension (V2).
+- **Conditionals** are an `Edge.condition` — a safe, code-free serialized predicate (`EdgePredicate`: `contains:`, `not_contains:`, `starts_with:`, `is_empty`, `not_empty` — never executed, only parsed+eval'd). A downstream node is **skipped** when every incoming edge is a conditional that evaluated false. `NodeResult.skipped` surfaces it; skipped nodes are never benchmarked (8e matrix rows skip them). Unconditional edges are byte-for-byte backward compatible.
+- The **reviewer-on-condition** example (the user's motivating case) now works: `Primary-Developer →condition → Architecture-Reviewer`, plus the looped `Dev → Reviewer ⟲` review-until-DONE pattern.
+- **Supervisor** (spawn/retry sub-workflows, reuses Role nesting) is still V1.5+/V2 — explicitly deferred out of the 8f branch+loop landing.
 
 ---
 
@@ -736,18 +728,13 @@ domain → executor → UI.
   `role_id` aggregation, `recommend` role filter, CANVAS compare panel.
 - *Classification:* **Feature-level** (toward Foundational for the intelligence goal).
 
-**8f — Branch/Supervisor/Workflow-polish (P2, ~3–5 days) — NEW (V1.5).**
-- *Purpose:* conditional edges (Router), loop node type with budget guards, a
-  supervisor/worker template (reuses Role nesting). Includes UX polish:
-  undo/redo, minimap, multi-select, notes.
+**8f — Branch/Loop (P2, V1.5) — LANDED (2026-08-30): branch + bounded loop; supervisor polish deferred.**
+- *Purpose:* conditional edges (`Edge.condition` → `EdgePredicate`) with skip-on-gate semantics, a bounded `loop_edge` back-edge construct with budget guards (the "Dev ⟲ Reviewer until DONE" pattern). Supervisor/worker (Role nesting) deferral is explicit.
 - *Depends on:* 8d (canvas), 8c (scheduler extension).
-- *Enables:* arbitrary graphs (the user's `Dev → Reviewer ⟲` loop), supervisor
-  architectures.
-- *Touches:* `deck-core::workflow` (loop construct, Edge.condition, Router),
-  `deck-engines::workflow` (loop + branch exec), CANVAS.
-- *Classification:* **Feature-level / polish.**
-- *DoD:* the "Coding Review" loop template runs with a termination predicate and
-  a token budget enforced.
+- *Enables:* condition-gated workflows and the user's `Dev → Reviewer ⟲` loop, both bounded by `max_iterations` + token budget.
+- *Touches:* `deck-core::workflow` (EdgePredicate, loop_edge, validate, plan), `deck-engines::workflow` (branch skip + bounded loop exec + budget), `deck-cli`/`deck-tauri` doors (validate + skipped/iterations surfacing), CANVAS (edge labels + skipped node state).
+- *Classification:* **Feature-level.**
+- *DoD:* the "Coding Review" loop workflow runs with a termination predicate and a token budget enforced — importable via `deck workflow save --file`, renders loop/condition markers in CANVAS, and the executor stops on terminate-predicate / `max_iterations` / budget.
 
 ### 9.2 Modifications to existing items
 

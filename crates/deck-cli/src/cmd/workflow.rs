@@ -71,6 +71,15 @@ pub fn list(json: bool) -> Result<()> {
                 n.binding.model_ref
             );
         }
+        for e in &w.edges {
+            let cond = match &e.condition {
+                Some(c) if c.trim().is_empty() => String::new(),
+                Some(c) => format!(" ?{c}"),
+                None => String::new(),
+            };
+            let lp = if e.loop_edge { " [loop]" } else { "" };
+            println!("      {} -> {}{}{}", e.from, e.to, cond, lp);
+        }
     }
     Ok(())
 }
@@ -80,6 +89,9 @@ pub fn run(id: &str, runner: &str, dir: Option<&Path>, model: Option<&str>) -> R
     let conn = deck_core::store::open(&db)?;
     let wf = deck_core::wfstore::get_workflow(&conn, id)?
         .ok_or_else(|| anyhow::anyhow!("workflow '{id}' not found"))?;
+    // Structural validation (Phase 8f): raw cycles refused, loop rules + edge
+    // predicates checked before any node runs.
+    wf.validate().map_err(anyhow::Error::msg)?;
 
     // Persist a run row so `history` captures this attempt.
     let run_id = format!("wr-{}", now());
@@ -150,7 +162,17 @@ pub fn run(id: &str, runner: &str, dir: Option<&Path>, model: Option<&str>) -> R
 
     // Surface results.
     for nr in &report.node_results {
-        let mark = if nr.ok { "ok" } else { "ERR" };
+        let mark = if nr.skipped {
+            "skip"
+        } else if nr.ok {
+            "ok"
+        } else {
+            "ERR"
+        };
+        if nr.skipped {
+            println!("[{}] {:<10} skipped (gated out)", mark, nr.node_id);
+            continue;
+        }
         println!(
             "[{}] {:<10} {:.0}ms  {}",
             mark, nr.node_id, nr.wall_ms, nr.error
@@ -161,12 +183,17 @@ pub fn run(id: &str, runner: &str, dir: Option<&Path>, model: Option<&str>) -> R
         }
     }
     println!(
-        "workflow '{}' run {}: {:?} in {:.1}s, {} tokens",
+        "workflow '{}' run {}: {:?} in {:.1}s, {} tokens ({})",
         wf.id,
         run_id,
         status,
         report.total_wall_ms as f64 / 1000.0,
-        report.tokens_used
+        report.tokens_used,
+        if report.iterations > 1 {
+            format!("{} loop iterations", report.iterations)
+        } else {
+            "no loop".into()
+        }
     );
     Ok(())
 }

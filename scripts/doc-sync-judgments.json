@@ -23,6 +23,14 @@
     {
       "commit": "21994de",
       "reason": "feat(core) GQA-aware KV cache fit + unified tok/s measurement — internal measurement-path consolidation; the single-measurement contract is documented in feature-parity.md #0 (bench record uses measure_generation_tps) and the bringup drawer"
+    },
+    {
+      "commit": "856df6c",
+      "reason": "feat O4 DISK/fit-at-ctx enrichment in FEEDS lane: adds disk + fit-at-ctx columns to the feeds rank surface and strengthens relevance params-vs-quant fit — the online-intelligence feed/fit/relevance contract is documented in feature-parity.md 'Online Intelligence Architecture' (score weights, feeds lane, hardware-ground-truth fit) and ROADMAP O4; the pure-helper extraction (lib/feeds.ts) has no user-facing surface"
+    },
+    {
+      "commit": "b3e294f",
+      "reason": "feat per-role bench (Phase 8e): NodeRunner now threads generation metrics (NodeOutcome) into matrix_runs via node_to_matrix_row, and store::per_role_bench aggregates 'which model best at which node' — surfaced as `deck workflow bench` + Tauri workflow_per_role_bench + the CANVAS PER-ROLE BENCH table. The workflow door is documented in feature-parity.md row 13 (Canvas & workflows, 8e per-role bench) and CANVAS.md/ROADMAP 8e"
     }
   ]
 }

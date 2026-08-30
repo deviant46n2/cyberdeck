@@ -29,6 +29,7 @@ pub struct WfNodeEvt {
     pub run_id: String,
     pub node_id: String,
     pub ok: bool,
+    pub skipped: bool,
     pub error: String,
 }
 
@@ -40,6 +41,8 @@ pub struct WfDoneEvt {
     pub tokens_used: u64,
     pub nodes_ok: u32,
     pub nodes_failed: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub iterations: Option<u32>,
 }
 
 struct WfJob {
@@ -133,6 +136,9 @@ fn execute_and_persist(
     runner: &dyn deck_engines::NodeRunner,
     stop: &AtomicBool,
 ) -> anyhow::Result<deck_engines::ExecReport> {
+    // Structural validation (Phase 8f): raw cycles refused, loop rules + edge
+    // predicates checked before any node runs.
+    wf.validate().map_err(anyhow::Error::msg)?;
     let run_id = format!("wr-{}", now());
     let run_row = wfstore::WorkflowRunRow {
         id: run_id.clone(),
@@ -216,6 +222,9 @@ pub fn workflow_run(
     wfstore::ensure_wf_schema(&conn)?;
     let wf = wfstore::get_workflow(&conn, workflow_id)?
         .ok_or_else(|| anyhow::anyhow!("workflow '{workflow_id}' not found"))?;
+    // Pre-flight structural validation (Phase 8f) so a bad graph is rejected at
+    // launch rather than failing inside the background thread.
+    wf.validate().map_err(anyhow::Error::msg)?;
 
     // single-flight: reject launching the same workflow while a run is in flight
     {
@@ -287,6 +296,7 @@ pub fn workflow_run(
                             run_id: run_id2.clone(),
                             node_id: nr.node_id.clone(),
                             ok: nr.ok,
+                            skipped: nr.skipped,
                             error: nr.error.clone(),
                         },
                     );
@@ -302,6 +312,7 @@ pub fn workflow_run(
                         tokens_used: rep.tokens_used,
                         nodes_ok,
                         nodes_failed,
+                        iterations: (rep.iterations > 1).then_some(rep.iterations),
                     },
                 );
             }
@@ -315,6 +326,7 @@ pub fn workflow_run(
                         tokens_used: 0,
                         nodes_ok: 0,
                         nodes_failed: 0,
+                        iterations: None,
                     },
                 );
                 eprintln!("workflow run {run_id2} failed: {e:#}");

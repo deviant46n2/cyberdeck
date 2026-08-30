@@ -36,6 +36,9 @@ pub struct NodeResult {
     pub ttft_ms: Option<u64>,
     /// Generated tokens this node produced (0 when not measurable).
     pub gen_tokens: u64,
+    /// True when the node was gated out of this run: every incoming conditional
+    /// edge evaluated false, so nothing reached it (Phase 8f branch skip).
+    pub skipped: bool,
 }
 
 /// Aggregate result of one `execute` pass over a graph.
@@ -46,6 +49,9 @@ pub struct ExecReport {
     pub node_results: Vec<NodeResult>,
     pub total_wall_ms: u64,
     pub tokens_used: u64,
+    /// Number of times the loop body executed (1 = single pass, no loop; >1 =
+    /// the loop back-edge was taken). Phase 8f.
+    pub iterations: u32,
 }
 
 /// What a node runner produces for one node. `text` is the node's payload;
@@ -180,8 +186,20 @@ impl NodeRunner for AgenticRunner {
 /// sequentially for determinism (a future `max_parallel` worker pool can run
 /// them concurrently without changing fan-in semantics).
 ///
-/// Honours the `stop` flag cooperatively (between waves) and enforces the token
-/// budget; both are the caller's loop-safety handle.
+/// Phase 8f adds two behaviours on top of the V1 DAG driver:
+///   - **Branch skip:** a conditional edge (`edge.condition`) only routes its
+///     producer's message to the downstream node when the predicate evaluates
+///     true against the produced text. A node whose *every* incoming edge is a
+///     conditional edge that evaluated false is **skipped** (not executed) —
+///     the "reviewer on condition" pattern. Unconditional fan-in still runs with
+///     whatever messages are available (unchanged V1 behaviour).
+///   - **Bounded loop:** if the workflow declares a single loop back-edge, the
+///     body re-executes while its (continue) predicate holds, bounded by
+///     `exec_settings.max_iterations` (0 = loops disabled) and the token budget.
+///     The `stop` flag is honoured cooperatively between waves and passes.
+///
+/// The token budget (`exec_settings.budget_tokens`, 0 = unlimited) is enforced
+/// across the whole run; when exhausted the run ends early as `Stopped`.
 pub fn execute(
     wf: &Workflow,
     runner: &dyn NodeRunner,
@@ -201,71 +219,102 @@ pub fn execute(
     let started = Instant::now();
     let mut order: u64 = 0;
     let mut any_error = false;
-    // node_id -> Message produced so far, consulted for fan-in.
+    let mut stopped = false;
+    // node_id -> Message produced in the *current pass*, consulted for fan-in.
     let mut messages: std::collections::HashMap<String, Message> =
         std::collections::HashMap::new();
     let mut node_results: Vec<NodeResult> = Vec::new();
     let mut tokens_used: u64 = 0;
+    let budget_tokens = wf.exec_settings.budget_tokens;
+    let max_iters = wf.exec_settings.max_iterations;
+    let mut iterations_ran: u32 = 0;
+    // Single loop back-edge delivery: carries the loop source's message to the
+    // loop target on the *next* pass (Phase 8f).
+    let mut loop_carry: Option<Message> = None;
 
-    for wave in &dp.waves {
+    // Map node id -> its incoming (non-loop) edges' conditions, keyed by pred id.
+    // This drives branch skip semantics without re-scanning edges per node.
+    let mut pred_cond: std::collections::HashMap<String, Vec<(String, Option<String>)>> =
+        std::collections::HashMap::new();
+    for e in &wf.edges {
+        if e.loop_edge {
+            continue;
+        }
+        pred_cond.entry(e.to.clone()).or_default().push((e.from.clone(), e.condition.clone()));
+    }
+
+    // Run one pass over the whole body once; returns true if the loop should
+    // continue (predicate held, budget/iterations/stop allow it).
+    let loop_target = dp.loop_back_edge.as_ref().map(|b| b.to.clone());
+    loop {
         if stop.load(Ordering::SeqCst) {
+            stopped = true;
             break;
         }
-        for node_id in wave {
-            let node = wf
-                .nodes
-                .iter()
-                .find(|n| &n.id == node_id)
-                .ok_or_else(|| format!("node {node_id} missing"))?;
-            let inputs: Vec<Message> = dp
-                .predecessors
-                .get(node_id)
-                .cloned()
-                .unwrap_or_default()
-                .iter()
-                .filter_map(|p| messages.get(p).cloned())
-                .collect();
-
-            let t = Instant::now();
-            let outcome = runner.run(node, &inputs);
-            let wall_ms = t.elapsed().as_millis() as u64;
-            let (text, err, ok, tps, ttft_ms, gen_tokens) = match outcome {
-                Ok(o) => (o.text, String::new(), true, o.tps, o.ttft_ms, o.gen_tokens),
-                Err(e) => (String::new(), e, false, None, None, 0),
-            };
-            any_error |= !ok;
-            order += 1;
-            // prefer the engine's own token count when the runner reports one;
-            // fall back to the ~4 chars/token heuristic for runners with none.
-            tokens_used += if gen_tokens > 0 { gen_tokens } else { (text.len() / 4) as u64 };
-            node_results.push(NodeResult {
-                node_id: node_id.clone(),
-                ok,
-                text: text.clone(),
-                error: err.clone(),
-                wall_ms,
-                order_idx: order,
-                tps,
-                ttft_ms,
-                gen_tokens,
-            });
-            messages.insert(
-                node_id.clone(),
-                Message {
-                    id: format!("m-{node_id}"),
-                    node_run_id: format!("{run_id}-{node_id}"),
-                    kind: deck_core::workflow::MessageKind::Text,
-                    text,
-                    structured: None,
-                    ref_path: None,
-                    meta: Default::default(),
-                },
-            );
+        let pass_begin_tokens = tokens_used;
+        let pass_made_progress = run_pass(
+            wf,
+            &dp,
+            &pred_cond,
+            runner,
+            &run_id,
+            loop_target.as_deref(),
+            &mut order,
+            &mut any_error,
+            &mut messages,
+            &mut node_results,
+            &mut tokens_used,
+            &mut loop_carry,
+            stop,
+        );
+        iterations_ran += 1;
+        // Budget is enforced continuously inside run_pass; a pass that burned
+        // nothing extra is a no-op guard.
+        if budget_tokens > 0 && tokens_used >= budget_tokens && tokens_used > pass_begin_tokens {
+            stopped = true;
         }
+        if !pass_made_progress {
+            break;
+        }
+        // Loop continuation check.
+        let back = match &dp.loop_back_edge {
+            Some(b) => b,
+            None => break,
+        };
+        if max_iters == 0 {
+            break;
+        }
+        if iterations_ran >= max_iters {
+            break;
+        }
+        if budget_tokens > 0 && tokens_used >= budget_tokens {
+            stopped = true;
+            break;
+        }
+        let src_msg = match messages.get(&back.from) {
+            Some(m) => m.clone(),
+            None => break, // loop source produced nothing -> nothing to loop on
+        };
+        // Continue-while predicate on the back edge; None/Always => loop.
+        let continue_loop = match &back.condition {
+            Some(c) => match deck_core::workflow::EdgePredicate::parse(c) {
+                Ok(p) => p.eval(&src_msg.text),
+                Err(e) => {
+                    eprintln!("[deck-workflow] bad loop predicate on '{}': {e}", back.id);
+                    false
+                }
+            },
+            None => true,
+        };
+        if !continue_loop {
+            break;
+        }
+        // Deliver the loop source's message into the loop target's next pass.
+        loop_carry = Some(src_msg);
     }
 
     let total_wall_ms = started.elapsed().as_millis() as u64;
-    let status = if stop.load(Ordering::SeqCst) {
+    let status = if stopped {
         WorkflowRunStatus::Stopped
     } else if any_error {
         WorkflowRunStatus::Partial
@@ -279,7 +328,151 @@ pub fn execute(
         node_results,
         total_wall_ms,
         tokens_used,
+        iterations: iterations_ran,
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_pass(
+    wf: &Workflow,
+    dp: &deck_core::workflow::DryPlan,
+    pred_cond: &std::collections::HashMap<String, Vec<(String, Option<String>)>>,
+    runner: &dyn NodeRunner,
+    run_id: &str,
+    loop_target: Option<&str>,
+    order: &mut u64,
+    any_error: &mut bool,
+    messages: &mut std::collections::HashMap<String, Message>,
+    node_results: &mut Vec<NodeResult>,
+    tokens_used: &mut u64,
+    loop_carry: &mut Option<Message>,
+    stop: &AtomicBool,
+) -> bool {
+    let mut any_node_ran = false;
+    for wave in &dp.waves {
+        if stop.load(Ordering::SeqCst) {
+            return any_node_ran;
+        }
+        for node_id in wave {
+            let node = match wf.nodes.iter().find(|n| &n.id == node_id) {
+                Some(n) => n,
+                None => {
+                    *any_error = true;
+                    node_results.push(NodeResult {
+                        node_id: node_id.clone(),
+                        ok: false,
+                        text: String::new(),
+                        error: format!("node {node_id} missing"),
+                        wall_ms: 0,
+                        order_idx: { *order += 1; *order },
+                        tps: None,
+                        ttft_ms: None,
+                        gen_tokens: 0,
+                        skipped: false,
+                    });
+                    continue;
+                }
+            };
+
+            // Gather the node's incoming messages with branch (conditional edge)
+            // semantics, then decide whether the node is gated out (skipped).
+            let incoming = dp.predecessors.get(node_id).cloned().unwrap_or_default();
+            let conds = pred_cond.get(node_id).cloned().unwrap_or_default();
+            let mut inputs: Vec<Message> = Vec::new();
+            let mut gated_false: usize = 0;
+            let mut has_unconditional: bool = false;
+            for (pred, cond) in &conds {
+                match cond {
+                    None => {
+                        has_unconditional = true;
+                        if let Some(m) = messages.get(pred) {
+                            inputs.push(m.clone());
+                        }
+                    }
+                    Some(c) => {
+                        let passes = match deck_core::workflow::EdgePredicate::parse(c) {
+                            Ok(p) => match messages.get(pred) {
+                                Some(m) => p.eval(&m.text),
+                                None => false,
+                            },
+                            Err(_) => false,
+                        };
+                        if passes {
+                            if let Some(m) = messages.get(pred) {
+                                inputs.push(m.clone());
+                            }
+                        } else {
+                            gated_false += 1;
+                        }
+                    }
+                }
+            }
+            // Fold the loop back-edge delivery (the loop source's prior message)
+            // into the loop target's inputs — only that node, once per pass.
+            let carry = if loop_target == Some(node_id.as_str()) {
+                loop_carry.take()
+            } else {
+                None
+            };
+            if let Some(carry) = carry {
+                inputs.push(carry);
+            }
+
+            let skip = !incoming.is_empty() && !has_unconditional && gated_false == incoming.len();
+            if skip {
+                node_results.push(NodeResult {
+                    node_id: node_id.clone(),
+                    ok: true,
+                    text: String::new(),
+                    error: String::new(),
+                    wall_ms: 0,
+                    order_idx: { *order += 1; *order },
+                    tps: None,
+                    ttft_ms: None,
+                    gen_tokens: 0,
+                    skipped: true,
+                });
+                continue;
+            }
+
+            let t = Instant::now();
+            let outcome = runner.run(node, &inputs);
+            let wall_ms = t.elapsed().as_millis() as u64;
+            let (text, err, ok, tps, ttft_ms, gen_tokens) = match outcome {
+                Ok(o) => (o.text, String::new(), true, o.tps, o.ttft_ms, o.gen_tokens),
+                Err(e) => (String::new(), e, false, None, None, 0),
+            };
+            *any_error |= !ok;
+            *order += 1;
+            *tokens_used += if gen_tokens > 0 { gen_tokens } else { (text.len() / 4) as u64 };
+            node_results.push(NodeResult {
+                node_id: node_id.clone(),
+                ok,
+                text: text.clone(),
+                error: err.clone(),
+                wall_ms,
+                order_idx: *order,
+                tps,
+                ttft_ms,
+                gen_tokens,
+                skipped: false,
+            });
+            messages.insert(
+                node_id.clone(),
+                Message {
+                    id: format!("m-{node_id}"),
+                    node_run_id: format!("{run_id}-{node_id}"),
+                    kind: deck_core::workflow::MessageKind::Text,
+                    text,
+                    structured: None,
+                    ref_path: None,
+                    meta: Default::default(),
+                },
+            );
+            any_node_ran = true;
+        }
+    }
+    any_node_ran
 }
 
 /// Build a bench row for one executed node (Phase 8e). It records the node's
@@ -293,6 +486,10 @@ pub fn node_to_matrix_row(
     nr: &NodeResult,
     at: i64,
 ) -> Option<deck_core::store::MatrixRow> {
+    // A skipped node never ran against an engine — nothing to benchmark.
+    if nr.skipped {
+        return None;
+    }
     let node = wf.nodes.iter().find(|n| n.id == nr.node_id)?;
     let binding = &node.binding;
     Some(deck_core::store::MatrixRow {
@@ -325,7 +522,10 @@ pub fn node_to_matrix_row(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use deck_core::workflow::{ModelBinding, NodeExec, NodeKind, NodePos, seed_coding_review};
+    use deck_core::workflow::{
+        EdgePredicate, ExecSettings, ModelBinding, NodeExec, NodeKind, NodePos, Workflow,
+        WorkflowEdge, seed_coding_review,
+    };
 
     /// Mock runner that echoes `role-<node_id>` — lets us assert the DAG drove
     /// every node and that fan-in delivered predecessor text.
@@ -338,6 +538,21 @@ mod tests {
             let up: Vec<String> = inputs.iter().map(|m| m.text.clone()).collect();
             Ok(NodeOutcome { text: format!("{}|{}", node.id, up.join(";")), tps: None, ttft_ms: None, gen_tokens: 0 })
         }
+    }
+
+    fn node(id: &str) -> WorkflowNode {
+        WorkflowNode {
+            id: id.into(),
+            role_id: format!("role-{id}"),
+            binding: ModelBinding { role_id: format!("role-{id}"), model_ref: format!("{id}@Q4"), engine: Some("llamacpp".into()), overrides_json: String::new(), active: true },
+            kind: NodeKind::Stateless,
+            pos: NodePos::default(),
+            exec: NodeExec::default(),
+        }
+    }
+
+    fn edge(id: &str, from: &str, to: &str) -> WorkflowEdge {
+        WorkflowEdge { id: id.into(), from: from.into(), to: to.into(), from_port: "output".into(), to_port: "input".into(), condition: None, loop_edge: false }
     }
 
     #[test]
@@ -413,6 +628,7 @@ mod tests {
             tps: Some(62.5),
             ttft_ms: Some(88),
             gen_tokens: 512,
+            skipped: false,
         };
         let row = node_to_matrix_row(&wf, &nr, 1755500000).unwrap();
         // n1 binds role + a model (from the seed); role_id threaded for 8e
@@ -422,5 +638,212 @@ mod tests {
         assert_eq!(row.ttft_ms, Some(88));
         assert_eq!(row.gen_tokens, Some(512));
         assert_eq!(row.wall_ms, 1234);
+    }
+
+    #[test]
+    fn conditional_edge_skips_node_when_predicate_fails() {
+        // gate -> consumer, where the edge only routes when the gate output
+        // contains "APPROVE". The gate emits "reject" -> condition false -> the
+        // sole incoming edge is gated-false -> consumer is skipped.
+        let wf = Workflow {
+            id: "branch".into(),
+            name: "Branch".into(),
+            description: String::new(),
+            version: 1,
+            nodes: vec![node("gate"), node("consumer")],
+            edges: vec![WorkflowEdge {
+                id: "e1".into(),
+                from: "gate".into(),
+                to: "consumer".into(),
+                from_port: "output".into(),
+                to_port: "input".into(),
+                condition: Some("contains:APPROVE".into()),
+                loop_edge: false,
+            }],
+            exec_settings: ExecSettings::default(),
+            template: false,
+        };
+        let stop = AtomicBool::new(false);
+        // EchoRunner makes every node output "<id>|<inputs>", which does NOT
+        // contain "APPROVE" -> the condition never fires -> consumer skipped.
+        let rep = execute(&wf, &EchoRunner, "r-branch".into(), 4, &stop).unwrap();
+        assert_eq!(rep.status, WorkflowRunStatus::Done);
+        let gate = rep.node_results.iter().find(|r| r.node_id == "gate").unwrap();
+        assert!(!gate.skipped);
+        let consumer = rep.node_results.iter().find(|r| r.node_id == "consumer").unwrap();
+        assert!(consumer.skipped, "consumer gated out must be skipped");
+        // Skipped nodes produce no bench row.
+        assert!(node_to_matrix_row(&wf, consumer, 0).is_none());
+    }
+
+    #[test]
+    fn conditional_edge_routes_when_predicate_holds() {
+        let wf = Workflow {
+            id: "branch-ok".into(),
+            name: "Branch ok".into(),
+            description: String::new(),
+            version: 1,
+            nodes: vec![node("gate"), node("consumer")],
+            edges: vec![WorkflowEdge {
+                id: "e1".into(),
+                from: "gate".into(),
+                to: "consumer".into(),
+                from_port: "output".into(),
+                to_port: "input".into(),
+                condition: Some("not_contains:NONE".into()),
+                loop_edge: false,
+            }],
+            exec_settings: ExecSettings::default(),
+            template: false,
+        };
+        let stop = AtomicBool::new(false);
+        let rep = execute(&wf, &EchoRunner, "r-branch-ok".into(), 4, &stop).unwrap();
+        let consumer = rep.node_results.iter().find(|r| r.node_id == "consumer").unwrap();
+        assert!(!consumer.skipped);
+        // consumer ran and saw the gate's message as upstream input
+        assert!(consumer.text.contains("gate|"), "consumer should see gate output");
+    }
+
+    #[test]
+    fn unconditional_workflow_never_skips() {
+        // Backward-compat guard: with no conditional edges, every node runs.
+        let wf = seed_coding_review();
+        let stop = AtomicBool::new(false);
+        let rep = execute(&wf, &EchoRunner, "r-uncond".into(), 4, &stop).unwrap();
+        assert_eq!(rep.iterations, 1);
+        assert!(rep.node_results.iter().all(|r| !r.skipped));
+        assert_eq!(rep.node_results.len(), 2);
+    }
+
+    /// Runner that escalates an "attempt=N" counter seeded by the loop-carry
+    /// input and emits "DONE" once the next attempt would reach 3. Lets the loop
+    /// terminate via its predicate instead of spinning to max_iterations.
+    struct LoopRunner;
+    impl NodeRunner for LoopRunner {
+        fn name(&self) -> &'static str {
+            "loop"
+        }
+        fn run(&self, node: &WorkflowNode, inputs: &[Message]) -> Result<NodeOutcome, String> {
+            let up = inputs.iter().map(|m| m.text.clone()).collect::<Vec<_>>().join(";");
+            let attempt = up
+                .split("attempt=")
+                .nth(1)
+                .and_then(|s| s.split_whitespace().next())
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(0);
+            let next = attempt + 1;
+            if next >= 3 {
+                Ok(NodeOutcome { text: format!("{} attempt={} result=DONE", node.id, next), tps: None, ttft_ms: None, gen_tokens: 0 })
+            } else {
+                Ok(NodeOutcome { text: format!("{} attempt={} result=WIP", node.id, next), tps: None, ttft_ms: None, gen_tokens: 0 })
+            }
+        }
+    }
+
+    #[test]
+    fn bounded_loop_exits_on_termination_predicate() {
+        // body: dev -> rev, plus loop back-edge rev -> dev with continue-while
+        // predicate `not_contains:DONE` (loop until the body says DONE). The
+        // loop carry feeds rev's output back into dev, whose attempt counter
+        // escalates; at attempt>=3 the body emits DONE and the loop exits.
+        let wf = Workflow {
+            id: "rx-loop".into(),
+            name: "Review Loop".into(),
+            description: String::new(),
+            version: 1,
+            nodes: vec![node("dev"), node("rev")],
+            edges: vec![
+                edge("e1", "dev", "rev"),
+                WorkflowEdge {
+                    id: "e2".into(),
+                    from: "rev".into(),
+                    to: "dev".into(),
+                    from_port: "output".into(),
+                    to_port: "input".into(),
+                    condition: Some("not_contains:DONE".into()), // continue while not done
+                    loop_edge: true,
+                },
+            ],
+            exec_settings: ExecSettings { max_iterations: 10, ..Default::default() },
+            template: false,
+        };
+        assert_eq!(wf.validate(), Ok(()));
+        let stop = AtomicBool::new(false);
+        let rep = execute(&wf, &LoopRunner, "r-loop".into(), 4, &stop).unwrap();
+        assert_eq!(rep.status, WorkflowRunStatus::Done);
+        // dev escalates attempt 1 -> 2 -> 3(DONE): 2 body passes total.
+        assert_eq!(rep.iterations, 2);
+        assert_eq!(rep.node_results.iter().filter(|r| r.node_id == "dev").count(), 2);
+        // The final rev pass observed DONE in its upstream (dev's carry).
+        let rev = rep.node_results.iter().rfind(|r| r.node_id == "rev").unwrap();
+        assert!(rev.ok);
+        assert!(rev.text.contains("DONE"));
+    }
+
+    #[test]
+    fn bounded_loop_capped_by_max_iterations() {
+        let wf = Workflow {
+            id: "cap-loop".into(),
+            name: "Cap Loop".into(),
+            description: String::new(),
+            version: 1,
+            nodes: vec![node("a")],
+            // self loop: a -> a via loop back-edge with a predicate that always
+            // continues (contains:WIP holds on the first pass, and the carry
+            // escalates but the cap should stop us before termination at 3).
+            edges: vec![WorkflowEdge {
+                id: "e1".into(),
+                from: "a".into(),
+                to: "a".into(),
+                from_port: "output".into(),
+                to_port: "input".into(),
+                condition: Some("contains:WIP".into()),
+                loop_edge: true,
+            }],
+            exec_settings: ExecSettings { max_iterations: 2, ..Default::default() },
+            template: false,
+        };
+        assert_eq!(wf.validate(), Ok(()));
+        let stop = AtomicBool::new(false);
+        let rep = execute(&wf, &LoopRunner, "r-cap".into(), 4, &stop).unwrap();
+        assert_eq!(rep.iterations, 2, "always-continue loop must be capped at max_iterations");
+        assert_eq!(rep.node_results.iter().filter(|r| r.node_id == "a").count(), 2);
+    }
+
+    #[test]
+    fn loop_respects_token_budget() {
+        let wf = Workflow {
+            id: "budget-loop".into(),
+            name: "Budget Loop".into(),
+            description: String::new(),
+            version: 1,
+            nodes: vec![node("a")],
+            edges: vec![WorkflowEdge {
+                id: "e1".into(),
+                from: "a".into(),
+                to: "a".into(),
+                from_port: "output".into(),
+                to_port: "input".into(),
+                condition: None,
+                loop_edge: true,
+            }],
+            // 2 tokens budget; each pass of LoopRunner emits ~10 chars => ~2 tokens
+            exec_settings: ExecSettings { max_iterations: 20, budget_tokens: 6, ..Default::default() },
+            template: false,
+        };
+        assert_eq!(wf.validate(), Ok(()));
+        let stop = AtomicBool::new(false);
+        let rep = execute(&wf, &LoopRunner, "r-budget".into(), 4, &stop).unwrap();
+        // Must not spin to max_iterations=20; budget stops it well short.
+        assert!(rep.iterations < 20, "budget must cap iterations, got {}", rep.iterations);
+        assert_eq!(rep.status, WorkflowRunStatus::Stopped);
+    }
+
+    #[test]
+    fn edge_predicate_reexported_for_doors() {
+        // The predicate type is used by the executor; ensure the pure eval is
+        // reachable from the module so tests stay honest.
+        assert!(EdgePredicate::parse("contains:x").unwrap().eval("abc x def"));
+        assert!(!EdgePredicate::parse("contains:x").unwrap().eval("abc"));
     }
 }

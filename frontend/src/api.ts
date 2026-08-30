@@ -486,6 +486,7 @@ export interface WorkflowEdge {
   from_port: string;
   to_port: string;
   condition: string | null;
+  loop_edge: boolean;
 }
 
 export interface Workflow {
@@ -517,8 +518,8 @@ export interface WfRunRow {
 }
 
 export interface WfStarted { run_id: string; workflow_id: string; }
-export interface WfNodeEvt { run_id: string; node_id: string; ok: boolean; error: string; }
-export interface WfDoneEvt { run_id: string; workflow_id: string; status: string; tokens_used: number; nodes_ok: number; nodes_failed: number; }
+export interface WfNodeEvt { run_id: string; node_id: string; ok: boolean; skipped: boolean; error: string; }
+export interface WfDoneEvt { run_id: string; workflow_id: string; status: string; tokens_used: number; nodes_ok: number; nodes_failed: number; iterations?: number; }
 
 export const workflowSeed = () => invoke<string>("workflow_seed");
 export const workflowSave = (body: string) => invoke<string>("workflow_save", { body });
