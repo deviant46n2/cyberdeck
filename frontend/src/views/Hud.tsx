@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import * as api from "../api";
-import Tamagotchi from "./Tamagotchi";
 import * as br from "../lib/br";
 import { latestBySlot, slotKey } from "../lib/portmap";
 import EngineBins from "./EngineBins";
@@ -220,7 +219,6 @@ export default function Hud({
           freetoken :1919 is offline — defaulting harness to <b>llamacpp/qwen3.8-27b</b> (:18000 is live). Pick a model above to override.
         </div>
       )}
-      <Tamagotchi />
       {/* top bar — model/loadout pills + resident summary */}
       <div style={{display:"flex", gap:8, alignItems:"center", padding:"10px 0 6px", flexWrap:"wrap", justifyContent:"center"}}>
         <select

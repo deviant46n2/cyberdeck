@@ -2,6 +2,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import * as api from "./api";
 import * as dls from "./lib/dl";
 import Hud from "./views/Hud";
+import Tamagotchi from "./views/Tamagotchi";
 import Vault from "./views/Vault";
 import Loadouts from "./views/Loadouts";
 import Signals from "./views/Signals";
@@ -87,6 +88,7 @@ export default function App() {
           </div>
         </div>
         <div className="spacer" />
+        <Tamagotchi />
       </aside>
 
       <main className="main">
