@@ -331,6 +331,38 @@ nvidia-smi call + two /proc samples, ~200 ms). Deliberately UI-only for now:
 it is a telemetry *display*; the CLI surface for host state remains
 `deck hardware` / fit math.
 
+### KV cache: KVarN + precision tail (roadmap — 2026-08-30)
+
+Research verdict: **has a place, behind gates.** [KVarN](https://arxiv.org/abs/2606.03458)
+(variance-normalized KV-cache quantization, reference impl `huawei-csl/KVarN`)
+fixes *decode-time* error accumulation — the regime where quantized KV caches
+degrade long reasoning/agentic generation, which is exactly our HUD workload.
+Tracked but not merged upstream (ggml-org/llama.cpp#24139), implemented in the
+single-maintainer [BeeLlama.cpp fork](https://github.com/Anbeeld/beellama.cpp)
+(`--cache-type-k kvarnN --cache-type-v kvarnM --kv-tail-tokens 1024`, needs
+`--flash-attn on`). Author's Qwen 3.6 27B/Q5_K_S 64k KLD ladder: q5 quality at
+4-bit, q4 quality at ~3.5-bit — i.e. **KV cache drops to ~⅓–½ of fp16 bytes at
+roughly fp16-quality**, on a card where KV cache is the long-context bottleneck.
+
+Where it lands in cyberdeck (not authorization — order matters):
+
+1. **Cache-type-aware fit math (deck-core, groundwork).** `fit.rs` KV bytes are
+   a cache-type-agnostic conservative fp16 constant today, and `--cache-type-*`
+   already pass through loadouts → llama-server. Make the KV element cost a
+   function of cache type (fp16/f8/f4 std + kvarnN), and restate context-fit
+   truth under it. This upgrades fit independently of the fork and is the seam
+   KVarN rides on.
+2. **Bee fork as an opt-in llama.cpp engine variant**, *never the default*.
+   Gate on: clean build for Blackwell sm_120 (author tests RTX 3090 only),
+   test-port bring-up on our Qwen3.8-27b, and ≥ q4-quality read-back under the
+   bench harness. Single-maintainer fork = supply-chain risk vs upstream —
+   held out of the default llama.cpp unit until it earns the slot.
+
+Deliberately **not** borrowed: the DFlash/TurboQuant/TCQ speculative-decode
+axes riding in the popular BeeLlama *mirrors* (several GitHub copies carry
+identical READMEs — the canonical repo is Anbeeld's). Speculative sampling is a
+different performance lever and belongs to its own evaluation, not this entry.
+
 ### One controller, not a swarm (2026-08-30)
 
 Parked as a deliberate engineering statement: **no "mini swarm" of independent
