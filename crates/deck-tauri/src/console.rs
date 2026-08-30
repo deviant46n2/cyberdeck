@@ -5,6 +5,8 @@ use std::io::BufRead;
 use serde::{Serialize, Deserialize};
 use tauri::Emitter;
 
+use crate::console_reaper::AGENT_MARKER;
+
 /// Emitted when a session starts, so the UI can open a tab before output flows.
 #[derive(Clone, Serialize)]
 pub struct OpStarted {
@@ -56,12 +58,6 @@ struct Session {
 static SESSIONS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, Session>>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-
-/// Env marker stamped on every spawned agent so a startup sweep can recognize
-/// sessions orphaned by a crashed/crash-killed app instance (a normal exit
-/// path has `kill_all`; SIGKILL has none, and a killed app leaves `opencode
-/// run` children reparented to init that keep talking to the resident units).
-const AGENT_MARKER: &str = "DECK_AGENT_SID";
 
 /// Streams one session pipe (stdout or stderr) as `opencode-output` events.
 /// Runs until the pipe closes.
@@ -220,130 +216,5 @@ pub fn kill_all() {
     }
     if !sessions.is_empty() {
         eprintln!("[deck] opencode cleanup: terminated {} session(s)", sessions.len());
-    }
-}
-
-fn ppid_of(pid: u32) -> Option<u32> {
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    // stat is "pid (comm) state ppid ..."; comm may contain spaces/parens, so
-    // parse from the last ')'.
-    let after = stat[stat.rfind(')')? + 1..].trim_start();
-    after.split_whitespace().nth(1)?.parse().ok()
-}
-
-/// True if the process carries our agent marker in its environment.
-fn wants_marker(pid: u32) -> bool {
-    let env = match std::fs::read(format!("/proc/{pid}/environ")) {
-        Ok(e) => e,
-        Err(_) => return false, // gone (or not ours to read) — nothing to kill
-    };
-    let needle = format!("{AGENT_MARKER}=");
-    env.split(|&b| b == 0)
-        .any(|kv| kv.starts_with(needle.as_bytes()))
-}
-
-/// Walk the ancestor chain of `pid`; true if it contains `target` (a live app
-/// instance owns the agent) before hitting pid 1 (no owner — orphaned).
-fn chained_to(pid: u32, target: u32) -> bool {
-    let mut cur = Some(pid);
-    while let Some(p) = cur {
-        if p == target {
-            return true;
-        }
-        if p <= 1 {
-            return false;
-        }
-        cur = ppid_of(p);
-    }
-    false
-}
-
-/// Startup sweep: any `opencode run` that carries the marker but whose parent
-/// chain no longer contains a live deck process was orphaned by a crashed or
-/// SIGKILLed app instance. TERM them (their descendents re-parent to init and
-/// are caught by the second pass), then KILL what survives. This is the abrupt-
-/// death counterpart to `kill_all`; it cannot kill a session of a still-live
-/// app (that chain includes `self`).
-pub fn reap_orphans() {
-    let self_pid = std::process::id();
-    let sweep = || {
-        let mut orphans = Vec::new();
-        if let Ok(rd) = std::fs::read_dir("/proc") {
-            for e in rd.flatten() {
-                let Ok(pid) = e.file_name().to_string_lossy().parse::<u32>() else {
-                    continue;
-                };
-                if pid == self_pid || pid <= 1 {
-                    continue;
-                }
-                if wants_marker(pid) && !chained_to(pid, self_pid) {
-                    orphans.push(pid);
-                }
-            }
-        }
-        orphans
-    };
-    for round in 0..2 {
-        let orphans = sweep();
-        if orphans.is_empty() {
-            return;
-        }
-        eprintln!("[deck] orphan sweep: {} stale agent(s) (round {})", orphans.len(), round + 1);
-        for pid in &orphans {
-            let _ = std::process::Command::new("kill")
-                .arg("-TERM")
-                .arg(pid.to_string())
-                .status();
-        }
-        std::thread::sleep(std::time::Duration::from_millis(400));
-    }
-    for pid in sweep() {
-        let _ = std::process::Command::new("kill")
-            .arg("-KILL")
-            .arg(pid.to_string())
-            .status();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn marker_and_chain_detection() {
-        let mut child = std::process::Command::new("sleep")
-            .arg("30")
-            .env(AGENT_MARKER, "t1")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .expect("spawn sleep");
-        let pid = child.id();
-        // the environ is only stamped after the child execs; poll briefly
-        // instead of racing fork->exec
-        for _ in 0..50 {
-            if wants_marker(pid) {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        assert!(wants_marker(pid), "tagged child must be recognized");
-        let self_pid = std::process::id();
-        assert!(chained_to(pid, self_pid), "live child is owned by us");
-        assert!(!chained_to(pid, u32::MAX), "stray ancestor must not match");
-        assert_eq!(ppid_of(pid), Some(self_pid), "direct child of the test proc");
-        child.kill().ok();
-        child.wait().ok();
-        assert!(ppid_of(pid).is_none(), "dead pid must be unreadable");
-
-        let mut plain = std::process::Command::new("sleep")
-            .arg("30")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .expect("spawn sleep");
-        assert!(!wants_marker(plain.id()), "untagged child must not match");
-        plain.kill().ok();
-        plain.wait().ok();
     }
 }
