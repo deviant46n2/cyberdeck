@@ -185,36 +185,94 @@ pub fn opencode_run(
     Ok(())
 }
 
-/// Stop a single session by id (SIGTERM to its process group). Unknown ids are
+/// Stop a single session by id (SIGTERM, escalating to SIGKILL since `opencode
+/// run` ignores TERM and keeps streaming — observed twice). Unknown ids are
 /// ignored. Multiple sessions can run; this ends only the named one.
 pub fn opencode_stop(id: &str) -> anyhow::Result<()> {
     let pid = SESSIONS.lock().unwrap().get(id).map(|s| s.pid);
     if let Some(pid) = pid {
-        // SIGTERM the process; the reader threads see EOF and the waiter emits done.
-        let _ = std::process::Command::new("kill")
-            .arg("-TERM")
-            .arg(pid.to_string())
-            .status();
+        term_then_kill(pid);
     }
     SESSIONS.lock().unwrap().remove(id);
     Ok(())
 }
 
+/// True if `/proc/{pid}` still names a process whose argv starts with
+/// `opencode`. Guards the SIGKILL escalation so a recycled pid that is no
+/// longer our agent is never touched.
+fn is_still_opencode(pid: u32) -> bool {
+    std::fs::read_to_string(format!("/proc/{pid}/cmdline"))
+        .map(|c| c.starts_with("opencode"))
+        .unwrap_or(false)
+}
+
+/// SIGTERM a session, then escalate to SIGKILL after a 5s grace window (on a
+/// background thread, so an interactive STOP stays snappy). `opencode run`
+/// ignores SIGTERM, so without the escalation a stopped-looking session keeps
+/// burning GPU on the resident until it is killed externally.
+pub fn term_then_kill(pid: u32) {
+    let _ = std::process::Command::new("kill")
+        .arg("-TERM")
+        .arg(pid.to_string())
+        .status();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(5));
+        if is_still_opencode(pid) {
+            let _ = std::process::Command::new("kill")
+                .arg("-KILL")
+                .arg(pid.to_string())
+                .status();
+        }
+    });
+}
+
 /// Sweep every tracked session on app exit. Without this, a dying app leaves
 /// `opencode run` children orphaned (reparented to init) and they keep burning
 /// RAM indefinitely — an earlier OOM kill left two strays running for hours.
+/// This runs synchronously (bounded ~3s) so the exit path actually completes:
+/// a detached escalator thread would die with the process before its SIGKILL.
 pub fn kill_all() {
     let sessions = {
         let mut g = SESSIONS.lock().unwrap();
         std::mem::take(&mut *g)
     };
+    if sessions.is_empty() {
+        return;
+    }
+    eprintln!("[deck] opencode cleanup: terminating {} session(s)", sessions.len());
     for s in sessions.values() {
         let _ = std::process::Command::new("kill")
             .arg("-TERM")
             .arg(s.pid.to_string())
             .status();
     }
-    if !sessions.is_empty() {
-        eprintln!("[deck] opencode cleanup: terminated {} session(s)", sessions.len());
+    std::thread::sleep(std::time::Duration::from_secs(3));
+    for s in sessions.values() {
+        if is_still_opencode(s.pid) {
+            let _ = std::process::Command::new("kill")
+                .arg("-KILL")
+                .arg(s.pid.to_string())
+                .status();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_still_opencode;
+
+    #[test]
+    fn escalation_guard_only_matches_opencode_argv() {
+        assert!(!is_still_opencode(1), "pid 1 is not our agent");
+        assert!(!is_still_opencode(u32::MAX), "nonexistent pid");
+        let mut child = std::process::Command::new("sleep")
+            .arg("5")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn sleep");
+        assert!(!is_still_opencode(child.id()), "sleep must not match");
+        child.kill().ok();
+        child.wait().ok();
     }
 }
