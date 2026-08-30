@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import * as api from "../api";
+import * as dls from "../lib/dl";
+import { shardSet } from "../lib/shards";
 import { LAST_SEEN_KEY, isNewSince, parseLastSeen } from "../lib/feeds";
 
 const SCORE_COLOR = (s: number) => (s >= 0.65 ? "var(--pass)" : s >= 0.4 ? "var(--warn)" : "var(--dim2)");
@@ -27,6 +29,39 @@ export default function Feeds() {
   const [polling, setPolling] = useState(false);
   const [limit, setLimit] = useState(20);
   const [lastSeen, setLastSeen] = useState<number>(0);
+  const [dlBusy, setDlBusy] = useState<string | null>(null);
+  const [dlMsg, setDlMsg] = useState<string>("");
+
+  /** Queue the quant this row scored: the smallest GGUF in the repo, shard-set
+   * aware — the same shared-manager path MARKET uses (CLI door: `deck download`).
+   * The pick matches the row's own FITS/DISK evaluation, so the download delivers
+   * what the score promised. */
+  const download = async (repoId: string) => {
+    setDlBusy(repoId);
+    try {
+      const ff = await api.marketFiles(repoId);
+      const ggufs = ff
+        .filter((f) => f.rfilename.toLowerCase().endsWith(".gguf") && f.size)
+        .sort((a, b) => (a.size ?? Infinity) - (b.size ?? Infinity));
+      if (ggufs.length === 0) {
+        setDlMsg(`${repoId}: no GGUF files in repo — nothing to queue`);
+        return;
+      }
+      const pick = ggufs[0].rfilename;
+      const parts = shardSet(pick, ff.map((f) => f.rfilename));
+      if (parts.length > 1) {
+        void dls.enqueueSequence(repoId, parts);
+        setDlMsg(`${repoId}: queued ${parts.length}-part set (${pick}…) — watch DOWNLOADS`);
+      } else {
+        dls.enqueue(repoId, pick);
+        setDlMsg(`${repoId}: queued ${pick} — watch DOWNLOADS`);
+      }
+    } catch (e) {
+      setDlMsg(`${repoId}: file list failed: ${String(e)}`);
+    } finally {
+      setDlBusy(null);
+    }
+  };
 
   const newCount = ranked?.filter((r) => isNewSince(r.release.fetched_at, lastSeen)).length ?? 0;
 
@@ -160,12 +195,13 @@ export default function Feeds() {
                 <th>SRC</th>
                 <th>REPO / REV</th>
                 <th>WHY</th>
+                <th>DL</th>
               </tr>
             </thead>
             <tbody>
               {ranked.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="dim">rank the catalog by polling first</td>
+                  <td colSpan={10} className="dim">rank the catalog by polling first</td>
                 </tr>
               )}
               {ranked.map((r, i) => {
@@ -198,11 +234,31 @@ export default function Feeds() {
                     <td className="dim" style={{ fontSize: 10 }}>
                       {r.score.reasons.join(", ")}
                     </td>
+                    <td>
+                      {r.release.source === "hf" && r.release.kind === "model" ? (
+                        <button
+                          className="ghost"
+                          style={{ fontSize: 10, padding: "2px 8px" }}
+                          disabled={dlBusy === r.release.repo}
+                          onClick={() => void download(r.release.repo)}
+                          title="queue the scored quant into the download manager"
+                        >
+                          {dlBusy === r.release.repo ? "…" : "DL"}
+                        </button>
+                      ) : (
+                        <span className="dim">—</span>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
+        </div>
+      )}
+      {dlMsg && (
+        <div className="dim" style={{ marginTop: 8, fontSize: 11 }}>
+          {dlMsg}
         </div>
       )}
     </>

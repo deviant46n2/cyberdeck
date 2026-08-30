@@ -423,7 +423,7 @@ Which pieces already exist: download `.part`+resume, metadata inspect, fit, deri
 
 **O4 — What changed / What to test (S):**
 * HUD/SIGNALS "New→Relevant→Worth testing" lane: releases since `fetched_at > last_seen`, filtered to `score > threshold`, enriched with `FIT at ctx`, `DISK`, `tok/s of current best equivalent`. Answers "what changed / what matters".
-  **Partial LANDED (2026-08-30):** a dedicated FEEDS view (`frontend/src/views/Feeds.tsx` + route) surfaces the live `feeds_rank` pipeline — hardware-grounded score, `✓/✗ fits`, and the `why` reasons behind each candidate, with a workload-hint selector (coding/reasoning/… reweights family overlap) and a POLL button. **Recency gate also LANDED (2026-08-30):** a `feeds.last_seen` epoch setting (written through the audit-tracked O3 settings store, actor `ui`) drives a persistent NEW marker computed as `fetched_at > last_seen`; "MARK SEEN" is the only thing that advances it, so "what changed since I last looked" survives routine polls. Still open from O4: automatic DISK/fit-at-ctx enrichment in the lane.
+  **Partial LANDED (2026-08-30):** a dedicated FEEDS view (`frontend/src/views/Feeds.tsx` + route) surfaces the live `feeds_rank` pipeline — hardware-grounded score, `✓/✗ fits`, and the `why` reasons behind each candidate, with a workload-hint selector (coding/reasoning/… reweights family overlap) and a POLL button. **Recency gate also LANDED (2026-08-30):** a `feeds.last_seen` epoch setting (written through the audit-tracked O3 settings store, actor `ui`) drives a persistent NEW marker computed as `fetched_at > last_seen`; "MARK SEEN" is the only thing that advances it, so "what changed since I last looked" survives routine polls. **Download handoff LANDED (2026-08-30):** HF model rows carry a DL action that queues the scored quant (smallest GGUF, shard-set aware) into the shared DownloadManager via the MARKET path, closing the discover→download loop from the feeds lane; CLI door is `deck download`. Still open from O4: automatic DISK/fit-at-ctx enrichment in the lane.
 
 **O5+ (Horizon 2)** deferred: background polling timers, notifications (HUD badge + tray), caching/ETag/429 per source — not in this MVP block.
 
@@ -539,7 +539,7 @@ Which pieces already exist: download `.part`+resume, metadata inspect, fit, deri
 | Phase 4 deterministic recommend | H | S | Low | P1 | Explainable sentences; no ML |
 | Phase 6 one-click experiment pipeline | H | M | Med | P1 | Closes the loop; depends on 1–2 |
 | Phase 7a–b agent READ/ANALYZE/MODIFY | M | S | Low | P1 | Safe agent value; shell-free |
-| O4 HUD what changed lane | M | S | Low | P1 | FEEDS view + recency gate landed; DISK/fit-at-ctx enrichment open |
+| O4 HUD what changed lane | M | S | Low | P1 | FEEDS view + recency gate + feeds→download handoff landed; DISK/fit-at-ctx enrichment open |
 | Phase 8 Canvas — draggable TUIs (8a) | M | S | Low | P1 DONE | HUD multi-agent, zen+local side-by-side, embedded `opencode attach` TUIs |
 | Phase 8 Canvas — workflow foundation (8c) | M | M | Med | P1 DONE | Role/Model/DAG scheduler + headless executor + `deck workflow` CLI; Phase 0 schema gate |
 | Phase 8 Canvas — UI shell (8d), matrix (8e), branch/loop (8f) | M | M–L | Med | P2 | 8d+8e DONE (canvas + per-role bench); 8f branch+loop DONE, supervisor remains |
