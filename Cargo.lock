@@ -715,6 +715,7 @@ dependencies = [
  "deck-core",
  "deck-engines",
  "deck-feeds",
+ "libc",
  "portable-pty",
  "rusqlite",
  "serde",

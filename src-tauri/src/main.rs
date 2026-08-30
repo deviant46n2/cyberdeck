@@ -282,21 +282,24 @@ fn opencode_run(
     engine: String,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
-    let model_opt = if model.is_empty() {
-        None
-    } else {
-        Some(model.as_str())
-    };
-    let engine_opt = if engine.is_empty() {
-        deck_tauri::console::Engine::LlamaCpp
-    } else {
-        match engine.as_str() {
-            "freetoken" => deck_tauri::console::Engine::FreeToken,
-            "ollama" => deck_tauri::console::Engine::Ollama,
-            _ => deck_tauri::console::Engine::LlamaCpp,
-        }
-    };
-    deck_tauri::opencode_run(&app, &prompt, &dir, auto, engine_opt, model_opt).map_err(|e| e.to_string())
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let model_opt = if model.is_empty() {
+            None
+        } else {
+            Some(model.as_str())
+        };
+        let engine_opt = if engine.is_empty() {
+            deck_tauri::console::Engine::LlamaCpp
+        } else {
+            match engine.as_str() {
+                "freetoken" => deck_tauri::console::Engine::FreeToken,
+                "ollama" => deck_tauri::console::Engine::Ollama,
+                _ => deck_tauri::console::Engine::LlamaCpp,
+            }
+        };
+        deck_tauri::opencode_run(&app, &prompt, &dir, auto, engine_opt, model_opt).map_err(|e| e.to_string())
+    }));
+    Ok(())
 }
 
 #[tauri::command]
