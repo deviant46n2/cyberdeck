@@ -456,3 +456,76 @@ export const engineStart = (engine: string) => invoke<void>("engine_start", { en
 export interface ToolDef { name: string; description: string; permission: string; }
 export const agentTools = () => invoke<ToolDef[]>("agent_tools");
 export const analyzeRelevance = (repo: string, workload?: string | null) => invoke<unknown>("analyze_relevance", { repo, workload: workload ?? null });
+
+// --- Infinite Agent Canvas (ROADMAP 8c/8d) ---
+
+export type NodeKind = "Stateless" | "Agentic";
+export type WorkflowRunStatus = "Queued" | "Running" | "Done" | "Partial" | "Stopped" | "Error";
+
+export interface ModelBinding {
+  role_id: string;
+  model_ref: string;
+  engine: string | null;
+  overrides_json: string;
+  active: boolean;
+}
+
+export interface WorkflowNode {
+  id: string;
+  role_id: string;
+  binding: ModelBinding;
+  kind: NodeKind;
+  pos: { x: number; y: number };
+  exec: { timeout_s: number; max_tokens: number; max_retries: number };
+}
+
+export interface WorkflowEdge {
+  id: string;
+  from: string;
+  to: string;
+  from_port: string;
+  to_port: string;
+  condition: string | null;
+}
+
+export interface Workflow {
+  id: string;
+  name: string;
+  description: string;
+  version: number;
+  nodes: WorkflowNode[];
+  edges: WorkflowEdge[];
+  exec_settings: {
+    max_parallel: number;
+    global_retries: number;
+    budget_tokens: number;
+    budget_wall_s: number;
+    max_iterations: number;
+  };
+  template: boolean;
+}
+
+export interface WfRunRow {
+  id: string;
+  workflow_id: string;
+  status: WorkflowRunStatus;
+  created_at: number;
+  updated_at: number;
+  budget_tokens: number;
+  tokens_used: number;
+  output: string;
+}
+
+export interface WfStarted { run_id: string; workflow_id: string; }
+export interface WfNodeEvt { run_id: string; node_id: string; ok: boolean; error: string; }
+export interface WfDoneEvt { run_id: string; workflow_id: string; status: string; tokens_used: number; nodes_ok: number; nodes_failed: number; }
+
+export const workflowSeed = () => invoke<string>("workflow_seed");
+export const workflowSave = (body: string) => invoke<string>("workflow_save", { body });
+export const workflowList = () => invoke<Workflow[]>("workflow_list");
+export const workflowGet = (workflowId: string) => invoke<Workflow | null>("workflow_get", { workflowId });
+export const workflowRun = (workflowId: string, runner: string, dir?: string | null, model?: string | null) =>
+  invoke<WfStarted>("workflow_run", { workflowId, runner, dir: dir ?? null, model: model ?? null });
+export const workflowStop = (runId: string) => invoke<void>("workflow_stop", { runId });
+export const workflowHistory = (workflowId?: string | null) =>
+  invoke<WfRunRow[]>("workflow_history", { workflowId: workflowId ?? null });

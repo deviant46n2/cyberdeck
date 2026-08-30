@@ -102,15 +102,43 @@ fn rewire_file(client: &str, path: &std::path::Path, port: u16, anchor: &str) ->
     }
 }
 
-/// Repoint dsh + opencode at `port`. Always returns a report per client so the
-/// UI can show exactly what changed (and what was skipped).
-pub fn rewire_clients(port: u16) -> Vec<RewireReport> {
+/// Per-engine client-provider anchor for each config format. The port is
+/// rewritten only inside the matching provider block, so with several
+/// residents (llamacpp :18000 + freetoken :1919) one slot's rewire never
+/// disturbs another's baseURL.
+fn anchors_for(store_id: &str) -> Option<(&'static str, &'static str)> {
+    // (dsh settings.yaml anchor, opencode.json anchor)
+    match store_id {
+        "llamacpp" => Some(("llamacpp:", "\"llamacpp\":")),
+        "freetoken" => Some(("freetoken:", "\"freetoken\":")),
+        "ollama" => Some(("ollama:", "\"ollama\":")),
+        _ => None,
+    }
+}
+
+/// Repoint the provider block for one engine slot in dsh + opencode. Always
+/// returns a report per client so the UI can show exactly what changed.
+pub fn rewire_clients_for(store_id: &str, port: u16) -> Vec<RewireReport> {
+    let Some((dsh_anchor, oc_anchor)) = anchors_for(store_id) else {
+        return vec![RewireReport {
+            client: store_id.into(),
+            path: "unknown engine — no client anchor".into(),
+            status: "skipped".into(),
+        }];
+    };
     let dsh = home().join(".dsh/settings.yaml");
     let oc = home().join(".config/opencode/opencode.json");
     vec![
-        rewire_file("dsh", &dsh, port, "llamacpp:"),
-        rewire_file("opencode", &oc, port, "\"llamacpp\":"),
+        rewire_file("dsh", &dsh, port, dsh_anchor),
+        rewire_file("opencode", &oc, port, oc_anchor),
     ]
+}
+
+/// Repoint dsh + opencode at `port` for the llama.cpp alias slot (the default
+/// / single-swap contract). Kept for back-compat; per-slot callers should use
+/// `rewire_clients_for(store_id, port)`.
+pub fn rewire_clients(port: u16) -> Vec<RewireReport> {
+    rewire_clients_for("llamacpp", port)
 }
 
 #[cfg(test)]
@@ -136,5 +164,31 @@ mod tests {
     fn no_anchor_means_no_change() {
         let text = "baseURL: http://127.0.0.1:18000/v1";
         assert!(set_port_in_block(text, 1919, "llamacpp:", true).is_none());
+    }
+
+    #[test]
+    fn per_engine_anchors_exist() {
+        assert_eq!(anchors_for("llamacpp"), Some(("llamacpp:", "\"llamacpp\":")));
+        assert_eq!(anchors_for("freetoken"), Some(("freetoken:", "\"freetoken\":")));
+        assert_eq!(anchors_for("ollama"), Some(("ollama:", "\"ollama\":")));
+        assert_eq!(anchors_for("wat"), None);
+    }
+
+    #[test]
+    fn rewrites_only_freetoken_block() {
+        let text = "provider:\n  llamacpp:\n    baseURL: http://127.0.0.1:18000/v1\n  freetoken:\n    baseURL: http://127.0.0.1:1919/v1\n";
+        let (ft_anchor, _) = anchors_for("freetoken").unwrap();
+        let out = set_port_in_block(text, 9999, ft_anchor, true).unwrap();
+        assert!(out.contains("http://127.0.0.1:9999/v1"), "freetoken block rewired");
+        assert!(out.contains("http://127.0.0.1:18000/v1"), "llamacpp block untouched");
+    }
+
+    #[test]
+    fn rewrites_ollama_json_block_only() {
+        let text = "{\n  \"llamacpp\": { \"options\": { \"baseURL\": \"http://127.0.0.1:18000/v1\" } },\n  \"ollama\": { \"options\": { \"baseURL\": \"http://127.0.0.1:11434/v1\" } }\n}";
+        let (_, oc_anchor) = anchors_for("ollama").unwrap();
+        let out = set_port_in_block(text, 11440, oc_anchor, true).unwrap();
+        assert!(out.contains("http://127.0.0.1:11440/v1"), "ollama block rewired");
+        assert!(out.contains("http://127.0.0.1:18000/v1"), "llamacpp block untouched");
     }
 }

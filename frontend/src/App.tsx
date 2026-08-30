@@ -10,8 +10,10 @@ import Console from "./views/Console";
 import Downloads from "./views/Downloads";
 import Bringup from "./views/Bringup";
 import Bench from "./views/Bench";
+import Canvas from "./views/Canvas";
+import Feeds from "./views/Feeds";
 
-const VIEWS = ["HUD", "VAULT", "SIGNALS", "MARKET", "DOWNLOADS", "LOADOUTS", "CONSOLE", "BENCH"];
+const VIEWS = ["HUD", "VAULT", "SIGNALS", "FEEDS", "MARKET", "DOWNLOADS", "LOADOUTS", "CONSOLE", "CANVAS", "BENCH"];
 
 export default function App() {
   const [view, setView] = useState("HUD");
@@ -101,12 +103,14 @@ export default function App() {
         )}
         {view === "VAULT" && <Vault models={models} dups={dups} onRefresh={refresh} onReload={reload} />}
         {view === "SIGNALS" && <Signals />}
+        {view === "FEEDS" && <Feeds />}
         {view === "MARKET" && <Market />}
         {view === "DOWNLOADS" && <Downloads />}
         {view === "LOADOUTS" && (
           <Loadouts profiles={profiles} onUnit={setUnit} onChanged={refresh} />
         )}
         {view === "CONSOLE" && <Console unit={unit} />}
+        {view === "CANVAS" && <Canvas />}
         {view === "BENCH" && <Bench />}
       </main>
 

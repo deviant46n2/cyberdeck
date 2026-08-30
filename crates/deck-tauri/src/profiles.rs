@@ -80,7 +80,9 @@ pub fn use_profile(name: &str, dry_run: bool, managed: bool) -> anyhow::Result<U
     if !dry_run {
         deck_engines::apply(&p, false)?;
         if managed {
-            for r in deck_engines::rewire::rewire_clients(p.port) {
+            // per-slot: rewrite only this profile's engine provider block so a
+            // managed bind never disturbs another resident's baseURL
+            for r in deck_engines::rewire::rewire_clients_for(p.engine.store_id(), p.port) {
                 rewired.push(format!("[{}] {} — {}", r.client, r.path, r.status));
             }
         }

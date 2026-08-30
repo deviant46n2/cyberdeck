@@ -24,8 +24,8 @@ pub(crate) fn run(name: String, dry_run: bool, managed: bool, resident: bool) ->
     );
     deck_engines::apply(&p, dry_run)?;
     if managed && !dry_run {
-        println!("MANAGED rewiring clients:");
-        for r in deck_engines::rewire::rewire_clients(p.port) {
+        println!("MANAGED rewiring clients (per-slot {}):", p.engine.store_id());
+        for r in deck_engines::rewire::rewire_clients_for(p.engine.store_id(), p.port) {
             println!("  [{}] {} — {}", r.client, r.path, r.status);
         }
     }

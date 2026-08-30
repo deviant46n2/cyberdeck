@@ -76,6 +76,12 @@
         "reason": "The loadout test harness: the single-flight TEST_CHILD slot (test_profile/test_stop both operate it) plus the boot-watch verdict policy. Reader threads were deduped into spawn_output_reader; the file is one lifecycle contract. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
       },
       {
+        "path": "crates/deck-tauri/src/workflow.rs",
+        "lines": 343,
+        "kind": "accepted",
+        "reason": "The Tauri canvas door: the wf-* event-emitting background run registry (execution + persist + stop, single-flight per workflow) plus the seed/save/list/get/run/stop/history serialization surface. One registry+lifecycle contract in the style of downloads.rs/bringup.rs — splitting would separate the single-flight guard from the workers it supervises. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
+      },
+      {
         "path": "frontend/src/api.ts",
         "lines": 305,
         "kind": "accepted",

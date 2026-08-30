@@ -75,6 +75,70 @@ fn quant_token(s: &str) -> Option<String> {
 }
 
 /// Hardware fit 0/0.5/1 based on cheap heuristic: repo name length as proxy
+/// Total-params (billions) parsed from a model repo name, used as the DDG-free
+/// offline size guess. Returns `None` when we can't name a reliable total — a
+/// decimal/composite MoE name like `Qwen3.8-Flash-Next` or `1.5b` whose params
+/// token is NOT the total, or a name with no recognizable `NNb`/`N.Nb` marker.
+///
+/// # Safety invariant (hardware is ground truth)
+/// The caller MUST NOT turn a `None` into a "fits" verdict. A name we cannot
+/// size offline must be reported as *uncertain* (fit pending a real GGUF
+/// header probe), never as a confident "~N GB fits" — otherwise an un-sizable
+/// flagship like Flash-Next (125B-total MoE) ranks as if it fit this 16 GB box.
+fn params_total_b(repo: &str) -> Option<f64> {
+    let lower = repo.to_lowercase();
+    let bytes = lower.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if !bytes[i].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        // consume `NN` or `N.N` digit run
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            i += 1;
+        }
+        let mut decimal = false;
+        if i + 1 < bytes.len() && bytes[i] == b'.' && bytes[i + 1].is_ascii_digit() {
+            decimal = true;
+            i += 1;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+        }
+        // the digit run must be immediately followed by `b` to be a params marker
+        if i < bytes.len() && bytes[i] == b'b' {
+            let slice = std::str::from_utf8(&bytes[start..i]).unwrap_or("");
+            let v = slice.parse::<f64>().ok().filter(|&v| v > 0.0);
+            if let Some(v) = v {
+                // decimal params (3.8, 1.5, 3.1) are MoE/composite names where
+                // the visible number is NOT the total → uncertain
+                if decimal {
+                    return None;
+                }
+                return Some(v);
+            }
+        }
+    }
+    None
+}
+
+/// Map total-params (B) to an approximate GGUF size in GB (f16‑ish ballpark).
+fn params_to_gb(p: f64) -> f64 {
+    if p >= 60.0 {
+        40.0
+    } else if p >= 30.0 {
+        16.0
+    } else if p >= 13.0 {
+        9.0
+    } else if p >= 6.0 {
+        5.0
+    } else {
+        2.0
+    }
+}
+
 /// size when no real GGUF header is available. If the release payload looks
 /// like a HF model with tags, we approximate; otherwise we degrade gracefully.
 /// Real fit uses `fit::estimate` when GGUF meta is fetchable — that path is
@@ -84,14 +148,20 @@ fn hw_term(release: &Release, vram_mb: u64) -> (f64, bool, String) {
     if release.source == "github" {
         return (1.0, true, "engine release".into());
     }
-    // HF: guess from payload downloads/likes + name; if repo contains "27b"/"70b" etc
+    // HF: guess total size from the params marker in the repo name. Names we
+    // cannot size (decimal/composite MoE, or no marker) are UNCERTAIN — we must
+    // not claim a fit for an un-sizable flagship (see params_total_b).
     let repo = release.repo.to_lowercase();
-    let guess_gb: f64 = if repo.contains("70b") || repo.contains("72b") { 40.0 }
-    else if repo.contains("32b") || repo.contains("27b") { 16.0 }
-    else if repo.contains("14b") { 9.0 }
-    else if repo.contains("8b") || repo.contains("7b") { 5.0 }
-    else if repo.contains("3b") || repo.contains("1b") { 2.0 }
-    else { 8.0 }; // middle default
+    let guess_gb: f64 = match params_total_b(&repo) {
+        Some(total_b) => params_to_gb(total_b),
+        None => {
+            return (
+                0.0,
+                false,
+                "size unknown (composite/MoE) — probe GGUF in MARKET before testing".into(),
+            );
+        }
+    };
     let guess_mb = (guess_gb * 1024.0) as u64;
     let fits = guess_mb + 1600 < vram_mb; // reserve 1.6G like fit.rs
     let score = if fits { 1.0 } else if guess_mb < vram_mb + 4000 { 0.5 } else { 0.0 };
@@ -191,5 +261,24 @@ mod tests {
         let ranked = rank(vec![a, b], &[], &BenchBest::default(), 16000, 0, &Weights::default());
         // 7B fits, 70B doesn't → 7B first
         assert!(ranked[0].0.repo.contains("7B"));
+    }
+    #[test]
+    fn moe_flagship_never_overclaims_fit() {
+        // Flash-Next is a 125B-total MoE, AGENTS.md's explicit hardware
+        // non-starter. Its decimal/composite name must NOT rank as "fits".
+        let r = rel("hf", "bartowski/Qwen3.8-Flash-Next-GGUF");
+        let s = score_one(&r, &[], &BenchBest::default(), 16000, 0.0, &Weights::default());
+        assert!(!s.fits, "Flash-Next must not be declared fittable offline");
+        assert_eq!(s.hw, 0.0);
+    }
+    #[test]
+    fn decimal_params_is_uncertain_not_tiny() {
+        // Qwen3.6-35b-a3b: active 3B but 35B total. The 35B integer must win,
+        // not a 2GB "3b" guess.
+        assert_eq!(params_total_b("bartowski/Qwen3.6-35b-a3b-GGUF"), Some(35.0));
+        // decimal-only names are un-sizable → uncertain
+        assert_eq!(params_total_b("bartowski/Qwen3.8-Flash-Next-GGUF"), None);
+        // plain integers still resolve
+        assert_eq!(params_total_b("unsloth/Qwen3-8B-GGUF"), Some(8.0));
     }
 }

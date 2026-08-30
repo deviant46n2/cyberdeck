@@ -246,7 +246,7 @@ Contract: business logic in cores; Tauri is serialization only.
 
 *Next without a megacomponent:*
 
-* Feeds/Intelligence view (reuses Market table): `fetched_at`, `source:repo@rev`, `WORTH_TESTING` badge; poll button is `feeds_poll` with 15s spinner. No new global state — `feeds_list(limit)` fetch on mount.
+* Feeds/Intelligence view (from Market table) — LANDED (2026-08-30) as a dedicated FEEDS view: live `feeds_rank` lane with score / `✓ fits` / `why`, workload-hint reweight, and a `feeds_poll` POLL button with busy spinner. Self-fetching, no global state.
 * Workload picker: dropdown in Market header + Matrix/Compare form; filters tasks.
 * Hardware badge in HUD: `gpu · vram · driver · cyberdeck_ver` + tier badge per resident (ESTIMATED/VERIFIED/MEASURED).
 * Settings/audit drawer: `settings get/set` table + undo.
@@ -422,8 +422,8 @@ Which pieces already exist: download `.part`+resume, metadata inspect, fit, deri
 * `settings` (`key TEXT PK, value_json TEXT, updated_at`) + `audit_log(ts, actor, key, old_json, new_json, reason)` in `store.rs`. `deck settings get/set --reason msg` (+ `log`, `undo <ts>`). Typed validation (intervals, enabled_sources, thresholds). Agent writes go through this API — never raw file edits. Covers `AGENTS.md:18–19` requirement.
 
 **O4 — What changed / What to test (S):**
-
 * HUD/SIGNALS "New→Relevant→Worth testing" lane: releases since `fetched_at > last_seen`, filtered to `score > threshold`, enriched with `FIT at ctx`, `DISK`, `tok/s of current best equivalent`. Answers "what changed / what matters".
+  **Partial LANDED (2026-08-30):** a dedicated FEEDS view (`frontend/src/views/Feeds.tsx` + route) surfaces the live `feeds_rank` pipeline — hardware-grounded score, `✓/✗ fits`, and the `why` reasons behind each candidate, with a workload-hint selector (coding/reasoning/… reweights family overlap) and a POLL button. **Recency gate also LANDED (2026-08-30):** a `feeds.last_seen` epoch setting (written through the audit-tracked O3 settings store, actor `ui`) drives a persistent NEW marker computed as `fetched_at > last_seen`; "MARK SEEN" is the only thing that advances it, so "what changed since I last looked" survives routine polls. Still open from O4: automatic DISK/fit-at-ctx enrichment in the lane.
 
 **O5+ (Horizon 2)** deferred: background polling timers, notifications (HUD badge + tray), caching/ETag/429 per source — not in this MVP block.
 
@@ -485,19 +485,19 @@ Which pieces already exist: download `.part`+resume, metadata inspect, fit, deri
 
 * **8c — Workflow Foundation — DONE (headless):** `Role` ⟵ `ModelBinding` (a node is a role bound to a model), `Node`/`Edge`/`Workflow`/`Run`/`NodeRun`/`Message` data model, **pure DAG scheduler** (`deck_core::workflow::plan`: wavefronts, fan-in, `has_cycle`, unreachable), persistence tables (`roles`, `workflows`, `workflow_runs`, `node_runs`, + `role_id` on `matrix_runs`), and a runner-agnostic **headless executor** in `deck-engines::workflow` (`execute` walks waves; `StatelessRunner` via `run_prompt`; `AgenticRunner` via headless `opencode run`). CLI door `deck workflow {save,list,run,history}` landed + smoke-tested (DAG drives both nodes, errors → `Partial`, history persists). Schema version gate landed (Phase 0).
 
-* **8d — Canvas UI shell (next, no reactflow dependency):** minimal DOM canvas rendering saved workflows from `deck workflow list`; per-node `xterm.js` pane; `Run workflow` fans out to `console.rs` / the executor behind `wf-*` events. `reactflow` becomes an optional renderer.
+* **8d — Canvas UI shell — LANDED (2026-08-30):** minimal DOM canvas rendering saved workflows; per-node positioned cards (roles bound to models) + SVG edges for the graph, and a RUN/STOP door that fans out to the Tauri background executor behind `wf-*` events. `reactflow` stays an optional renderer; xterm.js panes come with the fuller 8d (agentic node sessions). Tauri twin landed: `deck-tauri/src/workflow.rs` (background run registry + `wf-*` events + `workflow_{seed,save,list,get,run,stop,history}`), registered in `src-tauri` + `api.workflow*`, with a headless persistence test. `Run workflow` now drives the DAG end-to-end from the CANVAS view.
 
 * **8e — model matrix / per-role bench:** a workflow the user has run against several models accumulates per-role benchmark rows (`role_id` on `matrix_runs` feeds Phase 4 recommend) so the canvas can show "which model best at which node".
 
 * **8f — branch / loop / supervisor:** conditional routing (`WorkflowEdge.condition`, reserved in the 8c model), a loop construct policed by `ExecSettings.max_iterations`, and a supervisor node that can spawn/retry sub-workflows.
 
-*Code:* `crates/deck-core/src/workflow.rs` (domain + DAG scheduler), `crates/deck-core/src/wfstore.rs` (persistence), `crates/deck-engines/src/workflow.rs` (executor + runners), `crates/deck-cli/src/cmd/workflow.rs` (CLI door); pending: `crates/deck-tauri/src/workflow.rs` + `src-tauri` `workflow_*` commands (background runs + `wf-*` events) — the Tauri twin of the CLI door, reachable from an 8d UI.
+*Code:* `crates/deck-core/src/workflow.rs` (domain + DAG scheduler), `crates/deck-core/src/wfstore.rs` (persistence), `crates/deck-engines/src/workflow.rs` (executor + runners), `crates/deck-cli/src/cmd/workflow.rs` (CLI door); LANDED: `crates/deck-tauri/src/workflow.rs` + `src-tauri` `workflow_*` commands (background runs + `wf-*` events) — the Tauri twin of the CLI door, reachable from the 8d CANVAS view. `deck workflow save` seeds the `residents`-agnostic Coding Review template this UI renders.
 
-*API:* `deck workflow {save --seed|--file, list, run <id> --runner stateless|agentic [--dir] [--model], history [<id>]}` (landed); pending `deck-tauri` `workflow_save/list/run/stop/history` + `wf-*` events, frontend `api.workflow*`.
+*API:* `deck workflow {save --seed|--file, list, run <id> --runner stateless|agentic [--dir] [--model], history [<id>]}` (landed); LANDED `deck-tauri` `workflow_{save,list,get,run,stop,history}` + `wf-start/wf-node/wf-done/wf-error` events, frontend `api.workflow*`.
 
-*Frontend:* not started — lands with 8d.
+*Frontend:* LANDED (8d shell): `frontend/src/views/Canvas.tsx` + route in `App.tsx`.
 
-*Tests:* (landed) DAG scheduler linear/fan-in-fan-out/cycle; wfstore role+workflow+run round-trips; executor fan-in payload, stop, runner errors; CLI smoke (seed→list→run→history). Pending: 8d canvas drag persists.
+*Tests:* (landed) DAG scheduler linear/fan-in-fan-out/cycle; wfstore role+workflow+run round-trips; executor fan-in payload, stop, runner errors; CLI smoke (seed→list→run→history); Tauri `execute_and_persist` headless two-node chain. Pending: 8d canvas drag persists.
 
 *Dep:* Phase 2 workloads + Phase 4 recommend (to pick per-node model) + Phase 7a `agent_tools`; HUD concurrent sessions are green.
 
@@ -534,10 +534,10 @@ Which pieces already exist: download `.part`+resume, metadata inspect, fit, deri
 | Phase 4 deterministic recommend | H | S | Low | P1 | Explainable sentences; no ML |
 | Phase 6 one-click experiment pipeline | H | M | Med | P1 | Closes the loop; depends on 1–2 |
 | Phase 7a–b agent READ/ANALYZE/MODIFY | M | S | Low | P1 | Safe agent value; shell-free |
-| O4 HUD what changed lane | M | S | Low | P1 | Daily-driver surface |
+| O4 HUD what changed lane | M | S | Low | P1 | FEEDS view + recency gate landed; DISK/fit-at-ctx enrichment open |
 | Phase 8 Canvas — draggable TUIs (8a) | M | S | Low | P1 DONE | HUD multi-agent, zen+local side-by-side, embedded `opencode attach` TUIs |
 | Phase 8 Canvas — workflow foundation (8c) | M | M | Med | P1 DONE | Role/Model/DAG scheduler + headless executor + `deck workflow` CLI; Phase 0 schema gate |
-| Phase 8 Canvas — UI shell (8d), matrix (8e), branch/loop (8f) | M | M–L | Med | P2 | Tauri `workflow_*` + `wf-*` events, then canvas UI + per-role bench |
+| Phase 8 Canvas — UI shell (8d), matrix (8e), branch/loop (8f) | M | M–L | Med | P2 | 8d DONE (Tauri `workflow_*` + `wf-*` + CANVAS view); 8e per-role bench + 8f branch/loop remain |
 | Phase 7c agent EXECUTE (consented) | M | M | High | P2 | Needs experiment + audit solid |
 | Phase 9 daemon/autonomous/self-heal | M | M–L | High | P3 | Long-term; do not start early |
 
@@ -603,6 +603,7 @@ None of this is P0. Each depends on stable Workload+Evaluation+Hardware+Recommen
 *Where:* `crates/deck-core/src/relevance.rs` + `crates/deck-core/src/store.rs` (extend `releases` query), `crates/deck-cli/src/cmd/feeds.rs`, `crates/deck-tauri/src/feeds.rs`, `frontend/src/views/Market.tsx` rank column.
 *Why now:* O1 already lands the catalog; without ranking, Market is still `"what's popular?"` not `"what's worth testing on your 5070 Ti?"` The scoring fn is pure (hardware+fit+bench deltas), ships without migrations, and immediately makes the feeds pipeline demoable.
 *Unlocks:* Personalized Market (Phase 5 O4) and Recommend (Phase 4) have signal to query.
+  **Hardening (2026-08-30, hardware-is-truth):** the offline `hw_term` size guess was a blind name-substring heuristic with an `else 8.0` default — it declared the 125B-total MoE `Qwen3.8-Flash-Next` "~8GB ✓ fits" (it does NOT fit this 16 GB box). Now `params_total_b` parses the repo name: integer totals (`28b`, `70b`, `35b`, …) size it; decimal/composite MoE names (`3.8`, `1.5`) and names with no `NNb` marker are *uncertain* → `fits:false` with "probe GGUF in MARKET before testing", so the rank never overclaims a fit for an un-sizable flagship. Reminder: real fit still comes from `fit::estimate` on the actual GGUF header via MARKET's `browse_fit_remote`.
 
 **2. Phase 1 — Enrich measurements (ttft_ms, prompt_tps, engine_version)**
 *Where:* `crates/deck-core/src/store.rs` (`ALTER ADD COLUMN` + `MatrixRow`/`BenchRow` options), `crates/deck-engines/src/inference.rs`+`health.rs` (`GenSample` extension), `crates/deck-engines/src/matrix.rs`, `crates/deck-cli/src/cmd/bench.rs` `--out` JSON, `crates/deck-tauri/src/bench.rs`.

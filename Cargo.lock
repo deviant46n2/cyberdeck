@@ -716,6 +716,7 @@ dependencies = [
  "deck-engines",
  "deck-feeds",
  "portable-pty",
+ "rusqlite",
  "serde",
  "serde_json",
  "tauri",

@@ -444,6 +444,53 @@ fn dedup_delete(identity: String, delete_file: bool) -> Result<usize, String> {
     deck_tauri::dedup_delete(&identity, delete_file).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn workflow_seed() -> Result<String, String> {
+    blocking(move || deck_tauri::workflow_seed().map_err(|e| e.to_string())).await
+}
+
+#[tauri::command]
+async fn workflow_save(body: String) -> Result<String, String> {
+    blocking(move || deck_tauri::workflow_save(&body).map_err(|e| e.to_string())).await
+}
+
+#[tauri::command]
+async fn workflow_list() -> Result<Vec<deck_core::workflow::Workflow>, String> {
+    blocking(move || deck_tauri::workflow_list().map_err(|e| e.to_string())).await
+}
+
+#[tauri::command]
+fn workflow_run(
+    workflow_id: String,
+    runner: String,
+    dir: Option<String>,
+    model: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<deck_tauri::WfStarted, String> {
+    deck_tauri::workflow_run(&app, &workflow_id, &runner, dir.as_deref(), model.as_deref())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn workflow_stop(run_id: String) -> Result<(), String> {
+    deck_tauri::workflow_stop(&run_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn workflow_history(
+    workflow_id: Option<String>,
+) -> Result<Vec<deck_core::wfstore::WorkflowRunRow>, String> {
+    blocking(move || deck_tauri::workflow_history(workflow_id.as_deref()).map_err(|e| e.to_string()))
+        .await
+}
+
+#[tauri::command]
+async fn workflow_get(
+    workflow_id: String,
+) -> Result<Option<deck_core::workflow::Workflow>, String> {
+    blocking(move || deck_tauri::workflow_get(&workflow_id).map_err(|e| e.to_string())).await
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -505,7 +552,14 @@ fn main() {
             settings_set,
             settings_list,
             agent_tools,
-            analyze_relevance
+            analyze_relevance,
+            workflow_seed,
+            workflow_save,
+            workflow_list,
+            workflow_get,
+            workflow_run,
+            workflow_stop,
+            workflow_history
         ])
         .run(tauri::generate_context!())
         .expect("error while running cyberdeck");

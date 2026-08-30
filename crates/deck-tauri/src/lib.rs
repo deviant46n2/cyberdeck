@@ -25,6 +25,7 @@ mod recommend;
 mod scan;
 mod settings;
 mod test;
+mod workflow;
 mod workloads;
 mod tui;
 
@@ -103,6 +104,10 @@ pub use hardware::hardware_profile;
 pub use recommend::recommend;
 pub use settings::{settings_get, settings_list, settings_set};
 pub use workloads::{Workload, workloads_list};
+pub use workflow::{
+    WfDoneEvt, WfNodeEvt, WfStarted, workflow_get, workflow_history, workflow_list, workflow_run,
+    workflow_save, workflow_seed, workflow_stop,
+};
 pub use profiles::{
     ProfileRow, UseResult, delete_profile, list_profiles, render_profile_unit, save_profile,
     use_profile,
