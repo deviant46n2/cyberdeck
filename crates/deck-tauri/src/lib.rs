@@ -117,8 +117,8 @@ pub use profiles::{
     use_profile,
 };
 pub use scan::{
-    DupRow, ModelRow, ScanResult, dedup, dedup_delete, delete_model, index_downloaded, list_models,
-    scan,
+    DeleteResult, DupRow, ModelRow, ScanResult, dedup, dedup_delete, delete_model,
+    index_downloaded, list_models, scan,
 };
 pub use test::{
     TestLine, TestPhase, TestResult, TweakResult, test_profile, test_profile_tweaked, test_stop,

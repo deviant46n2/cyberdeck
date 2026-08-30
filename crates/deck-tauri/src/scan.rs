@@ -185,13 +185,86 @@ pub fn dedup() -> anyhow::Result<Vec<DupRow>> {
         .collect())
 }
 
+/// Outcome of a delete request, for the UI/CLI to surface honestly.
+#[derive(Serialize)]
+pub struct DeleteResult {
+    pub rows: usize,
+    pub file_deleted: bool,
+    pub message: String,
+}
+
+/// True when a path lives in ollama's content-addressed blob store, whose
+/// files are root-owned (`ollama` user) and cannot be removed by the app user.
+fn is_ollama_blob(path: &str) -> bool {
+    path.contains("/ollama/blobs/")
+}
+
 /// Delete a model from the index. If `delete_file` is true the file is removed
-/// from disk as well (for local GGUF/safetensors only — skip for ollama/hub
-/// paths that the user should manage externally).
-pub fn delete_model(path: &str, delete_file: bool) -> anyhow::Result<usize> {
+/// from disk as well. Ollama blobs are deleted through the daemon (`ollama rm
+/// <tag>`), which owns the files; local GGUFs are unlinked directly. Whatever
+/// cannot be removed is reported back instead of swallowed, because a survivor
+/// on disk is re-indexed by the next scan and only an honest message explains
+/// why it came back.
+pub fn delete_model(path: &str, delete_file: bool) -> anyhow::Result<DeleteResult> {
     let db = deck_core::store::default_db_path();
     let conn = deck_core::store::open(&db)?;
-    deck_core::store::delete_model(&conn, path, delete_file)
+    delete_model_with(&conn, path, delete_file)
+}
+
+/// Testable core of [`delete_model`]: file work against a caller-provided
+/// connection. The row is dropped regardless of file outcome.
+fn delete_model_with(
+    conn: &rusqlite::Connection,
+    path: &str,
+    delete_file: bool,
+) -> anyhow::Result<DeleteResult> {
+    let (file_deleted, message) = if !delete_file {
+        (false, "index entry removed; file kept on disk".to_string())
+    } else if is_ollama_blob(path) {
+        match deck_feeds::ollama_delete_blob(path) {
+            deck_feeds::OllamaDeleteOutcome::Removed { blob_gone: true } => {
+                (true, "ollama model and its blob are gone".to_string())
+            }
+            deck_feeds::OllamaDeleteOutcome::Removed { blob_gone: false } => (
+                false,
+                "ollama tag removed, but the shared blob is still on disk and stays vaulted until every referencing model is removed".to_string(),
+            ),
+            deck_feeds::OllamaDeleteOutcome::NoTag => (
+                false,
+                format!(
+                    "no installed ollama model references this blob; delete the root-owned file once as root: sudo rm {path}"
+                ),
+            ),
+            deck_feeds::OllamaDeleteOutcome::DaemonUnavailable => (
+                false,
+                format!("ollama is not running (or rejected the delete); start it, or remove the file once as root: sudo rm {path}"),
+            ),
+        }
+    } else {
+        let p = std::path::Path::new(path);
+        let result = if p.is_file() {
+            std::fs::remove_file(p)
+        } else if p.is_dir() {
+            std::fs::remove_dir_all(p)
+        } else {
+            Ok(())
+        };
+        match result {
+            Ok(_) => (true, "file removed".to_string()),
+            Err(e) => (
+                false,
+                format!("file could not be removed: {e}; it is gone from the Vault but will be re-indexed by the next scan until removed manually"),
+            ),
+        }
+    };
+
+    let rows = deck_core::store::delete_model(conn, path, false)?;
+
+    Ok(DeleteResult {
+        rows,
+        file_deleted,
+        message,
+    })
 }
 
 /// Delete all duplicate models in a group except the cheapest one.
@@ -200,4 +273,71 @@ pub fn dedup_delete(identity: &str, delete_file: bool) -> anyhow::Result<usize> 
     let db = deck_core::store::default_db_path();
     let conn = deck_core::store::open(&db)?;
     deck_core::store::dedup_delete(&conn, identity, delete_file)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_gguf(tag: &str) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!(
+            "deck-tauri-delete-test-{}-{tag}.gguf",
+            std::process::id()
+        ));
+        std::fs::write(&p, b"GGUF").unwrap();
+        p
+    }
+
+    fn db_with_model(path: &str) -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        deck_core::store::ensure_models_table(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO models (path, format) VALUES (?1, 'gguf')",
+            [path],
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn local_delete_unlinks_file_and_drops_row() {
+        let f = temp_gguf("local");
+        let conn = db_with_model(f.to_str().unwrap());
+        let r = delete_model_with(&conn, f.to_str().unwrap(), true).unwrap();
+        assert!(r.file_deleted);
+        assert_eq!(r.rows, 1);
+        assert!(!f.exists(), "file must be gone");
+    }
+
+    #[test]
+    fn delete_without_file_keeps_disk_and_drops_row() {
+        let f = temp_gguf("keep");
+        let conn = db_with_model(f.to_str().unwrap());
+        let r = delete_model_with(&conn, f.to_str().unwrap(), false).unwrap();
+        assert!(!r.file_deleted);
+        assert_eq!(r.rows, 1);
+        assert!(f.exists(), "file stays when delete_file is false");
+        std::fs::remove_file(&f).unwrap();
+    }
+
+    #[test]
+    fn unknown_path_returns_zero_rows() {
+        let conn = db_with_model("/nope/missing.gguf");
+        let r = delete_model_with(
+            &conn,
+            std::env::temp_dir().join("no-such-file.gguf").to_str().unwrap(),
+            false,
+        )
+        .unwrap();
+        assert_eq!(r.rows, 0);
+        assert!(!r.file_deleted);
+    }
+
+    #[test]
+    fn ollama_blob_paths_are_routed_away_from_local_unlink() {
+        assert!(is_ollama_blob(
+            "/var/lib/ollama/blobs/sha256-abc123"
+        ));
+        assert!(!is_ollama_blob("/home/me/models/qwen.gguf"));
+    }
 }

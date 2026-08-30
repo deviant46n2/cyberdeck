@@ -412,8 +412,14 @@ export const browseFitRemote = (p: {
 export const scanWithEvent = () =>
   invoke<ScanResult>("scan_with_event");
 
+export interface DeleteResult {
+  rows: number;
+  file_deleted: boolean;
+  message: string;
+}
+
 export const deleteModel = (path: string, deleteFile: boolean) =>
-  invoke<number>("delete_model", { path, deleteFile });
+  invoke<DeleteResult>("delete_model", { path, deleteFile });
 
 export const dedupDelete = (identity: string, deleteFile: boolean) =>
   invoke<number>("dedup_delete", { identity, deleteFile });

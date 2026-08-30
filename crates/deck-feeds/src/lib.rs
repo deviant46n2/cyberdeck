@@ -35,7 +35,7 @@ pub use market::{
     MarketFile, SearchHit, model_files, parse_search, parse_siblings, remote_file_size,
     search_models,
 };
-pub use ollama::{OllamaModelInfo, ollama_models};
+pub use ollama::{OllamaDeleteOutcome, OllamaModelInfo, ollama_delete_blob, ollama_models};
 pub use probe::{HfModel, diff_new, fetch_gguf_bytes, fetch_org, parse_models};
 pub use watchlist::{
     add_org, check, default_watchlist, ensure_seeds, list_watchlist, open, remove_org,

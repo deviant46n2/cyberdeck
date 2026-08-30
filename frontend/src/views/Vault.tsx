@@ -130,10 +130,13 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
     setDeleting((prev) => new Set(prev).add(path));
     try {
       const deleted = await api.deleteModel(path, true);
-      if (deleted > 0) {
+      if (deleted.rows > 0) {
         setFlash(path);
         setTimeout(() => setFlash(null), 2000);
         void onReload();
+      }
+      if (!deleted.file_deleted) {
+        alert(`Removed from the Vault, but the file is still on disk.\n${deleted.message}`);
       }
     } catch (e) {
       alert(`Delete failed: ${String(e)}`);

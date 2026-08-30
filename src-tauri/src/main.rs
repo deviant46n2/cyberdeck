@@ -476,7 +476,7 @@ fn analyze_relevance(repo: String, workload: Option<String>) -> Result<serde_jso
 }
 
 #[tauri::command]
-fn delete_model(path: String, delete_file: bool) -> Result<usize, String> {
+fn delete_model(path: String, delete_file: bool) -> Result<deck_tauri::DeleteResult, String> {
     deck_tauri::delete_model(&path, delete_file).map_err(|e| e.to_string())
 }
 
