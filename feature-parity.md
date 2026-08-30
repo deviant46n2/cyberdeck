@@ -311,6 +311,33 @@ High-risk = destructive or system-level (delete models, rewrite units outside
 `deck`, spend disk/VRAM, push autonomous loops). Those require explicit
 authorization; the agent prefers typed APIs over raw shell.
 
+### One controller, not a swarm (2026-08-30)
+
+Parked as a deliberate engineering statement: **no "mini swarm" of independent
+communicating agents.** The idea recurs ("agent breaks tasks down, agents talk
+to each other"), and it is a trap on this machine and this roadmap:
+
+- **Hardware.** One resident model on a 16 GB card. Independent parallel
+  agents mean parallel inference, which the VRAM cannot hold; even llama.cpp
+  `--parallel` slots share one model's KV. "Independent" collapses to
+  time-sliced anyway.
+- **It already exists, mostly.** The console runs `opencode`, which already
+  decomposes work and spawns tool-calling subagents (architect/debugger/
+  explore/…) under a single controller. Add the Canvas workflow executor and
+  per-role bench: the coordinated multi-role pipeline is ~70% present.
+- **Anti-drift rule.** AGENTS.md forbids new orchestration/agent machinery
+  unless a demonstrated problem requires it. No demonstrated user pain points
+  at more agents.
+
+The swarm value minus the swarm overhead is **artifacts + handoff**: one
+session's *verified* outputs (bench rows, generated reports, working code)
+persist into the vault/bench DB as structured context, and a follow-up session
+or a downstream workflow role consumes them instead of re-deriving or
+chat-passing them. That is the extension worth building, as a layer over the
+existing workflow surface — never as a separate communicating-agent system.
+Revisit only if a concrete user need requires it; not on the active build
+path.
+
 ---
 
 ## Scoring legend
