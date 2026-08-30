@@ -79,6 +79,10 @@
     {
       "commit": "fde7d0c",
       "reason": "fix(console) SIGTERM-immune opencode sessions escalate to SIGKILL: agent-stop robustness under the console surface already documented in feature-parity.md \u00a73 (agent-skill surface, precedent 68f44be judgment) \u2014 STOP becomes reliable, no flag/config/API surface the docs describe changed. Doc-less by definition."
+    },
+    {
+      "commit": "2bf4278",
+      "reason": "fix(console) runs die with the app (PDEATHSIG) + stop drops the session lock before wait: agent-lifecycle robustness under the console surface already documented in feature-parity.md \u00a73 (agent-skill surface; precedents 68f44be/fde7d0c) \u2014 crash exits can no longer orphan an opencode run on a dead app, and STOP reaches the pid instead of blocking on the session lock. No flag/config/API surface the docs describe changed; doc-less by definition."
     }
   ]
 }
