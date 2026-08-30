@@ -75,6 +75,10 @@
     {
       "commit": "32fc908",
       "reason": "fix(tauri) vault delete actually removes model files: deletion is a high-risk action already documented in feature-parity.md \u00a74 ('High-risk = destructive or system-level (delete models, ...)'); this fix aligns behavior with that documented intent by (a) propagating unlink failures instead of swallowing them, (b) routing ollama blobs through `ollama rm <tag>` (daemon owns the root-owned files), and (c) surfacing an honest DeleteResult to the VAULT door. No flag/config/API surface the docs describe changed; the delete mechanics are implementation, doc-less by definition."
+    },
+    {
+      "commit": "fde7d0c",
+      "reason": "fix(console) SIGTERM-immune opencode sessions escalate to SIGKILL: agent-stop robustness under the console surface already documented in feature-parity.md \u00a73 (agent-skill surface, precedent 68f44be judgment) \u2014 STOP becomes reliable, no flag/config/API surface the docs describe changed. Doc-less by definition."
     }
   ]
 }
