@@ -17,17 +17,15 @@ const ENGINE_NODES: { engine: string; host: string; port: number }[] = [
 export default function Hud({
   models,
   profiles,
-  onUnit,
   onChanged,
 }: {
   models: api.ModelRow[];
   dups: api.DupRow[];
   profiles: api.ProfileRow[];
-  onUnit: (u: string) => void;
   onChanged: () => void;
 }) {
   const [prompt, setPrompt] = useState("");
-  const [dir] = useState("/home/deviant/Projects/cyberdeck");
+  const [dir, setDir] = useState("/home/deviant/Projects/cyberdeck");
   const [auto, setAuto] = useState(false);
   const [harnessModel, setHarnessModel] = useState("");
   const [customModel, setCustomModel] = useState("");
@@ -326,7 +324,10 @@ export default function Hud({
             <input type="checkbox" checked={auto} onChange={(e)=>setAuto(e.target.checked)} />
             auto-approve
           </label>
-          <span className="dim" style={{fontSize:10}}>dir: {dir}</span>
+          <label className="row" style={{gap:6, fontSize:11, color:"var(--muted)"}}>
+            project dir
+            <input type="text" value={dir} onChange={(e)=>setDir(e.target.value)} style={{width:180, background:"var(--bg)", border:"1px solid var(--line)", color:"var(--text)", padding:"2px 6px", fontSize:11, fontFamily:"inherit"}} />
+          </label>
         </div>
       )}
 
@@ -336,7 +337,7 @@ export default function Hud({
       <div ref={sessionsRef} style={{flex:1, overflow:"auto", position:"relative", padding:"8px 4px 16px", minWidth:520}}>
         {!hasSessions ? (
           <div style={{height:"100%", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", textAlign:"center", padding:"40px 20px 20px"}}>
-            <div style={{fontSize:12, fontWeight:600, letterSpacing:0.5, color:"var(--muted)", marginBottom:8}}>AGENT CONSOLE</div>
+            <div style={{fontSize:12, fontWeight:600, letterSpacing:0.5, color:"var(--muted)", marginBottom:8}}>AGENT HUD</div>
             <div className="dim" style={{fontSize:12, marginBottom:24, letterSpacing:1}}>what should the agent do?</div>
             <div style={{display:"flex", gap:8, flexWrap:"wrap", justifyContent:"center", maxWidth:520}}>
               {[

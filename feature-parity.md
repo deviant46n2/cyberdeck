@@ -100,7 +100,7 @@ That means four architecture commitments:
    rewire already points them at the right baseURL. The single-unit swap stays
    as the default, but a "resident" flag keeps N engines running concurrently.
 
-2. **Concurrent chat sessions across residents.** HUD/CONSOLE already run N
+2. **Concurrent chat sessions across residents.** the HUD already runs N
    concurrent *agent* sessions; generalise so each session pins an
    engine-slot+model, streams tokens (not just opencode ANSI lines), and is
    swappable live. "Flip between loadouts a lot" = retarget the *next* message
@@ -200,8 +200,8 @@ and the port map:
 - Following chunk (Phase B): a model detail panel reachable from every view —
   file facts, fit at current ctx, all flavors (apply/bench/edit), bench history.
 
-The engine menus (VAULT load/test buttons, DOWNLOADS "TEST WITH" picker, HUD /
-CONSOLE status pills) all derive from the `engine_list` registry — a runtime
+The engine menus (VAULT load/test buttons, DOWNLOADS "TEST WITH" picker, HUD
+status pills) all derive from the `engine_list` registry — a runtime
 appears everywhere the moment it's registered; nothing is a hardcoded button.
 
 Build as: `deck bringup --model <path> --engine freetoken [--dedicated-port]`
@@ -311,6 +311,17 @@ High-risk = destructive or system-level (delete models, rewrite units outside
 `deck`, spend disk/VRAM, push autonomous loops). Those require explicit
 authorization; the agent prefers typed APIs over raw shell.
 
+### HUD is the single agent door (2026-08-30)
+
+The CONSOLE tab was removed as a second `opencode run` door — the HUD is the
+one agentic console, and it carries the loaded model, so agent work always
+flows through the model you have loaded (per the direction, the loaded model
+is the control surface). All agent-session affordances live in the HUD:
+per-session stop (now backed by TERM→SIGKILL escalation so SIGTERM-immune
+agents actually die), dismiss, `--auto` toggle, per-session model pick, and an
+editable project dir. The backend `opencode run` session manager, reaper, and
+events are untouched — the HUD is simply their only UI door.
+
 ### One controller, not a swarm (2026-08-30)
 
 Parked as a deliberate engineering statement: **no "mini swarm" of independent
@@ -321,7 +332,7 @@ to each other"), and it is a trap on this machine and this roadmap:
   agents mean parallel inference, which the VRAM cannot hold; even llama.cpp
   `--parallel` slots share one model's KV. "Independent" collapses to
   time-sliced anyway.
-- **It already exists, mostly.** The console runs `opencode`, which already
+- **It already exists, mostly.** The HUD agent surface runs `opencode`, which already
   decomposes work and spawns tool-calling subagents (architect/debugger/
   explore/…) under a single controller. Add the Canvas workflow executor and
   per-role bench: the coordinated multi-role pipeline is ~70% present.
@@ -360,7 +371,7 @@ path.
 | Odysseus | cyberdeck | Status | Notes |
 |----------|-----------|--------|-------|
 | Multi-provider chat (local + API) | HUD harness + engine status | `PARTIAL` | Engines are a registry now (llamacpp/FreeToken/Ollama via `EngineDescriptor`); Ollama models serve through `/api/chat` (tested `deck bench matrix --ollama`). Still to add: ad-hoc OpenAI-compatible API providers + per-session engine pin. |
-| Autonomous coding agent | CONSOLE / HUD `opencode run` sessions | `DONE` | Streaming multi-session, `--auto`, per-session stop. Already better (bench-aware model pick). |
+| Autonomous coding agent | HUD `opencode run` sessions (single agent door; CONSOLE tab removed) | `DONE` | Streaming multi-session, `--auto`, per-session stop. Already better (bench-aware model pick). |
 | Tools / shell inside agent | inherited from opencode | `DONE` | Agent has read/edit/bash/task. |
 | MCP servers | none | `PORT` | opencode supports MCP; expose a per-session MCP picker so agents get DB/knowledge tools. |
 | Files upload / attachment | none | `PORT` | Add file attach to HUD prompt → passes context into `opencode run`. |
@@ -432,7 +443,7 @@ having at all. They are the reason this project exists, not Odysseus parity.
 
 ### B2. Live throughput measurement
 - `/metrics` probe → median generation tok/s, stored in `cyberdeck.db`.
-- `deck bench record` / `list` / `best`; CONSOLE **BENCH** writes the same table; TEST records a bench row tagged by test port.
+- `deck bench record` / `list` / `best`; the BENCH tab and HUD chat-header bench write the same table; TEST records a bench row tagged by test port.
 - `deck bench best` shows best tok/s per (model, engine) across stored history.
 - `DONE → EXTEND`: the **matrix grid** (`deck bench matrix`) now runs task
   prompts headlessly across model × quant × engine and records every trial —
@@ -483,7 +494,7 @@ landed stay listed as `DONE` for history.
 | 0 | **BringUp: one-click load** | Flagship flow | `deck bringup --model --engine` → derive max-ctx profile → verify on test port → install → bench & record. HUD `LOAD` button — **DONE (2026-08-28):** CLI, Tauri `bringup_start`, VAULT per-model/engine LOAD buttons, HUD LOAD button with engine selector, Bringup drawer with phase streaming + VRAM breakdown + Tweak & Retry panel + APPLY button all working | M |
 | 0a | **TEST → bench → APPLY chain** | W1 correctness | headless TEST (derive+verify) now records a `BenchRow` tagged by test port so the score survives; `apply_cached_profile` Tauri command + APPLY button lets you load a verified profile and bench+record in one click without re-deriving — **DONE (2026-08-28):** `bench_and_record` uses the single `measure_generation_tps` path; bench history + scoreboard share one measurement contract | S |
 | 1 | **Multi-model residency (PORT MAP)** | Direction §1 | each engine a fixed port slot (:18000/:1919/:11434) with an optional bound profile; `deck use` = bind to slot *and start*, N residents coexist; keep single-swap as default — **Landed (2026-08-28):** per-engine slots already existed as the architectural shape; now backed by a `residents` table (which profile is bound to each slot + a resident flag) and surfaced through `deck use --resident` (bind + run alongside other slots, single-swap stays default) and `deck engines status` (live port map: bound profile, systemd/health state, resident flag) + `deck engines stop <engine>` (stop a slot, leave the rest up). Tauri `port_map_status` mirrors the reader for the UI. **Landed (2026-08-28, UI tail):** the HUD renders the map as the PORT MAP card — state dot, bound profile, resident flag, latest bench tok/s per slot, per-slot STOP (Tauri `engine_stop`, the UI door to `deck engines stop`). **Landed (2026-08-30, per-slot client rewire):** `--managed` rewire is now engine-aware — `rewire::rewire_clients_for(store_id, port)` targets only the matching provider block in dsh (`settings.yaml`) + opencode (`opencode.json`), so binding a FreeToken resident to :1919 repoints the `freetoken` block without disturbing the llama.cpp block. Both doors wired (`deck use --managed` in `use_cmd.rs`, Tauri `use_profile` in `profiles.rs`). #1 is now fully closed. | M |
-| 2 | **Concurrent chat across residents** | Direction §2 | generalize HUD/CONSOLE: per-session engine+model pin, token streaming (not just opencode lines), live retarget of next message | M |
+| 2 | **Concurrent chat across residents** | Direction §2 | generalize HUD: per-session engine+model pin, token streaming (not just opencode lines), live retarget of next message | M |
 | 3 | **Bench-aware chat header** | Direction §3 | for each resident show tok/s + fit in chat header, so you can see where to type — **DONE (2026-08-28):** HUD top bar now shows per-resident fit verdict (PASS/WARN/OOM) + latest tok/s + live state dot; PORT MAP card also shows fit verdict column | S |
 | 4 | **Compare / A·B bench** | Odysseus §4 | `deck bench compare` CLI + tab; blind-random same prompts across residents, tok/s + score, agent synthesis — **compare CLI landed: blind scoring over the `matrix` grid, per-candidate failures surfaced; tab + agent synthesis still open** | M |
 | 4.5 | **Bench CLI doors + scoreboard** | W2 convenience | `deck bench best` (best tok/s per model × engine), `deck bench record`, `deck download <repo>`, `deck downloads run/list/discard` (resumable) — **DONE (2026-08-30):** CLI doors + Bench.tsx scoreboard grouped by model × engine (best/latest/avg/tok/s + runs), raw history list, and a record-now form; `deck download` picks the largest .gguf (or --file/--quant match) and streams into ~/models. The download queue is a shared `DownloadManager` (deck-feeds) driving BOTH the DOWNLOADS tab and the CLI (`deck downloads run` = queue + shard-set-aware index-on-landing; `list` = parked `.part` resume points; `discard` = drop a parked `.part`) — one truth, two doors | M |

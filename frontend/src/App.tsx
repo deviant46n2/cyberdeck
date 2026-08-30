@@ -6,7 +6,6 @@ import Vault from "./views/Vault";
 import Loadouts from "./views/Loadouts";
 import Signals from "./views/Signals";
 import Market from "./views/Market";
-import Console from "./views/Console";
 import Downloads from "./views/Downloads";
 import Bringup from "./views/Bringup";
 import Bench from "./views/Bench";
@@ -14,7 +13,7 @@ import Canvas from "./views/Canvas";
 import Compare from "./views/Compare";
 import Feeds from "./views/Feeds";
 
-const VIEWS = ["HUD", "VAULT", "SIGNALS", "FEEDS", "MARKET", "DOWNLOADS", "LOADOUTS", "CONSOLE", "COMPARE", "CANVAS", "BENCH"];
+const VIEWS = ["HUD", "VAULT", "SIGNALS", "FEEDS", "MARKET", "DOWNLOADS", "LOADOUTS", "COMPARE", "CANVAS", "BENCH"];
 
 export default function App() {
   const [view, setView] = useState("HUD");
@@ -22,7 +21,6 @@ export default function App() {
   const [models, setModels] = useState<api.ModelRow[]>([]);
   const [dups, setDups] = useState<api.DupRow[]>([]);
   const [profiles, setProfiles] = useState<api.ProfileRow[]>([]);
-  const [unit, setUnit] = useState<string>("");
   const activeCount = useSyncExternalStore(dls.subscribe, dls.activeCount);
 
   const refresh = async () => {
@@ -97,7 +95,6 @@ export default function App() {
             models={models}
             dups={dups}
             profiles={profiles}
-            onUnit={setUnit}
             onChanged={refresh}
           />
         )}
@@ -107,9 +104,8 @@ export default function App() {
         {view === "MARKET" && <Market />}
         {view === "DOWNLOADS" && <Downloads />}
         {view === "LOADOUTS" && (
-          <Loadouts profiles={profiles} onUnit={setUnit} onChanged={refresh} />
+          <Loadouts profiles={profiles} onChanged={refresh} />
         )}
-        {view === "CONSOLE" && <Console unit={unit} />}
         {view === "COMPARE" && <Compare />}
         {view === "CANVAS" && <Canvas />}
         {view === "BENCH" && <Bench />}

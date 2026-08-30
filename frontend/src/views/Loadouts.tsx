@@ -4,11 +4,9 @@ import LoadoutEditor, { defaultProfile } from "./LoadoutEditor";
 
 export default function Loadouts({
   profiles,
-  onUnit,
   onChanged,
 }: {
   profiles: api.ProfileRow[];
-  onUnit: (u: string) => void;
   onChanged: () => void;
 }) {
   const [sel, setSel] = useState<string>("");
@@ -31,7 +29,6 @@ export default function Loadouts({
     setMsg("");
     const r = await api.useProfile(name, true);
     setUnit(r.unit);
-    onUnit(r.unit);
   };
 
   const apply = async (name: string) => {
@@ -40,7 +37,6 @@ export default function Loadouts({
     setMsg("applying…");
     const r = await api.useProfile(name, false);
     setUnit(r.unit);
-    onUnit(r.unit);
     setMsg(`applied '${name}' — service restarted`);
   };
 

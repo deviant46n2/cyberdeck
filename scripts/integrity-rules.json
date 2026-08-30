@@ -179,12 +179,6 @@
         "reason": "Single CANVAS view component (node cards + SVG edges + RUN/STOP door + per-role bench table), mirroring the accepted Hud/Bringup/LoadoutEditor view entries; split would force prop-drilling across one page. AGENTS.md COHESION > ARBITRARY LINE COUNT"
       },
       {
-        "path": "frontend/src/views/Console.tsx",
-        "lines": 344,
-        "kind": "accepted",
-        "reason": "Single CONSOLE view component (agent session logs + skill surface + engine telemetry + bench history + last rendered unit), restored as the working agent console after a compare-clone regression; mirroring the accepted Hud/Bringup/Canvas view entries. Split would scatter the one live-session contract between the sessions grid and its event listeners. AGENTS.md COHESION > ARBITRARY LINE COUNT"
-      },
-      {
         "path": "frontend/src/lib/dl.test.ts",
         "lines": 304,
         "kind": "accepted",
