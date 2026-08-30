@@ -20,6 +20,7 @@
 //! dependency.
 
 mod download;
+pub mod feeds;
 mod market;
 mod ollama;
 mod probe;
@@ -35,3 +36,4 @@ pub use probe::{HfModel, diff_new, fetch_gguf_bytes, fetch_org, parse_models};
 pub use watchlist::{
     add_org, check, default_watchlist, ensure_seeds, list_watchlist, open, remove_org,
 };
+pub use feeds::{GithubSource, HfSource, Source, poll as feeds_poll};

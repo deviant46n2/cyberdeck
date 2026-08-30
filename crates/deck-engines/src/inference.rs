@@ -28,6 +28,9 @@ pub struct GenSample {
     pub tok_s_kind: &'static str,
     pub wall_ms: u64,
     pub error: Option<String>,
+    // Phase 1 enriched — None when engine doesn't report
+    pub prompt_tps: Option<f64>,
+    pub ttft_ms: Option<u64>,
 }
 
 fn agent() -> ureq::Agent {
@@ -52,6 +55,8 @@ fn sample_failed(start: Instant, text: &str) -> GenSample {
         tok_s_kind: "native",
         wall_ms: wall_ms(start),
         error: Some(text.to_string()),
+        prompt_tps: None,
+        ttft_ms: None,
     }
 }
 
@@ -128,6 +133,15 @@ fn sample_from_openai_json(j: &serde_json::Value, wall: u64) -> GenSample {
             _ => (None, "wall"),
         },
     };
+    // prompt throughput when timings present
+    let prompt_tps = j
+        .pointer("/timings/prompt_per_second")
+        .and_then(|v| v.as_f64())
+        .or_else(|| {
+            let n = j.pointer("/timings/prompt_n").and_then(|v| v.as_u64())?;
+            let ms = j.pointer("/timings/prompt_ms").and_then(|v| v.as_f64())?;
+            if ms > 0.0 { Some(n as f64 / (ms / 1000.0)) } else { None }
+        });
     GenSample {
         ok: true,
         text: j
@@ -141,6 +155,8 @@ fn sample_from_openai_json(j: &serde_json::Value, wall: u64) -> GenSample {
         tok_s_kind,
         wall_ms: wall,
         error: None,
+        prompt_tps,
+        ttft_ms: None, // streaming TTFT needs SSE; non-streamed endpoint can't report it
     }
 }
 
@@ -183,6 +199,11 @@ fn sample_from_ollama_json(j: &serde_json::Value, wall: u64) -> GenSample {
             _ => None,
         },
     };
+    let prompt_tps = j
+        .pointer("/prompt_eval_count")
+        .and_then(|v| v.as_u64())
+        .zip(j.pointer("/prompt_eval_duration").and_then(|v| v.as_u64()))
+        .and_then(|(c, ns)| if ns > 0 { Some(c as f64 / (ns as f64 / 1e9)) } else { None });
     GenSample {
         ok: true,
         text: j
@@ -200,6 +221,8 @@ fn sample_from_ollama_json(j: &serde_json::Value, wall: u64) -> GenSample {
         },
         wall_ms: wall,
         error: None,
+        prompt_tps,
+        ttft_ms: j.pointer("/load_duration").and_then(|v| v.as_u64()).map(|ns| ns / 1_000_000),
     }
 }
 

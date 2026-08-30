@@ -24,10 +24,12 @@ mod unit;
 pub mod status;
 
 pub mod compare;
+pub mod evaluation;
 pub mod grid;
 pub mod matrix;
 pub mod rewire;
 pub mod scoring;
+pub mod workflow;
 
 pub use health::{
     BringupOutcome, OOM_MARKERS, fetch_metrics, health_ok, health_ok_any, health_wait,
@@ -39,6 +41,7 @@ pub use systemd::{
     apply, backup_existing, backup_file, install, reload_daemon, restore_last_good, start, stop,
 };
 pub use unit::{build_args, render_unit};
+pub use workflow::{AgenticRunner, ExecReport, NodeResult, NodeRunner, StatelessRunner, execute};
 
 #[cfg(test)]
 mod tests {

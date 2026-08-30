@@ -264,6 +264,26 @@ fn opencode_stop(id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn tui_spawn(dir: String, cols: u16, rows: u16, app: tauri::AppHandle) -> Result<String, String> {
+    deck_tauri::tui_spawn(&app, &dir, cols, rows).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn tui_write(id: String, bytes: Vec<u8>) -> Result<(), String> {
+    deck_tauri::tui_write(&id, &bytes).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn tui_resize(id: String, cols: u16, rows: u16) -> Result<(), String> {
+    deck_tauri::tui_resize(&id, cols, rows).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn tui_stop(id: String) -> Result<(), String> {
+    deck_tauri::tui_stop(&id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn hw_info() -> deck_tauri::HwInfo {
     deck_tauri::hw_info()
 }
@@ -349,6 +369,72 @@ async fn engine_bin_clear(store_id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn feeds_poll(sources: Vec<String>) -> Result<deck_tauri::FeedsPollResult, String> {
+    blocking(move || deck_tauri::feeds_poll(sources).map_err(|e| e.to_string())).await
+}
+
+#[tauri::command]
+fn feeds_list(limit: usize) -> Result<Vec<deck_tauri::Release>, String> {
+    deck_tauri::feeds_list(limit).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn feeds_rank(limit: usize, workload: Option<String>) -> Result<Vec<deck_tauri::RankedRelease>, String> {
+    deck_tauri::feeds_rank(limit, workload).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn engine_start(engine: String) -> Result<(), String> {
+    deck_tauri::engine_start(&engine).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn bringup_reset() -> Result<(), String> {
+    deck_tauri::bringup_reset();
+    Ok(())
+}
+
+#[tauri::command]
+fn workloads_list() -> Result<Vec<deck_tauri::Workload>, String> {
+    deck_tauri::workloads_list().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn hardware_profile() -> Result<deck_core::hardware::HardwareProfile, String> {
+    deck_tauri::hardware_profile().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn recommend(workload: String, objective: String) -> Result<Vec<deck_core::recommend::RankedCandidate>, String> {
+    deck_tauri::recommend(workload, objective).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn settings_get(key: String) -> Result<Option<String>, String> {
+    deck_tauri::settings_get(&key).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn settings_set(key: String, value: String, reason: String, actor: String) -> Result<(), String> {
+    deck_tauri::settings_set(key, value, reason, actor).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn settings_list() -> Result<Vec<(String, String, i64)>, String> {
+    deck_tauri::settings_list().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn agent_tools() -> Vec<deck_tauri::agent::ToolDef> {
+    deck_tauri::agent_tools()
+}
+
+#[tauri::command]
+fn analyze_relevance(repo: String, workload: Option<String>) -> Result<serde_json::Value, String> {
+    deck_tauri::analyze_relevance(repo, workload)
+}
+
+#[tauri::command]
 fn delete_model(path: String, delete_file: bool) -> Result<usize, String> {
     deck_tauri::delete_model(&path, delete_file).map_err(|e| e.to_string())
 }
@@ -394,6 +480,10 @@ fn main() {
             engine_status,
             opencode_run,
             opencode_stop,
+            tui_spawn,
+            tui_write,
+            tui_resize,
+            tui_stop,
             hw_info,
             browse_fit_remote,
             tweak_profile,
@@ -402,7 +492,20 @@ fn main() {
             engine_bin_set,
             engine_bin_clear,
             port_map_status,
-            engine_stop
+            engine_stop,
+            feeds_poll,
+            feeds_list,
+            feeds_rank,
+            engine_start,
+            bringup_reset,
+            workloads_list,
+            hardware_profile,
+            recommend,
+            settings_get,
+            settings_set,
+            settings_list,
+            agent_tools,
+            analyze_relevance
         ])
         .run(tauri::generate_context!())
         .expect("error while running cyberdeck");

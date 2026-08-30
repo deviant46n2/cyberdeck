@@ -57,6 +57,17 @@ pub struct BringupResult {
 
 static BRINGUP_RUNNING: AtomicBool = AtomicBool::new(false);
 
+pub fn bringup_reset() {
+    BRINGUP_RUNNING.store(false, Ordering::SeqCst);
+}
+
+struct BringupGuard;
+impl Drop for BringupGuard {
+    fn drop(&mut self) {
+        BRINGUP_RUNNING.store(false, Ordering::SeqCst);
+    }
+}
+
 /// One-click load: derive the best-max-ctx loadout from a local GGUF or
 /// safetensors model dir + engine choice, verify it headlessly on the engine's
 /// test port (never touching live services; walks the ctx ladder on OOM),
@@ -165,6 +176,8 @@ fn save_and_apply(
     let conn = deck_core::store::open(&db)?;
     deck_core::store::ensure_profile_schema(&conn)?;
     deck_core::store::upsert_profile(&conn, p)?;
+    deck_core::store::ensure_resident_schema(&conn).ok();
+    let _ = deck_core::store::set_resident(&conn, p.engine.store_id(), &p.name, Some(true));
     deck_engines::apply(p, false)?;
     line(format!(
         "[apply] '{}' live on :{} ({}), health OK",
@@ -214,6 +227,10 @@ fn bench_and_record(app2: &tauri::AppHandle, p: &Profile, line: &impl Fn(String)
                 ctx: p.ctx_size,
                 tps: v,
                 at,
+                hardware_profile_id: None,
+                engine_version: None,
+                prompt_tps: None,
+                ttft_ms: None,
             };
             match deck_core::store::insert_bench(&conn, &row) {
                 Ok(id) => line(format!("[bench] recorded #{id}: {v:.1} tok/s")),
@@ -314,9 +331,10 @@ fn derive_and_verify(
             },
         );
         line(format!(
-            "[verify] loading on :{test_port} — live :{} untouched…",
+            "[verify] loading on :{test_port} — live :{} untouched… (this takes 10–30s for 20G+ models, check `nvidia-smi` for VRAM)",
             p.port
         ));
+        line(format!("[verify] ctx={} weights GPU {} MiB + RAM {} MiB — waiting for health probe…", p.ctx_size, derived.weights_gpu_mb, derived.weights_ram_mb));
         let outcome = deck_engines::verify_on_test_port(&p, test_port, Duration::from_secs(180));
         line(format!(
             "[verify] {} ({})",
@@ -390,6 +408,7 @@ pub fn test_model_start(
     let app2 = app.clone();
     let model = model_path.to_string();
     std::thread::spawn(move || {
+        let _guard = BringupGuard;
         let finish = |res: BringupResult| {
             let _ = app2.emit("bringup-result", res);
             let _ = app2.emit(
@@ -431,6 +450,10 @@ pub fn test_model_start(
                         ctx: p.ctx_size,
                         tps: v,
                         at,
+                        hardware_profile_id: None,
+                        engine_version: None,
+                        prompt_tps: None,
+                        ttft_ms: None,
                     },
                 );
             }
@@ -473,6 +496,7 @@ pub fn apply_cached_profile(
     let app2 = app.clone();
     let profile2 = profile.clone();
     std::thread::spawn(move || {
+        let _guard = BringupGuard;
         let finish = |res: BringupResult| {
             let _ = app2.emit("bringup-result", res);
             let _ = app2.emit(

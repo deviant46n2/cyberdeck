@@ -23,6 +23,15 @@ fn row(model: &str, task: &str, run: u32, ok: bool, tok_s: Option<f64>, output: 
         wall_ms: 100,
         output: output.into(),
         at: 0,
+        workload_id: None,
+        hardware_profile_id: None,
+        engine_version: None,
+        prompt_tps: None,
+        ttft_ms: None,
+        peak_vram_mb: None,
+        model_rev: None,
+        sampling_json: None,
+        role_id: None,
     }
 }
 

@@ -60,6 +60,18 @@ pub(crate) fn stop(engine: &str) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn start(engine: &str) -> Result<()> {
+    let eng = parse_engine(engine)?;
+    let store_id = eng.store_id();
+    let db = deck_core::store::default_db_path();
+    let conn = deck_core::store::open(&db)?;
+    let r = deck_core::store::get_resident(&conn, store_id)?.ok_or_else(|| anyhow::anyhow!("no profile bound to {store_id} — load one via `deck use <profile> --resident` first"))?;
+    let p = deck_core::store::get_profile(&conn, &r.profile)?.ok_or_else(|| anyhow::anyhow!("bound profile '{}' not found", r.profile))?;
+    deck_engines::apply(&p, false)?;
+    println!("[{store_id}] started '{}' on :{}", p.name, p.port);
+    Ok(())
+}
+
 pub(crate) fn list() -> Result<()> {
     let db = deck_core::store::default_db_path();
     let conn = deck_core::store::open(&db)?;

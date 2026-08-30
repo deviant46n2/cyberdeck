@@ -97,6 +97,8 @@ pub(crate) fn run(
     // Save the derived loadout, then apply (install + start + health-wait).
     let (_db, mut conn) = with_profiles_db()?;
     deck_core::store::upsert_profile(&mut conn, &p)?;
+    deck_core::store::ensure_resident_schema(&mut conn).ok();
+    let _ = deck_core::store::set_resident(&mut conn, p.engine.store_id(), &p.name, Some(true));
     println!(
         "[bringup] saved loadout '{}' (engine={:?} port={})",
         p.name, p.engine, p.port
@@ -124,6 +126,10 @@ pub(crate) fn run(
             ctx: p.ctx_size,
             tps,
             at,
+            hardware_profile_id: None,
+            engine_version: None,
+            prompt_tps: None,
+            ttft_ms: None,
         };
         let id = deck_core::store::insert_bench(&conn, &row)?;
         println!("[bringup] bench recorded #{id}: {tps:.1} tok/s");

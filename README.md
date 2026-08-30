@@ -17,10 +17,11 @@ Named for what it is: a personal machine for loading capability shards.
 ## Principles
 
 1. **CLI-first.** The desktop app consumes crate APIs; it never gates them.
-2. **The alias contract.** Swaps preserve `qwen3.8-27b @ :18000`; downstream clients are rewired automatically (with backups), never reconfigured by hand.
-3. **Lore as data.** Hard-won VRAM facts (desktop reserve, ckb-next cost, ctx fallback ladder) live in config, not comments.
-4. **Boring internals.** Neon synthwave shell, plain Rust underneath.
-5. **Backups before writes.** Any file cyberdeck generates over gets a timestamped `.bak` first.
+2. **Local execution, online intelligence.** Models and infra are local; discovery, relevance, and recommendations are online. Cyberdeck continuously connects the AI ecosystem (HF, GitHub, runtime releases) with local hardware/bench history.
+3. **The alias contract.** Swaps preserve `qwen3.8-27b @ :18000`; downstream clients are rewired automatically (with backups), never reconfigured by hand.
+4. **Lore as data.** Hard-won VRAM facts (desktop reserve, ckb-next cost, ctx fallback ladder) live in config, not comments.
+5. **Boring internals.** Neon synthwave shell, plain Rust underneath.
+6. **Backups before writes.** Any file cyberdeck generates over gets a timestamped `.bak` first.
 
 ## Phases
 
@@ -34,6 +35,7 @@ Named for what it is: a personal machine for loading capability shards.
 | 6 | FreeToken | offload VRAM fit (RAM spill) + live bench history + engine status |
 | 7 | Agent | CONSOLE runs `opencode run` as a streaming agent (live output) |
 | 8 | Market | browse/search HF sources with exact remote GGUF fit (header-fetch + nvidia-smi) |
+| 9 | Intelligence | online feed adapters, release catalog, hardware-grounded relevance scoring, agent tool API — the online half of "local execution, online intelligence" (see `feature-parity.md` Online Intelligence Architecture) |
 
 ## Dev loop
 

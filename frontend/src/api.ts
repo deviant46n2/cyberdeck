@@ -230,6 +230,7 @@ export interface FitBreakdown {
 
 export const bringupStart = (model: string, engine: string, fast = false) =>
   invoke<void>("bringup_start", { model, engine, fast });
+export const bringupReset = () => invoke<void>("bringup_reset");
 
 /** Headless TEST — derive + verify on the test port, never touches live. */
 export const testModelStart = (model: string, engine: string) =>
@@ -334,6 +335,15 @@ export const opencodeRun = (p: {
 export const opencodeStop = (id: string) =>
   invoke<void>("opencode_stop", { id });
 
+// --- embedded opencode TUIs (HUD canvas panes) ---
+export const tuiSpawn = (dir: string, cols: number, rows: number) =>
+  invoke<string>("tui_spawn", { dir, cols, rows });
+export const tuiWrite = (id: string, bytes: number[]) =>
+  invoke<void>("tui_write", { id, bytes });
+export const tuiResize = (id: string, cols: number, rows: number) =>
+  invoke<void>("tui_resize", { id, cols, rows });
+export const tuiStop = (id: string) => invoke<void>("tui_stop", { id });
+
 // --- loadout editing ---
 export const saveProfile = (p: Profile) => invoke<void>("save_profile", { profile: p });
 export const deleteProfile = (name: string) =>
@@ -414,3 +424,35 @@ export interface TweakResult {
   ctx: number;
   tps: number | null;
 }
+
+// --- Phase 2..4 intelligence APIs ---
+
+export interface WorkloadTask { label: string; prompt: string; evaluator: string; evaluator_config: string; }
+export interface Workload { id: string; label: string; description: string; tasks: WorkloadTask[]; }
+export const workloadsList = () => invoke<Workload[]>("workloads_list");
+
+export interface HardwareProfile {
+  id: number; gpu: string; vram_mb: number; cpu: string; ram_mb: number;
+  os: string; driver: string; cuda: string; cyberdeck_ver: string; engines_json: string;
+  captured_at: number; content_hash: string;
+}
+export const hardwareProfile = () => invoke<HardwareProfile>("hardware_profile");
+
+export interface RankedCandidate { model: string; engine: string; runs: number; success_rate: number; mean_score: number; p50_tok_s: number | null; mean_tok_s: number | null; explain: string; }
+export const recommend = (workload: string, objective: string) => invoke<RankedCandidate[]>("recommend", { workload, objective });
+
+export interface Release { source: string; repo: string; rev: string; kind: string; title: string; url: string; published_at: string; payload_json: string; fetched_at: number; }
+export interface ScoredRelease { release: Release; score: { total: number; hw: number; family: number; novelty: number; bench: number; recency: number; fits: boolean; reasons: string[] } }
+export const feedsList = (limit: number) => invoke<Release[]>("feeds_list", { limit });
+export const feedsPoll = (sources: string[]) => invoke<{ fetched: number; inserted: number }>("feeds_poll", { sources });
+export const feedsRank = (limit: number, workload?: string | null) => invoke<ScoredRelease[]>("feeds_rank", { limit, workload: workload ?? null });
+
+export const settingsGet = (key: string) => invoke<string | null>("settings_get", { key });
+export const settingsSet = (key: string, value: string, reason: string, actor: string) => invoke<void>("settings_set", { key, value, reason, actor });
+export const settingsList = () => invoke<[string, string, number][]>("settings_list");
+
+export const engineStart = (engine: string) => invoke<void>("engine_start", { engine });
+
+export interface ToolDef { name: string; description: string; permission: string; }
+export const agentTools = () => invoke<ToolDef[]>("agent_tools");
+export const analyzeRelevance = (repo: string, workload?: string | null) => invoke<unknown>("analyze_relevance", { repo, workload: workload ?? null });

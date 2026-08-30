@@ -27,6 +27,7 @@ pub(crate) fn record(
     let db = deck_core::store::default_db_path();
     let conn = deck_core::store::open(&db)?;
     deck_core::store::ensure_bench_schema(&conn)?;
+    let hw_id = deck_core::store::capture_hardware_profile(&conn).ok();
     let row = deck_core::store::BenchRow {
         id: 0,
         engine: engine.clone(),
@@ -36,6 +37,10 @@ pub(crate) fn record(
         ctx,
         tps,
         at,
+        hardware_profile_id: hw_id,
+        engine_version: None,
+        prompt_tps: None,
+        ttft_ms: None,
     };
     let id = deck_core::store::insert_bench(&conn, &row)?;
     println!("recorded #{id}: {tps:.1} tok/s from {engine} {host}:{port}");
@@ -81,6 +86,30 @@ fn parse_tasks(tasks: &[String]) -> Result<Vec<(String, String)>> {
     deck_engines::grid::parse_tasks(tasks)
 }
 
+pub(crate) fn resolve_tasks(cli_tasks: &[String], workload: Option<&str>) -> Result<Vec<(String, String)>> {
+    let mut tasks = Vec::new();
+    if let Some(wid) = workload {
+        let db = deck_core::store::default_db_path();
+        let conn = deck_core::store::open(&db)?;
+        deck_core::store::ensure_seeded_workloads(&conn)?;
+        if let Some(w) = deck_core::store::get_workload(&conn, wid)? {
+            for t in w.tasks {
+                tasks.push((t.label, t.prompt));
+            }
+        } else {
+            anyhow::bail!("unknown workload '{wid}' — known: coding, reasoning, instruction, assistant, agent");
+        }
+    }
+    if !cli_tasks.is_empty() {
+        let mut cli = parse_tasks(cli_tasks)?;
+        tasks.append(&mut cli);
+    }
+    if tasks.is_empty() {
+        anyhow::bail!("pass --task \"label=prompt\" or --workload <id>");
+    }
+    Ok(tasks)
+}
+
 /// Parsed matrix knobs shared down to the grid runner.
 pub(crate) struct GridOpts {
     pub(crate) tasks: Vec<(String, String)>,
@@ -90,13 +119,12 @@ pub(crate) struct GridOpts {
 }
 
 impl GridOpts {
-    pub(crate) fn parse(
-        tasks: &[String],
+    pub(crate) fn parse_parts(
+        tasks: Vec<(String, String)>,
         runs: u32,
         max_tokens: u32,
         bin: &[String],
     ) -> Result<Self> {
-        let tasks = parse_tasks(tasks)?;
         let mut bins: std::collections::HashMap<Engine, PathBuf> = std::collections::HashMap::new();
         for b in bin {
             let (e, path) = b

@@ -50,6 +50,27 @@ function pushLine(text: string) {
 }
 
 let initialized = false;
+let watchdog: ReturnType<typeof setTimeout> | null = null;
+
+function armWatchdog() {
+  if (watchdog) clearTimeout(watchdog);
+  watchdog = setTimeout(() => {
+    if (state.running) {
+      state = {
+        ...state,
+        running: false,
+        phase: "error",
+        lines: [...state.lines, "[timeout] bring-up stalled — no progress in 180s, check logs"].slice(-9),
+        result: { ok: false, summary: "bring-up timed out after 180s with no progress", name: "", port: 0, ctx: 0, tps: null, fit: null },
+      };
+      bump();
+    }
+  }, 180_000);
+}
+
+function clearWatchdog() {
+  if (watchdog) { clearTimeout(watchdog); watchdog = null; }
+}
 
 /** Idempotently attach the backing listeners. */
 export function init(): void {
@@ -57,6 +78,7 @@ export function init(): void {
   initialized = true;
 
   listen<{ phase: string }>("bringup-phase", ({ payload }) => {
+    if (payload.phase === "done") clearWatchdog(); else armWatchdog();
     state =
       payload.phase === "done"
         ? { ...state, running: false, phase: "done" }
@@ -75,6 +97,7 @@ export function init(): void {
   });
 
   listen<api.BringupResult>("bringup-result", ({ payload }) => {
+    clearWatchdog();
     state = { ...state, result: payload };
     if (!payload.ok) pushLine(`[error] ${payload.summary}`);
     bump();
@@ -84,6 +107,7 @@ export function init(): void {
 /** Kick off a one-click load. Errors surface as an immediate failed run. */
 export async function startBringup(modelPath: string, engine: string): Promise<void> {
   init();
+  armWatchdog();
   state = {
     running: true,
     mode: "load",
@@ -96,6 +120,7 @@ export async function startBringup(modelPath: string, engine: string): Promise<v
   try {
     await api.bringupStart(modelPath, engine);
   } catch (e) {
+    clearWatchdog();
     const msg = String(e);
     state = {
       ...state,
@@ -114,6 +139,7 @@ export async function startBringup(modelPath: string, engine: string): Promise<v
  * touched and nothing is installed. Result marks itself "NOT applied". */
 export async function startTest(modelPath: string, engine: string): Promise<void> {
   init();
+  armWatchdog();
   state = {
     running: true,
     mode: "test",
@@ -126,6 +152,7 @@ export async function startTest(modelPath: string, engine: string): Promise<void
   try {
     await api.testModelStart(modelPath, engine);
   } catch (e) {
+    clearWatchdog();
     const msg = String(e);
     state = {
       ...state,
@@ -169,6 +196,13 @@ export async function startApplyCached(): Promise<void> {
 /** Clear the finished/failed card. No-op while a run is in flight. */
 export function dismiss(): void {
   if (state.running) return;
+  state = { running: false, mode: "load", phase: "idle", lines: [], result: null, profile: null };
+  bump();
+}
+
+export async function forceReset(): Promise<void> {
+  clearWatchdog();
+  try { await api.bringupReset(); } catch {}
   state = { running: false, mode: "load", phase: "idle", lines: [], result: null, profile: null };
   bump();
 }

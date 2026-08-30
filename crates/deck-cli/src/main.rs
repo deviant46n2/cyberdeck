@@ -103,6 +103,62 @@ enum Commands {
         #[arg(long)]
         bin: Option<String>,
     },
+    /// Online intelligence feeds: poll release catalog and list it
+    Feeds {
+        #[command(subcommand)]
+        action: FeedsCmd,
+    },
+    /// Workload definitions (Phase 2): coding, reasoning, instruction, assistant, agent
+    Workloads {
+        #[command(subcommand)]
+        action: WorkloadsCmd,
+    },
+    /// Infinite Agent Canvas workflows (Phase 8c): save, list, run, history
+    Workflow {
+        #[command(subcommand)]
+        action: WorkflowCmd,
+    },
+    /// Hardware profile (Phase 3): capture and show this machine's profile
+    Hardware {
+        #[command(subcommand)]
+        action: HardwareCmd,
+    },
+    /// Recommendation per workload (Phase 4)
+    Recommend {
+        /// Workload id (coding, reasoning, instruction, assistant, agent)
+        #[arg(long)]
+        workload: String,
+        /// Objective: quality|speed|efficient
+        #[arg(long, default_value = "quality")]
+        objective: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Typed settings + audit log (O3): get/set/log/undo
+    Settings {
+        #[command(subcommand)]
+        action: SettingsCmd,
+    },
+    /// One-click experiment pipeline (Phase 6): fit → matrix --workload → recommend
+    Experiment {
+        /// GGUF file or dir whose top-level *.gguf are the quants to grid
+        #[arg(long)]
+        model: PathBuf,
+        #[arg(long, default_value = "coding")]
+        workload: String,
+        #[arg(long, value_delimiter = ',', default_value = "llamacpp")]
+        engines: Vec<String>,
+        #[arg(long, value_delimiter = ',')]
+        ollama: Vec<String>,
+        #[arg(long, default_value_t = 1)]
+        runs: u32,
+        #[arg(long, default_value_t = 512)]
+        max_tokens: u32,
+        #[arg(long)]
+        bin: Vec<String>,
+        #[arg(long, default_value = "quality")]
+        objective: String,
+    },
     /// Download a repo's model file into ~/models (resumable).
     ///
     /// Picks the largest .gguf (or one matching --file/--quant), then
@@ -157,6 +213,9 @@ enum BenchCmd {
         /// Repeatable: task to run as "label=prompt"
         #[arg(long)]
         task: Vec<String>,
+        /// Expand tasks from a workload (coding|reasoning|instruction|assistant|agent); merges with --task
+        #[arg(long)]
+        workload: Option<String>,
         /// Repeats per cell (variance sampling)
         #[arg(long, default_value_t = 1)]
         runs: u32,
@@ -186,6 +245,9 @@ enum BenchCmd {
         /// Repeatable: task to run as "label=prompt"
         #[arg(long)]
         task: Vec<String>,
+        /// Expand tasks from a workload; merges with --task
+        #[arg(long)]
+        workload: Option<String>,
         /// Repeats per candidate (variance sampling)
         #[arg(long, default_value_t = 1)]
         runs: u32,
@@ -205,6 +267,104 @@ enum BenchCmd {
 }
 
 #[derive(Subcommand)]
+enum WorkloadsCmd {
+    /// List seeded workloads and their tasks
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum WorkflowCmd {
+    /// Persist a workflow document, or --seed the built-in Coding Review template
+    Save {
+        /// Save the built-in Coding Review workflow + roles
+        #[arg(long)]
+        seed: bool,
+        /// A workflow JSON document to import
+        #[arg(long)]
+        file: Option<PathBuf>,
+    },
+    /// List saved workflows
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Execute a workflow against a model
+    Run {
+        /// Workflow id
+        id: String,
+        /// Runner: stateless (default) or agentic (needs opencode + --dir)
+        #[arg(long, default_value = "stateless")]
+        runner: String,
+        /// Workspace dir for the agentic runner
+        #[arg(long)]
+        dir: Option<PathBuf>,
+        /// opencode model override for the agentic runner
+        #[arg(long)]
+        model: Option<String>,
+    },
+    /// List past workflow runs, optionally filtered to one workflow
+    History {
+        /// Filter to a single workflow id
+        workflow: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum HardwareCmd {
+    /// Capture (or reuse) and show the hardware profile for this machine
+    Profile {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum SettingsCmd {
+    Get { key: Option<String>, #[arg(long)] json: bool },
+    Set { key: String, value: String, #[arg(long, default_value = "cli")] reason: String, #[arg(long, default_value = "user")] actor: String },
+    Log { #[arg(long, default_value_t = 20)] limit: usize },
+    Undo { id: i64 },
+}
+
+#[derive(Subcommand)]
+enum FeedsCmd {
+    /// Poll configured sources (hf, github) and upsert into the release catalog
+    Poll {
+        /// Only poll these sources (repeatable): hf, github
+        #[arg(long)]
+        source: Vec<String>,
+    },
+    /// List recent releases from the catalog
+    List {
+        #[arg(long)]
+        json: bool,
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
+    /// Rank releases by hardware-grounded relevance (O2 + workload hint)
+    Rank {
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        workload: Option<String>,
+    },
+    /// Watch: periodically poll feeds (O5 background polling)
+    Watch {
+        #[arg(long, default_value_t = 3600)]
+        interval: u64,
+        #[arg(long)]
+        once: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum EngineCmd {
     /// List registered runtimes and their configured binaries
     List,
@@ -217,6 +377,11 @@ enum EngineCmd {
     },
     /// Stop an engine's unit and clear its port-map binding (other residents stay up)
     Stop {
+        /// engine id: llamacpp | freetoken | ollama
+        engine: String,
+    },
+    /// Start the bound profile on that engine's port (LM Studio-style)
+    Start {
         /// engine id: llamacpp | freetoken | ollama
         engine: String,
     },
@@ -324,12 +489,14 @@ fn main() -> Result<()> {
                 engines,
                 ollama,
                 task,
+                workload,
                 runs,
                 max_tokens,
                 bin,
                 out,
             } => {
-                let opts = cmd::bench::GridOpts::parse(&task, runs, max_tokens, &bin)?;
+                let tasks = cmd::bench::resolve_tasks(&task, workload.as_deref())?;
+                let opts = cmd::bench::GridOpts::parse_parts(tasks, runs, max_tokens, &bin)?;
                 cmd::bench::matrix(model, engines, ollama, opts, out)
             }
             BenchCmd::Compare {
@@ -337,13 +504,15 @@ fn main() -> Result<()> {
                 engines,
                 ollama,
                 task,
+                workload,
                 runs,
                 max_tokens,
                 bin,
                 seed,
                 out,
             } => {
-                let opts = cmd::bench::GridOpts::parse(&task, runs, max_tokens, &bin)?;
+                let tasks = cmd::bench::resolve_tasks(&task, workload.as_deref())?;
+                let opts = cmd::bench::GridOpts::parse_parts(tasks, runs, max_tokens, &bin)?;
                 cmd::bench::compare(model, engines, ollama, opts, seed, out)
             }
         },
@@ -359,11 +528,38 @@ fn main() -> Result<()> {
             EngineCmd::List => cmd::engines::list(),
             EngineCmd::Status { host } => cmd::engines::status(&host),
             EngineCmd::Stop { engine } => cmd::engines::stop(&engine),
+            EngineCmd::Start { engine } => cmd::engines::start(&engine),
             EngineCmd::Bin {
                 engine,
                 path,
                 clear,
             } => cmd::engines::bin(&engine, path, clear),
+        },
+        Commands::Workloads { action } => match action {
+            WorkloadsCmd::List { json } => cmd::workloads::list(json),
+        },
+        Commands::Workflow { action } => match action {
+            WorkflowCmd::Save { seed, file } => cmd::workflow::save(seed, file.as_deref()),
+            WorkflowCmd::List { json } => cmd::workflow::list(json),
+            WorkflowCmd::Run { id, runner, dir, model } => cmd::workflow::run(&id, &runner, dir.as_deref(), model.as_deref()),
+            WorkflowCmd::History { workflow, json } => cmd::workflow::history(workflow.as_deref(), json),
+        },
+        Commands::Hardware { action } => match action {
+            HardwareCmd::Profile { json } => cmd::hardware::profile(json),
+        },
+        Commands::Recommend { workload, objective, json } => cmd::recommend::run(workload, objective, json),
+        Commands::Settings { action } => match action {
+            SettingsCmd::Get { key, json } => cmd::settings::get(key, json),
+            SettingsCmd::Set { key, value, reason, actor } => cmd::settings::set(key, value, reason, actor),
+            SettingsCmd::Log { limit } => cmd::settings::log(limit),
+            SettingsCmd::Undo { id } => cmd::settings::undo(id),
+        },
+        Commands::Experiment { model, workload, engines, ollama, runs, max_tokens, bin, objective } => cmd::experiment::run(model, workload, engines, ollama, runs, max_tokens, bin, objective),
+        Commands::Feeds { action } => match action {
+            FeedsCmd::Poll { source } => cmd::feeds::poll(source),
+            FeedsCmd::List { json, limit } => cmd::feeds::list(json, limit),
+            FeedsCmd::Rank { limit, json, workload } => cmd::feeds::rank(limit, json, workload),
+            FeedsCmd::Watch { interval, once } => cmd::feeds::watch(interval, once),
         },
         Commands::Download { repo, file, quant, dry_run } => {
             cmd::download::run(&repo, file.as_deref(), quant.as_deref(), dry_run)

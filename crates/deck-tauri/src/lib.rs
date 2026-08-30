@@ -9,17 +9,24 @@
 
 pub use deck_core::profile::{Engine, EngineDescriptor, ModelSource, Profile};
 
+pub mod agent;
 mod bench;
 mod bringup;
 mod compare;
 mod console;
 mod downloads;
+mod feeds;
 mod fit;
+mod hardware;
 mod market;
 mod portmap;
 mod profiles;
+mod recommend;
 mod scan;
+mod settings;
 mod test;
+mod workloads;
+mod tui;
 
 /// The runtime registry for the engine menu: every runtime the app knows
 /// (llama.cpp / FreeToken / Ollama). Pure read from the descriptor table.
@@ -74,11 +81,12 @@ pub fn engine_bin_clear(store_id: &str) -> Result<(), String> {
 
 pub use bench::{BenchRow, EngineStatus, bench_history, bench_now, engine_status};
 pub use bringup::{
-    BringupLine, BringupPhase, BringupResult, FitBreakdown, apply_cached_profile, bringup_start,
-    test_model_start,
+    BringupLine, BringupPhase, BringupResult, FitBreakdown, apply_cached_profile, bringup_reset,
+    bringup_start, test_model_start,
 };
 pub use compare::{CandidateStanding, CompareReport, ScoredTrial, compare_run};
 pub use console::{OpDone, OpLine, OpStarted, opencode_run, opencode_stop};
+pub use tui::{tui_resize, tui_spawn, tui_stop, tui_write};
 pub use downloads::{
     DownloadDone, DownloadErr, DownloadEvt, DownloadStarted, download_cancel, download_remove,
     download_start,
@@ -88,7 +96,13 @@ pub use market::{
     MarketFileRow, MarketHit, SignalRow, browse_org, market_files, market_search, signals_check,
     watch_add, watch_remove, watchlist,
 };
-pub use portmap::{PortMapSlot, engine_stop, port_map_status};
+pub use feeds::{FeedsPollResult, RankedRelease, Release, feeds_list, feeds_poll, feeds_rank};
+pub use portmap::{PortMapSlot, engine_start, engine_stop, port_map_status};
+pub use agent::{analyze_relevance, agent_tools};
+pub use hardware::hardware_profile;
+pub use recommend::recommend;
+pub use settings::{settings_get, settings_list, settings_set};
+pub use workloads::{Workload, workloads_list};
 pub use profiles::{
     ProfileRow, UseResult, delete_profile, list_profiles, render_profile_unit, save_profile,
     use_profile,

@@ -55,12 +55,26 @@ export default function PortMap({ onChanged }: { onChanged?: () => void }) {
     }
   };
 
+  const start = async (engine: string) => {
+    setBusy(engine);
+    setMsg("");
+    try {
+      await api.engineStart(engine);
+      await load();
+      onChanged?.();
+    } catch (e) {
+      setMsg(String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   return (
     <div className="card" style={{ marginBottom: 10, fontSize: 11 }}>
       <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-        <h3 style={{ fontSize: 11, letterSpacing: 2, color: "var(--cyan)", margin: 0 }}>PORT MAP</h3>
+        <h3 style={{ fontSize: 11, letterSpacing: 2, color: "var(--cyan)", margin: 0 }}>LOADED MODELS</h3>
         <span className="dim" style={{ fontSize: 9 }}>
-          residents on fixed slots · latest bench tok/s
+          LM Studio-style · start/stop each slot independently
         </span>
       </div>
       {!slots ? (
@@ -101,16 +115,28 @@ export default function PortMap({ onChanged }: { onChanged?: () => void }) {
                   {s.fit_verdict}
                 </span>
               )}
-              {s.state !== "down" && (
+              {s.state !== "down" ? (
                 <button
                   className="ghost"
-                  style={{ fontSize: 9, padding: "3px 7px" }}
+                  style={{ fontSize: 9, padding: "3px 7px", borderColor: "var(--oom)", color: "var(--oom)" }}
                   onClick={() => stop(s.engine)}
                   disabled={busy === s.engine}
-                  title={`stop ${s.display} and clear its slot binding`}
+                  title={`stop ${s.display} — clears slot, other residents stay up (LM Studio-style)`}
                 >
                   {busy === s.engine ? "…" : "STOP"}
                 </button>
+              ) : s.profile ? (
+                <button
+                  className="ghost"
+                  style={{ fontSize: 9, padding: "3px 7px", borderColor: "var(--pass)", color: "var(--pass)" }}
+                  onClick={() => start(s.engine)}
+                  disabled={busy === s.engine}
+                  title={`start ${s.profile} on ${s.display} :${s.port}`}
+                >
+                  {busy === s.engine ? "…" : "START"}
+                </button>
+              ) : (
+                <span className="dim" style={{ fontSize: 9, width: 38, textAlign: "center" }}>—</span>
               )}
             </div>
           );

@@ -12,16 +12,79 @@ Where a feature is "same-but-better" we mark status `DONE` (already better) or
 `PORT` (reuse Odysseus approach, adapt to our stack). Where it's a whole new
 surface we don't care about, we don't build it.
 
+> **Correction (2026-08-29):** Cyberdeck is NOT offline-first. That constraint
+> belonged to an earlier project. Cyberdeck is **online-first in intelligence,
+> local in execution** — models, infra, and experiments run locally; discovery,
+> relevance, and recommendations are online. This doc was revised to reflect that.
 
 ---
 
-## Direction (2026-08-27)
+## Core Product Principle
+
+> **Cyberdeck continuously connects the rapidly changing online AI ecosystem with
+> the user's actual local hardware, models, runtimes, workloads, and benchmark
+> history, then uses that knowledge to help the user discover, test, configure,
+> select, and operate the best local AI models.**
+
+```
+              INTERNET
+                 │
+    ┌────────────┼─────────────┐
+    ↓            ↓             ↓
+Hugging Face  GitHub      Model Feeds
+    │            │             │
+    └────────────┼─────────────┘
+                 ↓
+          ONLINE INTELLIGENCE
+                 │
+                 ↓
+           CYBERDECK CATALOG
+                 │
+    ┌────────────┼─────────────┐
+    ↓            ↓             ↓
+  Models     Releases      Engines
+    │            │             │
+    └────────────┼─────────────┘
+                 ↓
+           LOCAL HARDWARE
+                 │
+                 ↓
+           EXPERIMENT ENGINE
+                 │
+       ┌─────────┴──────────┐
+       ↓                    ↓
+   BENCHMARKS           EVALUATION
+       │                    │
+       └──────────┬─────────┘
+                  ↓
+           RECOMMENDATIONS
+                  │
+                  ↓
+                AGENT
+                  │
+       ┌──────────┴──────────┐
+       ↓                     ↓
+   USER CONTROL       AUTOMATION
+```
+
+Daily-driver loop the app should eventually sustain without manual prompting:
+
+```
+Cyberdeck starts → checks local state → checks online sources → detects
+changes → updates catalog → evaluates relevance → notifies → monitors
+engines → tracks bench history → maintains recommendations
+```
+
+---
+
+## Direction (2026-08-27, amended 2026-08-29)
 
 cyberdeck is **not** just a model-fleet manager with an agent bolted on. It is a
 **chat-for-everything workspace where the loadout machinery is the runtime
-underneath chat — and benchmark data is what tells you which loadout to be in.**
+underneath chat — and benchmark data is what tells you which loadout to be in —
+and an online intelligence layer is what tells you what to try next.**
 
-That means three architecture commitments that shift how features land:
+That means four architecture commitments:
 
 1. **Multi-model residency, not single-unit swaps.** Today `deck use` swaps ONE
    active systemd unit at a time, so the alias contract holds on `:18000`/`:1919`.
@@ -47,8 +110,15 @@ That means three architecture commitments that shift how features land:
    header: show tok/s + fit for each resident so you can see before you type
    whether to say it to qwen @ :18000 or freetoken @ :1919.
 
-With that framing, the parity table below is ordered by **what makes the
-workspace feel complete as a chat surface first**, then benchmark depth.
+4. **Online intelligence closes the loop.** Local fit/bench tells you how the
+   fleet performs; **online discovery** tells you what *could* perform better.
+   HF + GitHub + runtime releases + quant feeds flow into a local catalog,
+   scored against your hardware/bench history, ranked by relevance, and surfaced
+   as "worth testing" — not just "new." See § Online Intelligence below.
+
+With that framing, the parity table is ordered by **what makes the workspace
+feel complete as a chat surface first**, then benchmark depth, then the
+intelligence layer that makes it a daily driver.
 
 ---
 
@@ -144,6 +214,76 @@ numbers to find the best model→task assignment."*
 
 ---
 
+## Online Intelligence Architecture (NEW — 2026-08-29)
+
+### Why it exists
+
+Local fit + bench answers "how does my fleet perform?" Online intelligence
+answers "what should I try next?" The two together make daily-driver value:
+
+```
+ONLINE ECOSYSTEM → Discovery → Filtering → Hardware compat → Similarity →
+Performance delta → Relevance → Candidate ranking → Experiment recommendation
+```
+
+> "A new Qwen quant was released 4 hours ago" is not the product.
+> "This quant fits your 5070 Ti, targets a family you already use, and may
+> beat your current coding model by ~15% on tokens/s — worth testing" is.
+
+### Principles
+
+- **Extensible source adapters, not one giant poller.** Each source (HF,
+  GitHub releases, runtime feeds, quant registries, announcement RSS) is a
+  small adapter implementing `fetch() → Vec<Release>` + `identity()` for
+  dedup. New sources are added as adapters, not branches.
+- **Poll, don't scrape.** Respect rate limits, cache ETags/Last-Modified,
+  back off on 429. `deck-feeds` already shells out via `curl`; extend that
+  discipline with per-source intervals, jitter, and a shared on-disk cache
+  (`~/.local/share/cyberdeck/feeds/` — JSON + mtime; never model blobs).
+- **Dedup + revision tracking.** A release has a stable id
+  `source:repo@rev` (HF revision, GitHub tag, etc.). Re-fetching the same rev
+  is a no-op. Only new revs trigger scoring/notification.
+- **Local-grounded scoring.** Relevance is not global popularity. Score =
+  `w1·fits_hardware + w2·family_overlap + w3·quant_novelty + w4·bench_delta + w5·recency`
+  where `fits_hardware` uses the same `estimate()` as the fit engine,
+  `family_overlap` checks installed models, and `bench_delta` compares expected
+  tok/s against `bench.best(model, engine)`.
+- **Typed, observable settings.** Feed enable/disable, intervals, thresholds,
+  and notification prefs are a `settings` table / JSON — validated, audited,
+  reversible, exposed through `deck settings` + `deck-tauri` commands. Agent
+  writes go through the same API and are audit-logged
+  `(who, prev, next, reason, ts)` so the user can undo.
+- **Agent is a first-class operator.** The agent should be able to READ
+  hardware/models/engines/bench/feeds, ANALYZE fit/relevance/drift, MODIFY
+  cyberdeck settings via the settings API, and EXECUTE controlled operations
+  (download/bench/launch) through typed tools — not arbitrary shell.
+
+### How it layers onto the existing crates
+
+| Concern | Where it lives | Notes |
+|---------|---------------|-------|
+| Source adapters + poll scheduler | `deck-feeds` (new `feeds/` submod) | One trait, N adapters; shared cache + rate-limit plumbing |
+| Release catalog + dedup | `deck-core::store` (new `releases` table) | `source, repo, rev, fetched_at, payload_json` |
+| Relevance scoring | `deck-core` (pure fn) | Takes `Release + hw_vram + installed_models + bench.best` → score |
+| Settings + audit log | `deck-core::store` (`settings`, `audit_log`) | Typed, validated, undoable |
+| Agent tool surface | `deck-tauri` commands + `deck` CLI verbs | Typed APIs the agent calls, not raw shell |
+| Notifications / HUD "what changed" | frontend `Signals` / new `Discover` view | Consumes the catalog + scores |
+
+### Agent permission ladder (explicit)
+
+```
+READ  →  ANALYZE  →  MODIFY CYBERDECK  →  EXECUTE CONTROLLED OPS  →  AUTONOMOUS OPS
+  │          │               │                        │                      │
+  always  always     settings API + audit       download/bench/launch   scheduled,
+  allowed allowed    reversible, undoable       explicit user consent   opt-in only
+```
+
+High-risk = destructive or system-level (delete models, rewrite units outside
+`deck`, spend disk/VRAM, push autonomous loops). Those require explicit
+authorization; the agent prefers typed APIs over raw shell.
+
+---
+
 ## Scoring legend
 
 | Status | Meaning |
@@ -153,6 +293,7 @@ numbers to find the best model→task assignment."*
 | `PORT` | Odysseus approach worth adapting to cyberdeck's Rust/TS/Tauri stack |
 | `SKIP` | deliberately not building — see note |
 | `EXTEND` | exists but we make it meaningfully stronger/benchmark-aware |
+| `NEW` | new online-intelligence item (no Odysseus analogue) |
 
 ---
 
@@ -209,7 +350,7 @@ numbers to find the best model→task assignment."*
 | Odysseus | cyberdeck | Status | Notes |
 |----------|-----------|--------|-------|
 | Notes / todos / reminders / CalDAV | none | `SKIP` | Out of scope for model management. |
-| Scheduled agent tasks | none | `PARTIAL` | **Keep a sliver**: auto-run `deck bench` + SIGNALS check on an interval (cron-style). Watch-only, benchmark-facing. |
+| Scheduled agent tasks | none | `PARTIAL` | **Keep a sliver**: auto-run `deck bench` + SIGNALS check on an interval (cron-style). Watch-only, benchmark-facing. Superseded by the online polling + autonomous-ops ladder below. |
 
 ### 8. Extras
 
@@ -265,13 +406,21 @@ having at all. They are the reason this project exists, not Odysseus parity.
 - Search/browse HF → background-prefetch fits for top results → verdict + VRAM
   column, per-quant. `DONE`.
 
+### B7. Online intelligence (NEW)
+- Release catalog + relevance scoring + "worth testing" recommendations — the
+  online half of the core principle. See Online Intelligence Architecture above.
+  First slice is foundational (adapters + catalog + scoring); notifications,
+  agent tools, and autonomous ops layer on top.
+
 ---
 
 ## Parity gap matrix (build order)
 
 Ordered by (a) relevance to cyberdeck as a **chat-for-everything workspace +
-benchmark control room**, then (b) effort. Chat-surface completeness first, so
-the app feels whole to use, then benchmark depth.
+benchmark control room + online intelligence layer**, then (b) effort.
+Chat-surface completeness first, so the app feels whole to use, then benchmark
+depth, then the automation that makes it a daily driver. Roadmap items already
+landed stay listed as `DONE` for history.
 
 | # | Gap | Tracks | cyberdeck target | Effort |
 |---|-----|--------|------------------|--------|
@@ -292,6 +441,41 @@ the app feels whole to use, then benchmark depth.
 | 12 | Scheduled bench/watch | §7 sliver | cron-style auto `deck bench` + SIGNALS on interval | S |
 
 Effort: `XS` <30 min · `S` <1 day · `M` 2–4 days.
+
+### Online intelligence roadmap (NEW — horizons)
+
+Not a separate product — the online half of the same core principle. Phased so
+foundational storage/API work lands before polling/automation.
+
+**Horizon 1 — Foundational (next):**
+
+| # | Gap | Target | Effort |
+|---|-----|--------|--------|
+| O1 | **Source adapters + release catalog** | `deck-feeds/feeds/` trait (`fetch → Vec<Release>`) + `releases` table (`source, repo, rev, payload_json, fetched_at`) + HF + GitHub-release adapters. Dedup by `source:repo@rev`; re-fetch same rev is no-op. Cache ETags on disk (`~/.local/share/cyberdeck/feeds/`). CLI: `deck feeds poll [--source hf]` / `deck feeds list`. Tauri mirrors. | M |
+| O2 | **Hardware-grounded relevance scoring** | Pure fn in `deck-core`: `score(Release, hw_vram, installed_models, bench.best) → f32` with `fits_hardware + family_overlap + quant_novelty + bench_delta + recency`. Powers MARKET ranking ("best that PASSes" becomes scored) and a `deck feeds rank` preview. | S |
+| O3 | **Settings + audit log (typed, reversible)** | `settings` + `audit_log(who, prev, next, reason, ts)` tables in `deck-core::store`. `deck settings get/set --reason …` + Tauri commands. Validated, observable, undoable. Agent writes go through this API — never raw file edits. | S |
+| O4 | **What changed / What should I care about (HUD)** | HUD/SIGNALS surface: new releases since last seen, filtered to scored-relevant, with FIT + DISK + tok/s context. Answers "what changed? what should I care about?" without leaving the app. | S |
+
+**Horizon 2 — Near-term (after H1 is solid):**
+
+| # | Gap | Target | Effort |
+|---|-----|--------|--------|
+| O5 | **Background polling service** | Per-source intervals + jitter + 429 backoff in `deck-feeds`; triggered by app launch + periodic timer (systemd user timer or in-app scheduler, not a custom daemon yet). Notifications via HUD badge + optional desktop notification. `deck feeds watch --interval 6h`. | M |
+| O6 | **Agent READ/ANALYZE tool surface** | Typed Tauri/CLI verbs the agent can call: `hw / models / engines / bench / feeds / releases / relevance`. No raw shell needed for inspection. Permission = READ/ANALYZE (always allowed). | S |
+| O7 | **Agent MODIFY + EXECUTE (controlled)** | Agent can `settings set`, `download <repo>`, `bench matrix/compare`, `bringup` through typed APIs — each audit-logged, reversible where applicable, requiring explicit user consent for destructive/system-level ops (disk spend, unit writes). Permission = MODIFY CYBERDECK / EXECUTE CONTROLLED OPS. | M |
+| O8 | **Experiment recommendations** | "Worth testing" list: top-N scored releases that fit hardware + beat current bench for a workload. One-click → `bringup` → `bench` → compare. Closes the Discovery→Experiment loop. | M |
+
+**Horizon 3 — Long-term (explicitly not now):**
+
+| # | Gap | Target | Notes |
+|---|-----|--------|-------|
+| O9 | **Persistent daemon + scheduled experiments** | Background service that polls, ranks, and (if authorized) auto-benchmarks candidates overnight. Opt-in autonomous ops. | Requires H1+H2 + permission model proven. |
+| O10 | **Self-healing / self-optimization** | Detect bench drift (perf −18% → investigate engine/driver/config/VRAM pressure → propose correction → re-bench → keep if verified). | Needs stable bench history + engine version tracking. |
+| O11 | **Broader source ecosystem** | OpenRouter availability, quant-format feeds, more RSS/API adapters — extensible via the adapter trait, not a rewrite. | Add adapters incrementally once trait is stable. |
+
+Effort scale same as above. Horizons are **sequencing, not authorization** —
+a roadmap row is not permission to implement it; land the flagship chat+bench
+path first.
 
 ---
 
@@ -326,3 +510,20 @@ cyberdeck is at-parity when:
    and stream reliably (the event-wiring fix is in).
 
 Update `## Status` header below as rows land.
+
+## Definition of "intelligence reached" (NEW)
+
+Separately from parity, the online intelligence is credible when:
+
+1. **H1 lands (O1–O4):** `deck feeds poll` populates a deduped release catalog;
+   relevance scoring ranks against hardware + installed models + bench history;
+   settings are typed/audited/reversible; HUD answers "what changed / what
+   should I care about?"
+2. **H2 lands (O5–O8):** background polling + agent READ/ANALYZE/MODIFY/EXECUTE
+   through typed APIs + one-click "worth testing" → bringup → bench loop.
+3. The user can leave cyberdeck running and, without manual searches, see
+   personalized "worth testing" candidates that actually fit their 5070 Ti and
+   would improve on their current workload.
+
+H3 (daemon + self-healing) is the autonomous horizon — not required for
+"intelligence reached," but the direction it grows.

@@ -102,3 +102,16 @@ pub fn engine_stop(engine_id: &str) -> anyhow::Result<()> {
     deck_core::store::clear_resident(&conn, eng.store_id())?;
     Ok(())
 }
+
+/// Start the bound resident for one engine (LM-Studio-style one-click start).
+/// Uses the profile already bound in `residents`; fails if none.
+pub fn engine_start(engine_id: &str) -> anyhow::Result<()> {
+    let eng = deck_core::profile::Engine::parse(engine_id)
+        .ok_or_else(|| anyhow::anyhow!("unknown engine '{engine_id}'"))?;
+    let db = deck_core::store::default_db_path();
+    let conn = deck_core::store::open(&db)?;
+    let r = deck_core::store::get_resident(&conn, eng.store_id())?.ok_or_else(|| anyhow::anyhow!("no profile bound to {engine_id} — use `deck use <profile> --resident` or load one first"))?;
+    let p = deck_core::store::get_profile(&conn, &r.profile)?.ok_or_else(|| anyhow::anyhow!("bound profile '{}' not found", r.profile))?;
+    deck_engines::apply(&p, false)?;
+    Ok(())
+}

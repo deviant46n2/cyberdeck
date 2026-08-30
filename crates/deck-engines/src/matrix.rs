@@ -66,6 +66,15 @@ fn fail_row(
         wall_ms: 0,
         output: String::new(),
         at: now_epoch(),
+        workload_id: None,
+        hardware_profile_id: None,
+        engine_version: None,
+        prompt_tps: None,
+        ttft_ms: None,
+        peak_vram_mb: None,
+        model_rev: None,
+        sampling_json: None,
+        role_id: None,
     }
 }
 
@@ -155,6 +164,15 @@ fn run_cell(
                 wall_ms: s.wall_ms,
                 output: s.text,
                 at,
+                workload_id: None,
+                hardware_profile_id: None,
+                engine_version: None,
+                prompt_tps: s.prompt_tps,
+                ttft_ms: s.ttft_ms,
+                peak_vram_mb: None,
+                model_rev: None,
+                sampling_json: None,
+                role_id: None,
             });
         }
     }
@@ -183,8 +201,25 @@ pub fn run_matrix(
     }
     if let Ok(conn) = deck_core::store::open(&deck_core::store::default_db_path()) {
         let _ = deck_core::store::ensure_matrix_schema(&conn);
+        let _ = deck_core::store::ensure_evaluations_schema(&conn);
+        let hw_id = deck_core::store::capture_hardware_profile(&conn).ok();
+        // Build evaluator map from any workload that owns the task label
+        let mut eval_map: std::collections::HashMap<String, (String, String)> = std::collections::HashMap::new();
+        if let Ok(ws) = deck_core::store::list_workloads(&conn) {
+            for w in ws {
+                for t in w.tasks { eval_map.entry(t.label).or_insert((t.evaluator, t.evaluator_config)); }
+            }
+        }
         for r in &rows {
-            let _ = deck_core::store::insert_matrix_run(&conn, r);
+            let mut r2 = r.clone();
+            r2.hardware_profile_id = hw_id;
+            if let Ok(id) = deck_core::store::insert_matrix_run(&conn, &r2) {
+                let (ev, cfg) = eval_map.get(&r.task).cloned().unwrap_or(("lexical-placeholder".into(), "".into()));
+                let evaluator = crate::evaluation::evaluator_for(&ev, &cfg);
+                if let Ok(ev) = evaluator.evaluate(&r.output, id) {
+                    let _ = deck_core::store::insert_evaluation(&conn, &ev);
+                }
+            }
         }
     }
     rows

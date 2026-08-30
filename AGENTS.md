@@ -50,24 +50,29 @@ reinvent it.
 
 ## Project Overview
 
-cyberdeck v0.1.0 is an offline-first desktop workspace (Tauri 2 + React) and
-CLI (`deck`) for running and benchmarking a local LLM **fleet** — llama.cpp,
-FreeToken and Ollama as resident engines, models served from `~/models` as
-systemd user units, with VRAM/RAM fit prediction and a benchmark DB as first-
-class citizens. The north star is model-fleet control, fit, and
-throughput-measurement, per `feature-parity.md`.
+cyberdeck v0.1.0 is a desktop workspace (Tauri 2 + React) and CLI (`deck`) for
+running and benchmarking a local LLM **fleet** — llama.cpp, FreeToken and
+Ollama as resident engines, models served from `~/models` as systemd user
+units, with VRAM/RAM fit prediction and a benchmark DB as first-class citizens.
+Models and execution are local; intelligence is online. Cyberdeck continuously
+connects the online AI ecosystem (HF, GitHub, runtime releases, new quants) with
+local hardware, installed models, and benchmark history to surface what to test,
+what to use, and what changed — per `feature-parity.md`.
 
 ---
 
 ## Architectural Principles & Strict Boundaries
 
-1. **Offline-first, local-only.**
+1. **Local execution, online intelligence.**
    - Models live in `~/models` (`models_dir()`); the repo tree NEVER contains
      model blobs — the integrity gate's `artifact-hygiene` section enforces it.
-   - All remote I/O (HF probes, downloads) shells out to the system `curl`;
-     the app has no mandatory cloud/AI/SDK dependency.
+   - All remote I/O (HF probes, downloads, feed polling) shells out to the
+     system `curl`; the app has no mandatory cloud/AI/SDK dependency.
    - Engine processes run as **systemd user units**; the app starts/stops them
      and probes health/metrics over loopback.
+   - Online feeds (HF, GitHub, runtime releases) are a core feature, not an
+     optional extra — local execution stays offline-capable, but discovery,
+     relevance scoring, and recommendations are online-first.
 
 2. **Downloads are resumable state machines, not fire-and-forget.**
    - Transfers stream to `<name>.part` and rename on success; a `.part` is

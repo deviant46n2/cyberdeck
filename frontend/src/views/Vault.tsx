@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import * as api from "../api";
 import * as br from "../lib/br";
 import { useEngineList } from "../lib/engines";
@@ -20,8 +20,32 @@ function shortLabel(id: api.EngineId, display: string): string {
 export default function Vault({ models, dups, onRefresh, onReload }: VaultProps) {
   const [deleting, setDeleting] = useState<Set<string>>(new Set());
   const [flash, setFlash] = useState<string | null>(null);
+  const [loadedPaths, setLoadedPaths] = useState<Set<string>>(new Set());
+  const [loadedEngine, setLoadedEngine] = useState<Map<string, string>>(new Map());
   const dupIds = new Set(dups.flatMap((d) => d.members));
   const localEngines = useEngineList("LocalPath");
+
+  useEffect(() => {
+    let alive = true;
+    const poll = async () => {
+      try {
+        const [slots, profiles] = await Promise.all([api.portMapStatus("127.0.0.1"), api.listProfiles()]);
+        const byName = new Map(profiles.map((p) => [p.name, p]));
+        const paths = new Set<string>();
+        const engMap = new Map<string, string>();
+        for (const s of slots) {
+          if (s.state !== "down" && s.profile) {
+            const pr = byName.get(s.profile);
+            if (pr) { paths.add(pr.model); engMap.set(pr.model, s.engine); }
+          }
+        }
+        if (alive) { setLoadedPaths(paths); setLoadedEngine(engMap); }
+      } catch {}
+    };
+    void poll();
+    const t = window.setInterval(() => void poll(), 10000);
+    return () => { alive = false; window.clearInterval(t); };
+  }, []);
 
   const load = (path: string, engine: api.EngineId) => {
     if (!confirm(`LOAD ${engine} — derive max-ctx, verify on test port, then go live?\n${path}`)) {
@@ -32,6 +56,13 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
 
   const test = (path: string, engine: api.EngineId) => {
     void br.startTest(path, engine);
+  };
+
+  const stop = async (path: string) => {
+    const eng = loadedEngine.get(path);
+    if (!eng) return;
+    if (!confirm(`STOP ${eng} — frees VRAM, clears slot?`)) return;
+    try { await api.engineStop(eng); setLoadedPaths((prev) => { const n = new Set(prev); n.delete(path); return n; }); } catch (e) { alert(String(e)); }
   };
 
   const remove = async (path: string) => {
@@ -61,11 +92,19 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
 
       {dups.length > 0 && (
         <div className="card" style={{ marginBottom: 16, borderColor: "var(--oom)" }}>
-          <h3 style={{ color: "var(--oom)" }}>DUPLICATE SHARDS — WASTED SPACE</h3>
+          <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+            <h3 style={{ color: "var(--oom)", margin: 0 }}>DUPLICATE SHARDS — WASTED SPACE</h3>
+            <button className="ghost" style={{ fontSize: 9, padding: "3px 8px", borderColor: "var(--oom)", color: "var(--oom)" }} onClick={async () => { if (!confirm(`Delete ${dups.length} duplicate group(s)? Keeps cheapest per group, deletes rest from disk.`)) return; for (const d of dups) { try { await api.dedupDelete(d.identity, true); } catch (e) { alert(String(e)); } } void onRefresh(); }}>
+              CLEAN DEDUP
+            </button>
+          </div>
           {dups.map((d) => (
             <div key={d.identity} style={{ margin: "8px 0" }}>
               <span className="badge oom">{d.wasted_gib.toFixed(2)} GiB</span>{" "}
               <span className="mono">{d.identity}</span>
+              <button className="ghost" style={{ fontSize: 8, padding: "2px 6px", marginLeft: 8 }} onClick={async () => { if (!confirm(`Delete duplicates for ${d.identity}?`)) return; try { await api.dedupDelete(d.identity, true); void onRefresh(); } catch (e) { alert(String(e)); } }}>
+                clean
+              </button>
               <ul className="dim" style={{ margin: "4px 0 0 18px", fontSize: 11 }}>
                 {d.members.map((m) => (
                   <li key={m}>{m}</li>
@@ -103,16 +142,18 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
                 .map((m) => {
                   const dup = dupIds.has(m.path);
                   const isDeleting = deleting.has(m.path);
+                  const isLoaded = loadedPaths.has(m.path);
                   return (
                     <tr
                       key={m.path}
                       style={{
-                        ...((dup || flash === m.path) ? { background: "rgba(255,59,59,0.06)" } : undefined),
+                        ...(dup ? { background: "rgba(255,59,59,0.06)" } : undefined),
+                        ...(isLoaded ? { background: "rgba(0,255,157,0.10)", boxShadow: "inset 3px 0 0 var(--pass), 0 0 12px rgba(0,255,157,0.18)" } : undefined),
                         opacity: isDeleting ? 0.3 : 1,
-                        transition: "opacity 0.2s",
+                        transition: "opacity 0.2s, background 0.2s",
                       }}
                     >
-                    <td>{m.name}</td>
+                    <td>{m.name}{isLoaded && <span className="badge" style={{ marginLeft: 6, background: "var(--pass)", color: "#000", fontSize: 8, padding: "2px 5px" }}>● LIVE</span>}</td>
                     <td>{m.quant ?? "—"}</td>
                     <td>{m.arch ?? "—"}</td>
                     <td className="mono">{m.ctx_train ? m.ctx_train.toLocaleString() : "—"}</td>
@@ -152,15 +193,27 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
                       </div>
                     </td>
                     <td>
-                      <button
-                        className="ghost"
-                        style={{ fontSize: 9, padding: "3px 7px", borderColor: "var(--oom)", color: "var(--oom)" }}
-                        onClick={() => remove(m.path)}
-                        disabled={isDeleting}
-                        title={isDeleting ? "deleting..." : "delete from index and disk"}
-                      >
-                        {isDeleting ? "..." : "✕"}
-                      </button>
+                      <div style={{ display: "flex", gap: 4 }}>
+                        {isLoaded && (
+                          <button
+                            className="ghost"
+                            style={{ fontSize: 9, padding: "3px 7px", borderColor: "var(--oom)", color: "var(--oom)" }}
+                            onClick={() => stop(m.path)}
+                            title={`stop ${loadedEngine.get(m.path)} — frees VRAM (LM Studio-style)`}
+                          >
+                            STOP
+                          </button>
+                        )}
+                        <button
+                          className="ghost"
+                          style={{ fontSize: 9, padding: "3px 7px", borderColor: "var(--oom)", color: "var(--oom)" }}
+                          onClick={() => remove(m.path)}
+                          disabled={isDeleting}
+                          title={isDeleting ? "deleting..." : "delete from index and disk"}
+                        >
+                          {isDeleting ? "..." : "✕"}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );

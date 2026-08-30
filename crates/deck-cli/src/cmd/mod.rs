@@ -8,11 +8,18 @@ pub(crate) mod bench;
 pub(crate) mod bringup;
 pub(crate) mod download;
 pub(crate) mod engines;
+pub(crate) mod feeds;
 pub(crate) mod fit;
 pub(crate) mod list;
 pub(crate) mod profile;
 pub(crate) mod scan;
 pub(crate) mod use_cmd;
+pub(crate) mod experiment;
+pub(crate) mod hardware;
+pub(crate) mod recommend;
+pub(crate) mod settings;
+pub(crate) mod workloads;
+pub(crate) mod workflow;
 
 pub(crate) fn parse_engine(s: &str) -> Result<deck_core::profile::Engine> {
     deck_core::profile::Engine::parse(s)

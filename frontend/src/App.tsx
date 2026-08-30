@@ -9,10 +9,9 @@ import Market from "./views/Market";
 import Console from "./views/Console";
 import Downloads from "./views/Downloads";
 import Bringup from "./views/Bringup";
-import Dedup from "./views/Dedup";
 import Bench from "./views/Bench";
 
-const VIEWS = ["HUD", "VAULT", "DEDUP", "SIGNALS", "MARKET", "DOWNLOADS", "LOADOUTS", "CONSOLE", "BENCH"];
+const VIEWS = ["HUD", "VAULT", "SIGNALS", "MARKET", "DOWNLOADS", "LOADOUTS", "CONSOLE", "BENCH"];
 
 export default function App() {
   const [view, setView] = useState("HUD");
@@ -34,11 +33,6 @@ export default function App() {
     setModels(await api.listModels());
     setDups(await api.dedup());
     setProfiles(await api.listProfiles());
-  };
-
-  const refreshDedup = async () => {
-    const dups = await api.dedup();
-    setDups(dups);
   };
 
   useEffect(() => {
@@ -106,7 +100,6 @@ export default function App() {
           />
         )}
         {view === "VAULT" && <Vault models={models} dups={dups} onRefresh={refresh} onReload={reload} />}
-        {view === "DEDUP" && <Dedup dups={dups} onRefresh={refreshDedup} />}
         {view === "SIGNALS" && <Signals />}
         {view === "MARKET" && <Market />}
         {view === "DOWNLOADS" && <Downloads />}

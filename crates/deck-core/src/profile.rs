@@ -392,10 +392,10 @@ fn build_profile_from_derive(
         p.n_gpu_layers = 0; // fit treats offload as GPU working set + RAM spill
         p.kv_cache_type_k = Some("q4_0".into());
         p.kv_cache_type_v = Some("q4_0".into());
-        // The "prefill/offload server" the user refers to: a MoE cache worker
-        // sized from the max ctx headroom.
+        // MoE cache: use auto (None) so FT sizes from num_experts (256 for Qwen3.6)
+        // instead of the old weights-derived 16 which is too small and crashes FT.
         p.ft_backend = Some("offload".into());
-        p.ft_moe_cache_size = Some(fb.weights_ram_mb.clamp(1024, 16 * 1024) as u32 / 1024);
+        p.ft_moe_cache_size = None;
         p.mem_max_mb = None;
     } else {
         // llama.cpp: all layers on GPU. The fit above verified the weights at
@@ -547,7 +547,8 @@ mod tests {
         let d = derive_from_meta(&m, Engine::FreeToken).expect("derives");
         assert_eq!(d.profile.port, 1919);
         assert_eq!(d.profile.ft_backend.as_deref(), Some("offload"));
-        assert!(d.profile.ft_moe_cache_size.is_some());
+        // auto cache (None) so FT derives from num_experts
+        assert!(d.profile.ft_moe_cache_size.is_none());
         // offload path -> ngl 0, q4 kv.
         assert_eq!(d.profile.kv_cache_type_k.as_deref(), Some("q4_0"));
     }

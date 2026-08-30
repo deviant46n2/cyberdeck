@@ -52,6 +52,10 @@ pub fn bench_now(
         ctx,
         tps,
         at,
+        hardware_profile_id: None,
+        engine_version: None,
+        prompt_tps: None,
+        ttft_ms: None,
     };
     let db = deck_core::store::default_db_path();
     let conn = deck_core::store::open(&db)?;

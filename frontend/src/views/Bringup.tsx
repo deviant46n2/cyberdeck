@@ -79,8 +79,16 @@ export default function Bringup() {
   const finished = state.result != null;
   const hasProfile = state.profile != null;
 
+  const progressPct = state.running ? Math.max(8, ((phaseIdx + 1) / (PHASES.length + 1)) * 100) : finished ? 100 : 0;
+
   return (
     <div className={`br-drawer ${failed ? "failed" : ""}`}>
+      {/* Progress bar */}
+      {(state.running || finished) && (
+        <div style={{ height: 2, background: "#1a1a2a", borderRadius: 1, marginBottom: 8, overflow: "hidden" }}>
+          <div style={{ height: "100%", width: `${progressPct}%`, background: failed ? "var(--oom)" : state.running ? "var(--magenta)" : "var(--pass)", transition: "width 0.3s ease", boxShadow: state.running ? "0 0 6px rgba(255,46,196,0.4)" : undefined }} />
+        </div>
+      )}
       {/* Header */}
       <div className="row" style={{ justifyContent: "space-between", marginBottom: 8 }}>
         <span className="mono" style={{ fontSize: 10, letterSpacing: 1, color: failed ? "var(--oom)" : state.running ? "var(--magenta)" : "var(--pass)" }}>
@@ -90,7 +98,11 @@ export default function Bringup() {
               ? `${state.mode === "test" ? "TEST" : "LOAD"} FAILED`
               : `${state.mode === "test" ? "TEST" : "LOAD"} OK`}
         </span>
-        {!state.running && (
+        {state.running ? (
+          <button className="ghost" style={{ fontSize: 9, padding: "2px 7px", borderColor: "var(--warn)", color: "var(--warn)" }} onClick={() => { void br.forceReset(); }}>
+            FORCE RESET
+          </button>
+        ) : (
           <button className="ghost" style={{ fontSize: 9, padding: "2px 7px" }} onClick={br.dismiss}>
             ✕
           </button>
@@ -116,6 +128,7 @@ export default function Bringup() {
           <span className="mono" style={{ fontSize: 9, marginLeft: 6, color: "var(--dim2)" }}>
             {PHASE_LABEL[state.phase] ?? ""}
           </span>
+          <span className="mono" style={{ fontSize: 8, marginLeft: "auto", color: "var(--dim2)" }}>{Math.round(progressPct)}%</span>
         </div>
       )}
 
@@ -170,18 +183,20 @@ export default function Bringup() {
         </div>
       )}
 
-      {/* Failure result */}
+      {/* Failure result — prominent, with hint */}
       {finished && failed && state.result?.summary && (
-        <div
-          className="mono"
-          style={{
-            fontSize: 11,
-            marginBottom: 10,
-            color: "var(--oom)",
-            lineHeight: 1.45,
-          }}
-        >
-          {state.result.summary}
+        <div style={{ background: "rgba(255,59,59,0.08)", border: "1px solid rgba(255,59,59,0.25)", borderRadius: 6, padding: 8, marginBottom: 10 }}>
+          <div className="mono" style={{ fontSize: 11, color: "var(--oom)", lineHeight: 1.45, fontWeight: 600 }}>
+            {state.result.summary.includes("does not fit") ? "◆ MODEL TOO LARGE FOR THIS GPU (even at 2K ctx)" : "◆ LOAD FAILED"}
+          </div>
+          <div className="mono" style={{ fontSize: 10, color: "var(--text)", lineHeight: 1.45, marginTop: 4, whiteSpace: "pre-wrap" }}>
+            {state.result.summary}
+          </div>
+          {state.result.summary.includes("does not fit") && (
+            <div className="dim" style={{ fontSize: 9, marginTop: 6, lineHeight: 1.4 }}>
+              Hint: try a smaller quant (Q3_K_XL/IQ4_XS are proven on your 5070 Ti) or use <span style={{ color: "var(--cyan)" }}>FreeToken [FT] offload</span> for 30B+ MoE — or tweak CTX → 2048 and VERIFY again below.
+            </div>
+          )}
         </div>
       )}
 
