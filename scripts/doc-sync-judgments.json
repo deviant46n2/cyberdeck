@@ -1,92 +1,100 @@
 {
   "judgments": [
     {
-      "commit": "8af8671",
-      "reason": "fix(ui) dark dropdowns: purely visual styling pass (color-scheme + option styling) \u2014 no API/config/behavior surface to document"
-    },
-    {
-      "commit": "0ac4e9d",
-      "reason": "loadout-editor feature: the loadout machinery + fit estimate + choose-ladder/OOM behavior is documented in feature-parity.md (\u00a7Direction, ctx_ladder, bringup flow), consolidated in the 98447a6 docs commit"
-    },
-    {
       "commit": "00ddf18",
-      "reason": "feat(ui) HUD LOAD button: exposes existing bringup_start Tauri command + br.ts store from the chat surface; no new API/config/behavior \u2014 the flagship flow (derive \u2192 verify \u2192 apply \u2192 bench) was already documented in feature-parity.md #0 and the bringup drawer implementation"
-    },
-    {
-      "commit": "dea266d",
-      "reason": "feat(ui) bench-aware chat header: adds fit_verdict to port_map_status + resident summary in HUD top bar; the Direction \u00a73 requirement (tok/s + fit per resident in chat header) is now documented in feature-parity.md #3 as DONE"
+      "reason": "feat(ui) HUD LOAD button: exposes existing bringup_start Tauri command + br.ts store from the chat surface; no new API/config/behavior — the flagship flow (derive → verify → apply → bench) was already documented in feature-parity.md #0 and the bringup drawer implementation"
     },
     {
       "commit": "077bd92",
-      "reason": "feat(ui) PORT MAP HUD card \u2014 residency view with per-slot STOP; the Direction \u00a73 requirement (tok/s + fit per resident in chat header) is now documented in feature-parity.md #3 as DONE, and engine_stop is the CLI door for the existing port_map contract"
-    },
-    {
-      "commit": "21994de",
-      "reason": "feat(core) GQA-aware KV cache fit + unified tok/s measurement \u2014 internal measurement-path consolidation; the single-measurement contract is documented in feature-parity.md #0 (bench record uses measure_generation_tps) and the bringup drawer"
-    },
-    {
-      "commit": "856df6c",
-      "reason": "feat O4 DISK/fit-at-ctx enrichment in FEEDS lane: adds disk + fit-at-ctx columns to the feeds rank surface and strengthens relevance params-vs-quant fit \u2014 the online-intelligence feed/fit/relevance contract is documented in feature-parity.md 'Online Intelligence Architecture' (score weights, feeds lane, hardware-ground-truth fit) and ROADMAP O4; the pure-helper extraction (lib/feeds.ts) has no user-facing surface"
-    },
-    {
-      "commit": "b3e294f",
-      "reason": "feat per-role bench (Phase 8e): NodeRunner now threads generation metrics (NodeOutcome) into matrix_runs via node_to_matrix_row, and store::per_role_bench aggregates 'which model best at which node' \u2014 surfaced as `deck workflow bench` + Tauri workflow_per_role_bench + the CANVAS PER-ROLE BENCH table. The workflow door is documented in feature-parity.md row 13 (Canvas & workflows, 8e per-role bench) and CANVAS.md/ROADMAP 8e"
-    },
-    {
-      "commit": "9306baa",
-      "reason": "feat compare tab UI + autotune headless infra + skills surfacing + O1 foundational work: adds frontend Compare.tsx on top of the `deck bench compare` command and the headless autotune scaffolding in deck-engines; both surfaces are documented in feature-parity.md (#4 Compare/A\u00b7B bench \u2014 blind-scored grid over the matrix, tab + synthesis status; B3 / row #5 headless autotune \u2014 sweep ctx/kv/ngl/ubatch on the test port, score by objective, APPLY best). Routing of the tab into App.tsx was previously missing; Compare.tsx now ships the tab UI documented in #4."
-    },
-    {
-      "commit": "ccce3fd",
-      "reason": "feat autotune headless + console enhancements + skills surfacing: autotune.rs headless loop is documented in feature-parity.md B3 / roadmap #5 (headless loadout autotune, sweep to objective, APPLY best) and the skills surface (deep-research skill; mcp-picker skill surface) is documented in feature-parity.md row #6 / \u00a73 agent-skill surface. The Console.tsx churn in this commit was a compare-clone that broke the agent console (restored in a later debt pass); the documented surfaces above are the ones this commit intentionally added."
-    },
-    {
-      "commit": "760c676",
-      "reason": "fix(cli) downloads run misreport \u2014 bug-fix in the CLI door's event-drain loop (the manager sets status before emitting its terminal event, so the poll loop could exit first and report a successful download as 'no files landed'). No API/behavior surface changed; `deck downloads run` now reports the truth it always performed."
-    },
-    {
-      "commit": "caee076",
-      "reason": "feat(feeds) DL action \u2014 the discover\u2192download handoff (feed row queues the scored quant into the shared DownloadManager, shard-set aware, via the MARKET path; CLI door `deck downloads run`) is documented in ROADMAP.md's O4 row + Partial LANDED entry. FEEDS is the UI door over the documented two-doors download-manager contract; precedent 856df6c hubs this same home for the feeds lane."
-    },
-    {
-      "commit": "5e25875",
-      "reason": "ui: full redesign \u2014 pure visual pass (styles.css token rewrite to the dark graphite palette + hardcoded-color/hue sweep across App/Hud/Bringup/Console/Vault/Canvas/PortMap/EngineBins/LoadoutEditor/TuiPane/TuiWindow). Deliberately preserved every class/token name; zero API/config/behavioral surface by design."
-    },
-    {
-      "commit": "23b55d0",
-      "reason": "refactor(store): pure mechanical split of the 1276-line store.rs into per-table submodules (store/bench|engine_bin|hw|profiles|releases|residents|settings|workloads.rs) re-exported through store/mod.rs so the flat store::* caller surface is unchanged; ROI mapping in ROADMAP.md's refactor table (marked RESOLVED). No behavior or user-visible surface."
+      "reason": "feat(ui) PORT MAP HUD card — residency view with per-slot STOP; the Direction §3 requirement (tok/s + fit per resident in chat header) is now documented in feature-parity.md #3 as DONE, and engine_stop is the CLI door for the existing port_map contract"
     },
     {
       "commit": "098b133",
-      "reason": "feat downloads queue: the shared DownloadManager \u2014 the one-truth queue authority with MAX_ACTIVE=2, .part park/resume contract, shard-set-aware indexing and the STAGE/QUEUED/ACTIVE/DONE/ERROR state machine \u2014 is documented in feature-parity.md as the DOWNLOADS tab contract and ROADMAP.md; both the Tauri downloads door and `deck downloads run` are the two-doors surface AGENTS.md 'One truth, two doors' makes a documented architectural invariant. dl.ts store + api.ts wrappers are the UI door over that contract; precedent caee076/856df6c hub the same home for the feeds lane."
+      "reason": "feat downloads queue: the shared DownloadManager — the one-truth queue authority with MAX_ACTIVE=2, .part park/resume contract, shard-set-aware indexing and the STAGE/QUEUED/ACTIVE/DONE/ERROR state machine — is documented in feature-parity.md as the DOWNLOADS tab contract and ROADMAP.md; both the Tauri downloads door and `deck downloads run` are the two-doors surface AGENTS.md 'One truth, two doors' makes a documented architectural invariant. dl.ts store + api.ts wrappers are the UI door over that contract; precedent caee076/856df6c hub the same home for the feeds lane."
     },
     {
-      "commit": "68f44be",
-      "reason": "fix(console) reap agent orphans on startup (re-split into console_reaper in 18c7dcc, same story): internal agent-lifecycle robustness \u2014 SIGKILL/OOM killed the app before the ExitRequested cleanup so spawned `opencode run` sessions reparented to init and kept streaming against the resident units (observed pinning the GPU at 99% for ~40 min after a dead app). The console is already documented in feature-parity.md \u00a73 (agent-skill surface); this is crash-recovery machinery under that surface with no API/config/flag change and no user-visible behavior beyond not-leaking processes. Pure infra, doc-less by definition."
+      "commit": "0ac4e9d",
+      "reason": "loadout-editor feature: the loadout machinery + fit estimate + choose-ladder/OOM behavior is documented in feature-parity.md (§Direction, ctx_ladder, bringup flow), consolidated in the 98447a6 docs commit"
     },
     {
       "commit": "18c7dcc",
       "reason": "refactor(console): mechanical split of the orphan reaper out of console.rs into console_reaper.rs (marker constant + /proc chain-walk + its unit tests); the reaper never touches the SESSIONS registry so it is one clean lifecycle seam. No behavior or user-visible surface change; doc-less, consistent with the 68f44be judgment."
     },
     {
-      "commit": "e07e0d0",
-      "reason": "fix(tauri): black window on NVIDIA/Wayland \u2014 sets WEBKIT_DISABLE_DMABUF_RENDERER=1 before WebKit init because this machine's webkit GBM/DMA-BUF scanout fails ('Failed to create GBM buffer'), leaving every launch black. Internal launch-environment robustness, no API/config/behavioral surface the docs describe; doc-less by definition."
+      "commit": "21994de",
+      "reason": "feat(core) GQA-aware KV cache fit + unified tok/s measurement — internal measurement-path consolidation; the single-measurement contract is documented in feature-parity.md #0 (bench record uses measure_generation_tps) and the bringup drawer"
     },
     {
-      "commit": "32fc908",
-      "reason": "fix(tauri) vault delete actually removes model files: deletion is a high-risk action already documented in feature-parity.md \u00a74 ('High-risk = destructive or system-level (delete models, ...)'); this fix aligns behavior with that documented intent by (a) propagating unlink failures instead of swallowing them, (b) routing ollama blobs through `ollama rm <tag>` (daemon owns the root-owned files), and (c) surfacing an honest DeleteResult to the VAULT door. No flag/config/API surface the docs describe changed; the delete mechanics are implementation, doc-less by definition."
-    },
-    {
-      "commit": "fde7d0c",
-      "reason": "fix(console) SIGTERM-immune opencode sessions escalate to SIGKILL: agent-stop robustness under the console surface already documented in feature-parity.md \u00a73 (agent-skill surface, precedent 68f44be judgment) \u2014 STOP becomes reliable, no flag/config/API surface the docs describe changed. Doc-less by definition."
+      "commit": "23b55d0",
+      "reason": "refactor(store): pure mechanical split of the 1276-line store.rs into per-table submodules (store/bench|engine_bin|hw|profiles|releases|residents|settings|workloads.rs) re-exported through store/mod.rs so the flat store::* caller surface is unchanged; ROI mapping in ROADMAP.md's refactor table (marked RESOLVED). No behavior or user-visible surface."
     },
     {
       "commit": "2bf4278",
-      "reason": "fix(console) runs die with the app (PDEATHSIG) + stop drops the session lock before wait: agent-lifecycle robustness under the console surface already documented in feature-parity.md \u00a73 (agent-skill surface; precedents 68f44be/fde7d0c) \u2014 crash exits can no longer orphan an opencode run on a dead app, and STOP reaches the pid instead of blocking on the session lock. No flag/config/API surface the docs describe changed; doc-less by definition."
+      "reason": "fix(console) runs die with the app (PDEATHSIG) + stop drops the session lock before wait: agent-lifecycle robustness under the console surface already documented in feature-parity.md §3 (agent-skill surface; precedents 68f44be/fde7d0c) — crash exits can no longer orphan an opencode run on a dead app, and STOP reaches the pid instead of blocking on the session lock. No flag/config/API surface the docs describe changed; doc-less by definition."
+    },
+    {
+      "commit": "2ff24c6",
+      "reason": "fix(market) real DISK sizes from HF API + skip aux GGUFs: internal correctness/performance fix under the existing Market + Feeds surface already documented in feature-parity.md and ROADMAP.md O4 (feeds/MARKET lanes). MarketFileRow.size was already the API contract; this makes it report the actual model-weight size (HF siblings[].size, excluding mmproj/imatrix/etc aux GGUFs) instead of the smallest aux GGUF (~0.01 GiB bug), and removes head-probe latency by using the API-reported size. No flag/config/API surface the docs describe changed; doc-less by definition."
+    },
+    {
+      "commit": "32fc908",
+      "reason": "fix(tauri) vault delete actually removes model files: deletion is a high-risk action already documented in feature-parity.md §4 ('High-risk = destructive or system-level (delete models, ...)'); this fix aligns behavior with that documented intent by (a) propagating unlink failures instead of swallowing them, (b) routing ollama blobs through `ollama rm <tag>` (daemon owns the root-owned files), and (c) surfacing an honest DeleteResult to the VAULT door. No flag/config/API surface the docs describe changed; the delete mechanics are implementation, doc-less by definition."
+    },
+    {
+      "commit": "5e25875",
+      "reason": "ui: full redesign — pure visual pass (styles.css token rewrite to the dark graphite palette + hardcoded-color/hue sweep across App/Hud/Bringup/Console/Vault/Canvas/PortMap/EngineBins/LoadoutEditor/TuiPane/TuiWindow). Deliberately preserved every class/token name; zero API/config/behavioral surface by design."
+    },
+    {
+      "commit": "68f44be",
+      "reason": "fix(console) reap agent orphans on startup (re-split into console_reaper in 18c7dcc, same story): internal agent-lifecycle robustness — SIGKILL/OOM killed the app before the ExitRequested cleanup so spawned `opencode run` sessions reparented to init and kept streaming against the resident units (observed pinning the GPU at 99% for ~40 min after a dead app). The console is already documented in feature-parity.md §3 (agent-skill surface); this is crash-recovery machinery under that surface with no API/config/flag change and no user-visible behavior beyond not-leaking processes. Pure infra, doc-less by definition."
+    },
+    {
+      "commit": "760c676",
+      "reason": "fix(cli) downloads run misreport — bug-fix in the CLI door's event-drain loop (the manager sets status before emitting its terminal event, so the poll loop could exit first and report a successful download as 'no files landed'). No API/behavior surface changed; `deck downloads run` now reports the truth it always performed."
+    },
+    {
+      "commit": "856df6c",
+      "reason": "feat O4 DISK/fit-at-ctx enrichment in FEEDS lane: adds disk + fit-at-ctx columns to the feeds rank surface and strengthens relevance params-vs-quant fit — the online-intelligence feed/fit/relevance contract is documented in feature-parity.md 'Online Intelligence Architecture' (score weights, feeds lane, hardware-ground-truth fit) and ROADMAP O4; the pure-helper extraction (lib/feeds.ts) has no user-facing surface"
     },
     {
       "commit": "86c494a",
       "reason": "fix(tauri): catch_unwind in opencode_run prevents SIGABRT crash from wry IPC boundary panic: the Rust panic inside the wry register_uri_scheme callback (observed as SIGABRT on any invoke call) is caught by catch_unwind, returning an error payload instead of killing the process. No flag/config/API surface changed; doc-less by definition, consistent with 68f44be/fde7d0c judgments."
+    },
+    {
+      "commit": "8af8671",
+      "reason": "fix(ui) dark dropdowns: purely visual styling pass (color-scheme + option styling) — no API/config/behavior surface to document"
+    },
+    {
+      "commit": "9306baa",
+      "reason": "feat compare tab UI + autotune headless infra + skills surfacing + O1 foundational work: adds frontend Compare.tsx on top of the `deck bench compare` command and the headless autotune scaffolding in deck-engines; both surfaces are documented in feature-parity.md (#4 Compare/A·B bench — blind-scored grid over the matrix, tab + synthesis status; B3 / row #5 headless autotune — sweep ctx/kv/ngl/ubatch on the test port, score by objective, APPLY best). Routing of the tab into App.tsx was previously missing; Compare.tsx now ships the tab UI documented in #4."
+    },
+    {
+      "commit": "b3e294f",
+      "reason": "feat per-role bench (Phase 8e): NodeRunner now threads generation metrics (NodeOutcome) into matrix_runs via node_to_matrix_row, and store::per_role_bench aggregates 'which model best at which node' — surfaced as `deck workflow bench` + Tauri workflow_per_role_bench + the CANVAS PER-ROLE BENCH table. The workflow door is documented in feature-parity.md row 13 (Canvas & workflows, 8e per-role bench) and CANVAS.md/ROADMAP 8e"
+    },
+    {
+      "commit": "caee076",
+      "reason": "feat(feeds) DL action — the discover→download handoff (feed row queues the scored quant into the shared DownloadManager, shard-set aware, via the MARKET path; CLI door `deck downloads run`) is documented in ROADMAP.md's O4 row + Partial LANDED entry. FEEDS is the UI door over the documented two-doors download-manager contract; precedent 856df6c hubs this same home for the feeds lane."
+    },
+    {
+      "commit": "ccce3fd",
+      "reason": "feat autotune headless + console enhancements + skills surfacing: autotune.rs headless loop is documented in feature-parity.md B3 / roadmap #5 (headless loadout autotune, sweep to objective, APPLY best) and the skills surface (deep-research skill; mcp-picker skill surface) is documented in feature-parity.md row #6 / §3 agent-skill surface. The Console.tsx churn in this commit was a compare-clone that broke the agent console (restored in a later debt pass); the documented surfaces above are the ones this commit intentionally added."
+    },
+    {
+      "commit": "dea266d",
+      "reason": "feat(ui) bench-aware chat header: adds fit_verdict to port_map_status + resident summary in HUD top bar; the Direction §3 requirement (tok/s + fit per resident in chat header) is now documented in feature-parity.md #3 as DONE"
+    },
+    {
+      "commit": "e07e0d0",
+      "reason": "fix(tauri): black window on NVIDIA/Wayland — sets WEBKIT_DISABLE_DMABUF_RENDERER=1 before WebKit init because this machine's webkit GBM/DMA-BUF scanout fails ('Failed to create GBM buffer'), leaving every launch black. Internal launch-environment robustness, no API/config/behavioral surface the docs describe; doc-less by definition."
+    },
+    {
+      "commit": "f4e9d67",
+      "reason": "chore: remove dl_probe scratch example — a throwaway dev harness (one-off binary webbhook example), not a user-facing capability; no docs describe it."
+    },
+    {
+      "commit": "fde7d0c",
+      "reason": "fix(console) SIGTERM-immune opencode sessions escalate to SIGKILL: agent-stop robustness under the console surface already documented in feature-parity.md §3 (agent-skill surface, precedent 68f44be judgment) — STOP becomes reliable, no flag/config/API surface the docs describe changed. Doc-less by definition."
     }
   ]
 }
