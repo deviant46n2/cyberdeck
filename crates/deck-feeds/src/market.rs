@@ -95,56 +95,89 @@ struct ModelDetail {
 #[derive(Deserialize)]
 struct Sibling {
     rfilename: String,
+    /// Size in bytes reported by HF — `None` when the API omits it.
+    #[serde(default)]
+    size: Option<u64>,
 }
 
-/// Parse a single-model detail JSON into its sibling filenames (pure).
-pub fn parse_siblings(json: &str) -> Result<Vec<String>> {
+/// Parse a single-model detail JSON into sibling filenames + API-reported
+/// sizes (pure).  `size` is `None` when the API omits it.
+pub fn parse_siblings(json: &str) -> Result<Vec<(String, Option<u64>)>> {
     let d: ModelDetail = serde_json::from_str(json)?;
-    Ok(d.siblings.into_iter().map(|s| s.rfilename).collect())
+    Ok(d.siblings
+        .into_iter()
+        .map(|s| (s.rfilename, s.size))
+        .collect())
 }
 
-/// List downloadable model files in a repo, resolving each file's size via a
-/// HEAD request (probed 8-at-a-time so a 30-shard repo costs ~4 rounds of
-/// latency instead of 30 sequential ones). Covers GGUF *and* safetensors
-/// repos; other assets are skipped.
+/// List downloadable model files in a repo (GGUF + safetensors).
+///
+/// Sizes come from the HF API `siblings[].size` field first (zero-latency,
+/// accurate).  For any file where the API omits size we fall back to a HEAD
+/// probe — but only those files, not the entire list.
 pub fn model_files(repo_id: &str) -> Result<Vec<MarketFile>> {
     let url = format!("https://huggingface.co/api/models/{repo_id}");
     let body = fetch_url(&url, 20)
         .with_context(|| format!("HF model lookup for '{repo_id}' failed (offline?)"))?;
-    let names = parse_siblings(&body)?;
+    let siblings = parse_siblings(&body)?;
 
-    let targets: Vec<String> = names
+    // Keep only model-file extensions; carry the API-reported size through.
+    let targets: Vec<(String, Option<u64>)> = siblings
         .into_iter()
-        .filter(|n| {
-            let lower = n.to_lowercase();
+        .filter(|(name, _)| {
+            let lower = name.to_lowercase();
             lower.ends_with(".gguf") || lower.ends_with(".safetensors")
         })
         .collect();
 
-    let urls: Vec<String> = targets
+    // Collect indices of files that still need a HEAD probe (no API size).
+    let missing: Vec<usize> = targets
         .iter()
-        .map(|n| format!("https://huggingface.co/{repo_id}/resolve/main/{n}"))
+        .enumerate()
+        .filter(|(_, (_, sz))| sz.is_none())
+        .map(|(i, _)| i)
         .collect();
 
+    // HEAD-probe only the missing files, 8 at a time.
     const PROBE_CONCURRENCY: usize = 8;
-    let mut sizes: Vec<Option<u64>> = vec![None; urls.len()];
-    std::thread::scope(|s| {
-        for (slots, chunk_urls) in sizes
-            .chunks_mut(PROBE_CONCURRENCY)
-            .zip(urls.chunks(PROBE_CONCURRENCY))
-        {
-            s.spawn(move || {
-                for (slot, u) in slots.iter_mut().zip(chunk_urls.iter()) {
-                    *slot = head_size(u);
-                }
-            });
-        }
-    });
+    let mut probes: Vec<Option<u64>> = vec![None; missing.len()];
+    if !missing.is_empty() {
+        let probe_urls: Vec<String> = missing
+            .iter()
+            .map(|&i| {
+                format!(
+                    "https://huggingface.co/{repo_id}/resolve/main/{name}",
+                    name = simple_encode(&targets[i].0)
+                )
+            })
+            .collect();
+        std::thread::scope(|s| {
+            for (slots, chunk_urls) in probes
+                .chunks_mut(PROBE_CONCURRENCY)
+                .zip(probe_urls.chunks(PROBE_CONCURRENCY))
+            {
+                s.spawn(move || {
+                    for (slot, u) in slots.iter_mut().zip(chunk_urls.iter()) {
+                        *slot = head_size(u);
+                    }
+                });
+            }
+        });
+    }
 
+    // Merge: API size first, HEAD probe as fallback.  Iterate the target
+    // list zipped with the probe results so each missing file lines up with
+    // its probe in order (API-sized files paired with their `None` probe).
+    let mut probe_iter = probes.into_iter();
     Ok(targets
         .into_iter()
-        .zip(sizes)
-        .map(|(rfilename, size)| MarketFile { rfilename, size })
+        .map(|(rfilename, api_size)| {
+            let fallback = probe_iter.next().flatten();
+            MarketFile {
+                rfilename,
+                size: api_size.or(fallback),
+            }
+        })
         .collect())
 }
 
@@ -185,13 +218,16 @@ mod tests {
 
     #[test]
     fn parses_siblings_and_filters_gguf() {
-        let names = parse_siblings(DETAIL).unwrap();
-        let gguf: Vec<_> = names
+        let siblings = parse_siblings(DETAIL).unwrap();
+        let gguf: Vec<_> = siblings
             .iter()
-            .filter(|n| n.to_lowercase().ends_with(".gguf"))
+            .filter(|(n, _)| n.to_lowercase().ends_with(".gguf"))
             .cloned()
             .collect();
         assert_eq!(gguf.len(), 2);
-        assert!(gguf[0].contains("00001"));
+        assert!(gguf[0].0.contains("00001"));
+        // First file has an API-reported size, second does not.
+        assert_eq!(gguf[0].1, Some(123));
+        assert_eq!(gguf[1].1, None);
     }
 }

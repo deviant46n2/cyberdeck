@@ -3,11 +3,10 @@ import * as api from "../api";
 import * as dls from "../lib/dl";
 import { shardSet } from "../lib/shards";
 import { LAST_SEEN_KEY, isNewSince, parseLastSeen } from "../lib/feeds";
+import { AUX_GGUF } from "../lib/ui";
 
 const SCORE_COLOR = (s: number) => (s >= 0.65 ? "var(--pass)" : s >= 0.4 ? "var(--warn)" : "var(--dim2)");
 
-/** GGUF files that are auxiliary artifacts, not the model itself. */
-const AUX_GGUF = /(mmproj|imatrix|embedding|babble|clip|vision_tower|text_encoder)/i;
 /** Desktop VRAM reservation (MiB) — mirrors deck-core fit's reserve. */
 const RESERVE_MB = 1600;
 /** KV-cache floor (MiB) the pick reserves so the quant can actually run. */

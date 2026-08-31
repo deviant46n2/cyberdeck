@@ -2,18 +2,24 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../api";
 import * as dls from "../lib/dl";
 import { shardSet } from "../lib/shards";
-import { verdictClass } from "../lib/ui";
+import { AUX_GGUF, verdictClass } from "../lib/ui";
 
 function gib(size: number | null): string {
   if (size == null) return "?";
   return (size / 1_073_741_824).toFixed(2) + " GiB";
 }
 
-/** Smallest GGUF file in a repo's file list — the cheapest quant you could
- * actually pull to disk; drives the DISK column. */
+/** Smallest *model-weight* GGUF file in a repo's file list — the cheapest
+ * quant you could actually pull to disk; drives the DISK column.
+ * Auxiliary files (mmproj, imatrix, etc.) are excluded. */
 function smallestGguf(files: api.MarketFileRow[] | undefined): number | null {
   if (!files) return null;
-  const gguf = files.filter((f) => f.rfilename.toLowerCase().endsWith(".gguf") && f.size);
+  const gguf = files.filter(
+    (f) =>
+      f.rfilename.toLowerCase().endsWith(".gguf") &&
+      f.size &&
+      !AUX_GGUF.test(f.rfilename),
+  );
   if (gguf.length === 0) return null;
   return Math.min(...gguf.map((f) => f.size as number));
 }
@@ -80,7 +86,12 @@ export default function Market() {
         if (gen !== prefetchAbort.current) return;
         setSizes((prev) => ({ ...prev, [h.id]: smallestGguf(ff) }));
         const gguf = ff
-          .filter((f) => f.rfilename.toLowerCase().endsWith(".gguf") && f.size)
+          .filter(
+            (f) =>
+              f.rfilename.toLowerCase().endsWith(".gguf") &&
+              f.size &&
+              !AUX_GGUF.test(f.rfilename),
+          )
           .sort((a, b) => (a.size ?? Infinity) - (b.size ?? Infinity));
         if (gguf.length === 0) continue;
         const smallest = gguf[0];
