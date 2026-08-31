@@ -10,6 +10,7 @@
 pub use deck_core::profile::{Engine, EngineDescriptor, ModelSource, Profile};
 
 pub mod agent;
+pub mod agents;
 mod bench;
 mod bringup;
 mod compare;

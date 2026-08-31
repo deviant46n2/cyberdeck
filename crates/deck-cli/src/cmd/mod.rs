@@ -9,6 +9,7 @@ pub(crate) mod bringup;
 pub(crate) mod download;
 pub(crate) mod downloads;
 pub(crate) mod engines;
+pub(crate) mod agents;
 pub(crate) mod feeds;
 pub(crate) mod fit;
 pub(crate) mod list;

@@ -11,11 +11,16 @@ const ENGINE_NODES: { engine: string; host: string; port: number }[] = [
   { engine: "Ollama", host: "127.0.0.1", port: 11434 },
 ];
 
+// A model ref is local only when its prefix is a resident engine (llamacpp /
+// freetoken / ollama) or it's a bare GGUF path with no provider segment.
+// Everything with a known-cloud prefix (openrouter/groq/gemini/deepseek/…)
+// routes to an online provider.
+const LOCAL_PREFIXES = ["llamacpp/", "freetoken/", "ollama/"];
 function isLocalModel(ref: string): boolean {
   const r = ref.toLowerCase();
-  if (r.startsWith("openrouter/") || r.startsWith("anthropic/") || r.startsWith("openai/")) return false;
-  if (r.startsWith("ollama/")) return false;
-  return true;
+  if (!r.includes("/")) return true;
+  if (LOCAL_PREFIXES.some((p) => r.startsWith(p))) return true;
+  return false;
 }
 
 export default function Workspace({
@@ -34,6 +39,13 @@ export default function Workspace({
   const [loadout, setLoadout] = useState("");
   const [harnessModel, setHarnessModel] = useState("");
   const [customModel, setCustomModel] = useState("");
+  // Online fleet: cloud providers + their live /v1/models catalogs, so the
+  // model picker lists real free-tier models instead of demanding the user
+  // type model ids by heart.
+  const [fleet, setFleet] = useState<api.FleetView | null>(null);
+  const [catalog, setCatalog] = useState<Map<string, api.ProviderModel[]>>(new Map());
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [cloudErr, setCloudErr] = useState("");
   const [ctx, setCtx] = useState(32768);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [status, setStatus] = useState<api.EngineStatus[]>([]);
@@ -85,6 +97,28 @@ export default function Workspace({
   useEffect(() => { const h = (e: KeyboardEvent) => { if (e.key === "Escape") setConnectingFrom(null); }; window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h); }, []);
 
   useEffect(() => { api.listModels().then((m) => setModelPaths(m.map((x) => x.path))).catch(() => {}); }, []);
+
+  // Load the cloud provider list (fleet) once so the model picker can offer
+  // live online models grouped by free provider.
+  useEffect(() => {
+    api.agentsFleet().then(setFleet).catch(() => setFleet(null));
+  }, []);
+
+  // Lazily fetch a provider's /v1/models catalog (cached) the first time the
+  // user opens that provider's group.
+  const loadCloudCatalog = useCallback(async (providerId: string) => {
+    if (catalog.has(providerId)) return;
+    setCatalogLoading(true);
+    setCloudErr("");
+    try {
+      const ms = await api.agentsCatalog(providerId, null);
+      setCatalog((prev) => new Map(prev).set(providerId, ms));
+    } catch (e) {
+      setCloudErr(`can't fetch ${providerId} models: ${String(e)}`);
+    } finally {
+      setCatalogLoading(false);
+    }
+  }, [catalog]);
 
   const loadWorkflows = useCallback(async () => {
     try {
@@ -250,6 +284,8 @@ export default function Workspace({
       }
     }
     let chosen = (harnessModel === "__custom" ? customModel : harnessModel) || active?.model || "";
+    // A "__cloud_<provider>" value is a load-placeholder, not a model — treat as unset.
+    if (chosen.startsWith("__cloud_")) chosen = "";
     const eng = chosen.split("/")[0]?.toLowerCase();
     if (!chosen) {
       const ftUp = status.find((s) => s.engine === "FreeToken")?.up;
@@ -609,15 +645,27 @@ export default function Workspace({
             {profiles.map((p) => <option key={p.name} value={p.name}>{p.name} · {p.engine}</option>)}
           </select>
           <button className="ghost" style={{ fontSize: 9, padding: "4px 6px" }} onClick={() => { if (loadout) void edit(loadout); else { setEditing(defaultProfile()); setDrawerOpen(true); } }}>{loadout ? "⚙" : "+ loadout"}</button>
-          <select value={harnessModel} onChange={(e) => { setHarnessModel(e.target.value); if (e.target.value) setCustomModel(""); }} style={{ background: "var(--panel)", border: "1px solid var(--line)", color: "var(--text)", padding: "6px 10px", fontSize: 11, minWidth: 180 }}>
+          <select value={harnessModel} onChange={(e) => { setHarnessModel(e.target.value); if (e.target.value.startsWith("__cloud_")) { void loadCloudCatalog(e.target.value.slice("__cloud_".length)); setCustomModel(""); } else if (e.target.value) setCustomModel(""); }} style={{ background: "var(--panel)", border: "1px solid var(--line)", color: "var(--text)", padding: "6px 10px", fontSize: 11, minWidth: 200 }}>
             <option value="">model — {active ? "loadout default" : "auto (pick inside TUI)"}</option>
-            {models.map((m) => <option key={m.path} value={m.path}>{m.name} {isLocalModel(m.path) ? "🔵" : "🟣"}</option>)}
-            <option value="__custom">— custom (openrouter/anthropic/ollama) —</option>
+            <optgroup label="LOCAL (resident engines)">
+              {models.map((m) => <option key={m.path} value={m.path}>{m.name} {isLocalModel(m.path) ? "🔵" : "🟣"}</option>)}
+            </optgroup>
+            {(fleet?.providers ?? []).map((p) => (
+              <optgroup key={p.id} label={`${p.display.toUpperCase()} · ${p.quota_label}`}>
+                {catalog.has(p.id) ? catalog.get(p.id)!.map((m) => (
+                  <option key={m.id} value={`${p.id}/${m.id}`}>{m.name ?? m.id}{m.free ? " · free" : ""} {m.context ? ` · ${(m.context / 1000).toFixed(0)}k` : ""} 🟣</option>
+                )) : (
+                  <option value={`__cloud_${p.id}`}>{catalogLoading ? "loading…" : `⬇ load ${p.id} models`}{p.free_note ? ` — ${p.free_note}` : ""}</option>
+                )}
+              </optgroup>
+            ))}
+            <option value="__custom">— custom (provider/model) —</option>
           </select>
-          {harnessModel === "__custom" && <input value={customModel} onChange={(e) => setCustomModel(e.target.value)} placeholder="openrouter/claude-3.5" style={{ background: "var(--panel)", border: "1px solid var(--magenta)", color: "var(--text)", padding: "6px 10px", fontSize: 11, minWidth: 180 }} />}
+          {harnessModel === "__custom" && <input value={customModel} onChange={(e) => setCustomModel(e.target.value)} placeholder="openrouter/anthropic/claude-sonnet-4" style={{ background: "var(--panel)", border: "1px solid var(--magenta)", color: "var(--text)", padding: "6px 10px", fontSize: 11, minWidth: 200 }} />}
+          {cloudErr && <span className="mono" style={{ fontSize: 9, color: "var(--error, #ff5f56)" }}>{cloudErr}</span>}
           <span className="mono dim" style={{ fontSize: 10 }}>ctx {ctx.toLocaleString()}</span>
           <button className="ghost" style={{ fontSize: 9, padding: "4px 8px" }} onClick={() => setShowAdvanced((v) => !v)}>{showAdvanced ? "hide" : "+ controls"}</button>
-          <span className="dim" style={{ fontSize: 10, marginLeft: "auto" }}>cloud model → pick inside terminal via <code>/model</code></span>
+          <span className="dim" style={{ fontSize: 10, marginLeft: "auto" }}>pick a model above, or /model inside a TUI — cloud models load from provider catalogs</span>
         </div>
         {showAdvanced && (
           <div style={{ display: "flex", gap: 12, alignItems: "center", padding: "6px 10px", marginBottom: 6, background: "var(--panel)", border: "1px solid var(--line)", fontSize: 11 }}>

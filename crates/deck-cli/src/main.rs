@@ -80,6 +80,14 @@ enum Commands {
         #[command(subcommand)]
         action: EngineCmd,
     },
+    /// Manage the online agent fleet: cloud providers, the harnesses
+    /// (OpenCode/Goose/DeepSeek) that consume them, and per-provider quota.
+    /// Pick a harness + provider model and cyberdeck rewrites the harness
+    /// config to point at it.
+    Agents {
+        #[command(subcommand)]
+        action: AgentCmd,
+    },
     /// PLUG IN a model + engine and let cyberdeck derive the best-max-ctx
     /// loadout, verify it headlessly on a test port (never touching the live
     /// service), then install + start + bench it.
@@ -466,6 +474,39 @@ enum EngineCmd {
 }
 
 #[derive(Subcommand)]
+enum AgentCmd {
+    /// List cloud providers + harnesses and their stored quota
+    List,
+    /// Show the current provider/model binding + quota per harness
+    Status,
+    /// Fetch a provider's /v1/models catalog
+    Catalog {
+        /// provider id: nim | groq | gemini | openrouter | ...
+        provider: String,
+        /// API key for providers that require one to list models
+        #[arg(long)]
+        key: Option<String>,
+    },
+    /// Bind a harness to (provider, model): rewrite its config + record it
+    Use {
+        /// harness id: opencode | goose | deepseek
+        harness: String,
+        /// provider id: nim | groq | gemini | openrouter | ...
+        provider: String,
+        /// model id within that provider
+        model: String,
+    },
+    /// Record how much quota a provider has consumed
+    Quota {
+        /// provider id: nim | groq | gemini | openrouter | ...
+        provider: String,
+        /// usage seen so far in the current window
+        #[arg(long)]
+        used: u64,
+    },
+}
+
+#[derive(Subcommand)]
 enum ProfileCmd {
     /// Create a new loadout from flags
     New {
@@ -605,6 +646,15 @@ fn main() -> Result<()> {
                 path,
                 clear,
             } => cmd::engines::bin(&engine, path, clear),
+        },
+        Commands::Agents { action } => match action {
+            AgentCmd::List => cmd::agents::list(),
+            AgentCmd::Status => cmd::agents::status(),
+            AgentCmd::Catalog { provider, key } => cmd::agents::catalog(&provider, key),
+            AgentCmd::Use { harness, provider, model } => {
+                cmd::agents::use_harness(&harness, &provider, &model)
+            }
+            AgentCmd::Quota { provider, used } => cmd::agents::quota_set(&provider, used),
         },
         Commands::Workloads { action } => match action {
             WorkloadsCmd::List { json } => cmd::workloads::list(json),

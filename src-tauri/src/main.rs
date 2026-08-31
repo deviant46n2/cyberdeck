@@ -484,6 +484,43 @@ fn analyze_relevance(repo: String, workload: Option<String>) -> Result<serde_jso
     deck_tauri::analyze_relevance(repo, workload)
 }
 
+// Online agent fleet door — see crates/deck-tauri/src/agents.rs. Fast SQLite
+// reads stay sync; catalog (network) and use (config rewrite) run via blocking.
+
+#[tauri::command]
+fn agents_fleet() -> Result<deck_tauri::agents::FleetView, String> {
+    deck_tauri::agents::agents_fleet().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn agents_catalog(
+    provider_id: String,
+    key: Option<String>,
+) -> Result<Vec<deck_agents::model::ProviderModel>, String> {
+    blocking(move || {
+        deck_tauri::agents::agents_catalog(&provider_id, key).map_err(|e| e.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn agents_use(
+    harness_id: String,
+    provider_id: String,
+    model_id: String,
+) -> Result<String, String> {
+    blocking(move || {
+        deck_tauri::agents::agents_use(&harness_id, &provider_id, &model_id)
+            .map_err(|e| e.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+fn agents_quota_set(provider_id: String, used: u64) -> Result<(), String> {
+    deck_tauri::agents::agents_quota_set(&provider_id, used).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn delete_model(path: String, delete_file: bool) -> Result<deck_tauri::DeleteResult, String> {
     deck_tauri::delete_model(&path, delete_file).map_err(|e| e.to_string())
@@ -610,6 +647,10 @@ fn main() {
             host_metrics,
             browse_fit_remote,
             tweak_profile,
+            agents_fleet,
+            agents_catalog,
+            agents_use,
+            agents_quota_set,
             engine_list,
             engine_bin_list,
             engine_bin_set,

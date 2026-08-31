@@ -164,6 +164,8 @@ RECOMMENDATION — deterministic explainable query over aggregates
 
 *Already landed O1:* `deck-feeds::feeds::Source` (`id()+fetch()->Vec<Release>`) + `HfSource` + `GithubSource`, `deck_core::store::Release` catalog (PK dedup), `deck feeds poll --source hf|github` / `deck feeds list --json --limit`, `deck-tauri::feeds_{poll,list}`.
 
+*Online fleet door (LANDED 2026-08-31):* the canvas model picker can now select a **local** GGUF (resident engine, 🔵) or a **cloud** model (🟣) per agent run. Cloud models come from live `/v1/models` catalogs fetched per provider (Groq, Gemini, DeepSeek, OpenRouter, NIM, OpenCode Go/Zen) and grouped in the picker with their free-tier quota note; free providers preferred (direct free keys beat the shared OpenRouter pool for volume). `deck agents` (CLI) and the Tauri `agents_fleet/agents_catalog/agents_use/agents_quota_set` commands are the two doors; `deck-agents` (`model`/`providers`/`quota`/`rewrite` + `ops`) is the domain crate. **Anti-reinvent decision:** the harness-config *routing* (Goose/OpenCode/DeepSeek↔provider rewiring) is intentionally NOT rebuilt here — it's delegated to existing OSS (AgentO, oneharness, universal-agent-config); `deck-agents` keeps only the cyberdeck-unique pieces: the free-tier provider catalog, quota tracking, and live model catalogs. DeepSeek/Goose harness config-rewriting stays stubbed until those CLIs are installed on a machine with real configs to inspect.
+
 *Target:*
 
 * `deck-feeds/feeds/` — add adapters as files (OpenRouter, RSS, quant feeds) without touching poller. Per-source `interval + jitter + ETag/Last-Modified cache` on disk (`~/.local/share/cyberdeck/feeds/{source}/{repo}.json`), 429 backoff, `HF_TOKEN`/`GITHUB_TOKEN` via env. `poll` respects `sources` filter; `list` orders by `fetched_at DESC`.
@@ -608,6 +610,7 @@ DISCOVER → FIT → RUN → MEASURE → EVALUATE → COMPARE → RECOMMEND
 | Phase 6 one-click experiment pipeline | H | M | Med | P1 | Closes the loop; depends on 1–2 |
 | Phase 7a–b agent READ/ANALYZE/MODIFY | M | S | Low | P1 | Safe agent value; shell-free |
 | O4 HUD what changed lane | M | S | Low | P1 | FEEDS view + recency gate + feeds→download handoff landed; DISK/fit-at-ctx enrichment open |
+| Online fleet door — cloud models in canvas picker | M | S | Low | P1 LANDED | `deck agents` + Tauri `agents_*` + live per-provider model catalogs grouped by free tier in the Workspace model picker; harness config-routing delegated to OSS (AgentO/oneharness), not rebuilt |
 | Phase 8 Canvas — draggable TUIs (8a) | M | S | Low | P1 DONE | HUD multi-agent, zen+local side-by-side, embedded `opencode attach` TUIs |
 | Phase 8 Canvas — workflow foundation (8c) | M | M | Med | P1 DONE | Role/Model/DAG scheduler + headless executor + `deck workflow` CLI; Phase 0 schema gate |
 | Phase 8 Canvas — UI shell (8d), matrix (8e), branch/loop (8f) | M | M–L | Med | P2 | 8d+8e DONE (canvas + per-role bench); 8f branch+loop DONE, supervisor remains |

@@ -11,6 +11,7 @@ mod releases;
 mod residents;
 mod settings;
 mod workloads;
+mod agents;
 
 pub use bench::*;
 pub use engine_bin::*;
@@ -20,6 +21,7 @@ pub use releases::*;
 pub use residents::*;
 pub use settings::*;
 pub use workloads::*;
+pub use agents::*;
 
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};

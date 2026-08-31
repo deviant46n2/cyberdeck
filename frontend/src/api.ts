@@ -589,3 +589,39 @@ export interface LoopBenchRow {
 }
 export const workflowLoopBench = (workflowId: string) =>
   invoke<LoopBenchRow | null>("workflow_loop_bench", { workflowId });
+
+// --- online agent fleet (cloud model sources + harnesses + quota) ---
+export interface ProviderView {
+  id: string;
+  display: string;
+  kind: string;
+  free_note: string;
+  quota_used: number;
+  quota_limit: number | null;
+  quota_label: string;
+  quota_pct: number | null;
+  quota_source: string;
+}
+export interface HarnessView {
+  id: string;
+  display: string;
+  binding_provider: string | null;
+  binding_model: string | null;
+}
+export interface FleetView {
+  providers: ProviderView[];
+  harnesses: HarnessView[];
+}
+export interface ProviderModel {
+  id: string;
+  name: string;
+  context: number | null;
+  free: boolean;
+}
+export const agentsFleet = () => invoke<FleetView>("agents_fleet");
+export const agentsCatalog = (providerId: string, key: string | null) =>
+  invoke<ProviderModel[]>("agents_catalog", { providerId, key });
+export const agentsUse = (harnessId: string, providerId: string, modelId: string) =>
+  invoke<string>("agents_use", { harnessId, providerId, modelId });
+export const agentsQuotaSet = (providerId: string, used: number) =>
+  invoke<void>("agents_quota_set", { providerId, used });

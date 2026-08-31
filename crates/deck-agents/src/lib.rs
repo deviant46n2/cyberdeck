@@ -17,6 +17,7 @@ pub mod model;
 pub mod providers;
 pub mod rewrite;
 pub mod quota;
+pub mod ops;
 
 /// Human label for an OpenAI-compatible provider category intended to surface
 /// whether an endpoint is a single service or an aggregator/router.
