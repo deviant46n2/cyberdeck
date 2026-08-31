@@ -107,6 +107,10 @@
     {
       "commit": "e20d44a",
       "reason": "feat(pet) Minecraft steak/heart + feed cooldown: documented in follow-through docs commit 296119e (System-state pet section updated in feature-parity.md). Code and docs landed in separate commits because the docs also covered the promote commit; doc-sync-by-definition."
+    },
+    {
+      "commit": "fbbc3f6",
+      "reason": "feat(agents) scaffold deck-agents crate: pure domain crate (model/providers/quota/rewrite types + static catalogs) with no CLI, Tauri, or UI door wired yet \u2014 no user-facing surface the docs describe has changed. Behavior surfaces (deck agents, Tauri commands, appwide picker) land and get documented in subsequent verified pieces."
     }
   ]
 }
