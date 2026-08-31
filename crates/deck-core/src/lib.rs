@@ -13,6 +13,7 @@ pub mod relevance;
 pub mod safetensors;
 pub mod scanner;
 pub mod store;
+pub mod opencode_sync;
 pub mod workload;
 pub mod workflow;
 pub mod wfstore;

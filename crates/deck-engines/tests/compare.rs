@@ -32,6 +32,7 @@ fn row(model: &str, task: &str, run: u32, ok: bool, tok_s: Option<f64>, output: 
         model_rev: None,
         sampling_json: None,
         role_id: None,
+        workflow_id: None,
     }
 }
 

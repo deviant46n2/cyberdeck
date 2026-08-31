@@ -11,18 +11,33 @@ export default function TuiWindow({
   pos,
   onPos,
   onDismiss,
+  selected,
+  onSelect,
+  onContextMenu,
+  role,
+  onStartConnect,
+  connecting,
 }: {
   pane: { id: string; dir: string };
   pos: { x: number; y: number };
   onPos: (p: { x: number; y: number }) => void;
   onDismiss: (id: string) => void;
+  selected?: boolean;
+  onSelect?: (id: string) => void;
+  onContextMenu?: (e: React.MouseEvent, id: string) => void;
+  role?: string;
+  onStartConnect?: (id: string) => void;
+  connecting?: boolean;
 }) {
-  const [size, setSize] = useState<{ w: number; h: number }>({ w: 620, h: 380 });
+  const [size, setSize] = useState<{ w: number; h: number }>({ w: 900, h: 520 });
   const [z, setZ] = useState(1);
   const ref = useRef<HTMLDivElement>(null);
 
   // bring to front on focus
-  const raise = () => setZ((z) => z + 1);
+  const raise = () => {
+    setZ((z) => z + 1);
+    onSelect?.(pane.id);
+  };
 
   const startDrag = (e: React.PointerEvent) => {
     e.preventDefault();
@@ -63,6 +78,7 @@ export default function TuiWindow({
       className="tui-window"
       onPointerDown={raise}
       onClick={raise}
+      onContextMenu={(e) => { e.preventDefault(); onContextMenu?.(e, pane.id); }}
       style={{
         position: "absolute",
         left: 0,
@@ -73,43 +89,45 @@ export default function TuiWindow({
         zIndex: z,
         display: "flex",
         flexDirection: "column",
-        background: "var(--panel)",
-        border: "1px solid var(--line-bright)",
-        borderRadius: 8,
-        boxShadow: "0 14px 40px rgba(0,0,0,0.5)",
+        background: "#0b0b0b",
+        border: `1px solid ${selected ? "var(--magenta)" : "var(--line)"}`,
+        boxShadow: selected ? "0 0 0 2px rgba(210,153,34,0.25)" : "none",
         overflow: "hidden",
       }}
     >
-      {/* title bar — drag handle */}
+      {/* plain drag bar — role badge + loop handle · click selects for drawer */}
       <div
-        onPointerDown={startDrag}
-        className="row"
+        onPointerDown={(e) => { onSelect?.(pane.id); startDrag(e); }}
+        onClick={() => onSelect?.(pane.id)}
+        title={`opencode ${pane.id} — drag to move, click to select${role ? ` · role: ${role}` : ""}`}
         style={{
+          height: 18,
+          flex: "none",
           cursor: "grab",
+          background: selected ? "rgba(210,153,34,0.18)" : "rgba(255,255,255,0.03)",
+          display: "flex",
           alignItems: "center",
           gap: 6,
-          padding: "4px 8px",
-          background: "var(--panel-2)",
-          borderBottom: "1px solid var(--line)",
-          userSelect: "none",
-          flex: "none",
+          padding: "0 6px",
+          fontSize: 9,
+          color: "var(--dim2)",
         }}
       >
-        <span style={{ color: "var(--magenta)", fontSize: 10 }}>⠿</span>
-        <span className="mono" style={{ fontSize: 10, color: "var(--dim2)", flex: 1 }}>
-          opencode@{pane.dir.split("/").pop()}
-        </span>
-        <button
-          className="ghost"
-          style={{ fontSize: 10, padding: "2px 7px" }}
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={() => { void api.tuiStop(pane.id); onDismiss(pane.id); }}
-        >
-          ✕
-        </button>
+        <span onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onSelect?.(pane.id); }} style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer" }}>{role ? `◉ ${role} — click to edit` : "◯ no role — click to assign"}</span>
+        <span
+          onPointerDown={(e) => { e.stopPropagation(); onStartConnect?.(pane.id); }}
+          title={connecting ? "pick target terminal to connect (loop)" : "drag to connect — loopable edge"}
+          style={{
+            width: 10, height: 10, borderRadius: "50%",
+            background: connecting ? "var(--magenta)" : "var(--line)",
+            border: "1px solid var(--line-bright)",
+            cursor: "crosshair",
+            flex: "none",
+          }}
+        />
       </div>
-      {/* terminal body */}
-      <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+      {/* terminal body — stock opencode TUI, no wrapper */}
+      <div style={{ flex: 1, minHeight: 0, position: "relative" }} onPointerDown={(e) => e.stopPropagation()}>
         <TuiPane pane={pane} onExited={onDismiss} />
       </div>
       {/* resize handle — bottom-right */}
@@ -125,6 +143,26 @@ export default function TuiWindow({
           zIndex: 5,
         }}
       />
+      {/* tiny chrome-free dismiss — bottom edge hover */}
+      <button
+        title="close"
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={() => { void api.tuiStop(pane.id); onDismiss(pane.id); }}
+        style={{
+          position: "absolute",
+          top: 6,
+          right: 4,
+          fontSize: 9,
+          lineHeight: 1,
+          padding: "2px 4px",
+          background: "rgba(0,0,0,0.55)",
+          border: "1px solid var(--line)",
+          color: "var(--dim2)",
+          opacity: 0.6,
+        }}
+      >
+        ✕
+      </button>
     </div>
   );
 }

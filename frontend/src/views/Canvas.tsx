@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import * as api from "../api";
+import Tamagotchi from "./Tamagotchi";
 
 const KIND_COLOR: Record<string, string> = {
   Agentic: "var(--magenta)",
@@ -22,6 +23,7 @@ export default function Canvas() {
   const [runner, setRunner] = useState<"stateless" | "agentic">("stateless");
   const [dir, setDir] = useState("");
   const [msg, setMsg] = useState("");
+  const [agentPid, setAgentPid] = useState<number | null>(null);
   const [status, setStatus] = useState<Map<string, string>>(new Map());
   const [history, setHistory] = useState<api.WfRunRow[]>([]);
   const [bench, setBench] = useState<api.RoleBenchRow[]>([]);
@@ -124,6 +126,14 @@ export default function Canvas() {
             <h3 style={{ fontSize: 11, letterSpacing: 0.6, color: "var(--muted)", margin: 0 }}>WORKFLOWS</h3>
             <button className="ghost" style={{ fontSize: 9, padding: "2px 6px" }} onClick={() => { setSelected(""); load(); }} title="reseed + reload">
               RESEED
+            </button>
+            <button
+              className="ghost"
+              onClick={() => api.tuiSpawn(dir || "/home/deviant/Projects/cyberdeck", 80, 24).then((pid) => setAgentPid(Number(pid))).catch((e) => setMsg(String(e)))}
+              style={{ fontSize: 9, padding: "2px 6px" }}
+              title="open agent pane on canvas"
+            >
+              OPEN PANE
             </button>
           </div>
           {workflows.length === 0 && <div className="dim" style={{ padding: 6 }}>seeding…</div>}

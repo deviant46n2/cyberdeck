@@ -19,6 +19,7 @@ pub(crate) mod experiment;
 pub(crate) mod hardware;
 pub(crate) mod recommend;
 pub(crate) mod settings;
+pub(crate) mod opencode;
 pub(crate) mod workloads;
 pub(crate) mod workflow;
 

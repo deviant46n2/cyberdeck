@@ -110,8 +110,8 @@ pub use recommend::recommend;
 pub use settings::{settings_get, settings_list, settings_set};
 pub use workloads::{Workload, workloads_list};
 pub use workflow::{
-    WfDoneEvt, WfNodeEvt, WfStarted, workflow_get, workflow_history, workflow_list, workflow_per_role_bench,
-    workflow_run, workflow_save, workflow_seed, workflow_stop,
+    WfDoneEvt, WfNodeEvt, WfStarted, workflow_get, workflow_history, workflow_list, workflow_loop_bench,
+    workflow_per_role_bench, workflow_run, workflow_save, workflow_seed, workflow_stop,
 };
 pub use profiles::{
     ProfileRow, UseResult, delete_profile, get_profile, list_profiles, render_profile_unit, save_profile,

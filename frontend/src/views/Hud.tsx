@@ -51,6 +51,7 @@ export default function Hud({
   );
   const sessionsRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const runningSessionIds = useRef<Set<string>>(new Set());
 
   const active = profiles.find((p) => p.name === loadout) ?? null;
 
@@ -107,6 +108,7 @@ export default function Hud({
   useEffect(() => {
     const a = listen<{ id: string; prompt: string }>("opencode-started", (e) => {
       console.log("[harness] opencode-started", e.payload);
+      runningSessionIds.current.add(e.payload.id);
       setSessions((s) => {
         const pending = s.find((x) => x.id.startsWith("pending-") && x.running);
         if (pending) {
@@ -136,9 +138,16 @@ export default function Hud({
     });
     const c = listen<{ session: string; code: number }>("opencode-done", (e) => {
       console.log("[harness] done", e.payload);
+      runningSessionIds.current.delete(e.payload.session);
       setSessions((s) => s.map((x) => (x.id === e.payload.session ? { ...x, running: false } : x)));
     });
-    return () => { a.then((f) => f()); b.then((f) => f()); c.then((f) => f()); };
+    return () => {
+      a.then((f) => f());
+      b.then((f) => f());
+      c.then((f) => f());
+      // on unmount, stop all orphaned running sessions
+      runningSessionIds.current.forEach((id) => void api.opencodeStop(id));
+    };
   }, []);
 
   useEffect(() => {
@@ -178,7 +187,7 @@ export default function Hud({
     // race opencodeRun against a 15s timeout so a down engine never freezes the HUD
     const withTimeout = <T,>(p: Promise<T>, ms: number, msg: string) => Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new Error(msg)), ms))]);
     try {
-      await withTimeout(api.opencodeRun({ prompt: snap, dir, auto, model: chosen, engine: eng }), 15000, `opencode harness timed out after 15s — is ${eng} on its port UP?`);
+      await withTimeout(api.opencodeRun({ prompt: snap, dir, auto, model: chosen, engine: eng, ctx }), 15000, `opencode harness timed out after 15s — is ${eng} on its port UP?`);
       setPrompt("");
       setTimeout(() => inputRef.current?.focus(), 50);
     } catch (e) {

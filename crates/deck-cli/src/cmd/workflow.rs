@@ -84,11 +84,14 @@ pub fn list(json: bool) -> Result<()> {
     Ok(())
 }
 
-pub fn run(id: &str, runner: &str, dir: Option<&Path>, model: Option<&str>) -> Result<()> {
+pub fn run(id: &str, runner: &str, dir: Option<&Path>, model: Option<&str>, task: Option<&str>) -> Result<()> {
     let db = deck_core::store::default_db_path();
     let conn = deck_core::store::open(&db)?;
-    let wf = deck_core::wfstore::get_workflow(&conn, id)?
+    let mut wf = deck_core::wfstore::get_workflow(&conn, id)?
         .ok_or_else(|| anyhow::anyhow!("workflow '{id}' not found"))?;
+    if let Some(t) = task.filter(|s| !s.trim().is_empty()) {
+        wf.inputs.insert("task".into(), t.into());
+    }
     // Structural validation (Phase 8f): raw cycles refused, loop rules + edge
     // predicates checked before any node runs.
     wf.validate().map_err(anyhow::Error::msg)?;
@@ -115,6 +118,10 @@ pub fn run(id: &str, runner: &str, dir: Option<&Path>, model: Option<&str>) -> R
             let agentic = deck_engines::AgenticRunner { dir: dir.display().to_string(), model: model.map(String::from) };
             anyhow::Ok(deck_engines::execute(&wf, &agentic, run_id.clone(), 4, &stop).map_err(anyhow::Error::msg)?)
         }
+        "echo" => {
+            let echo = deck_engines::EchoRunner;
+            anyhow::Ok(deck_engines::execute(&wf, &echo, run_id.clone(), 4, &stop).map_err(anyhow::Error::msg)?)
+        }
         _ => {
             let stateless = deck_engines::StatelessRunner { max_tokens: 8192 };
             anyhow::Ok(deck_engines::execute(&wf, &stateless, run_id.clone(), 4, &stop).map_err(anyhow::Error::msg)?)
@@ -124,7 +131,7 @@ pub fn run(id: &str, runner: &str, dir: Option<&Path>, model: Option<&str>) -> R
     // Persist node + workflow-run results.
     for nr in &report.node_results {
         let nrow = deck_core::wfstore::NodeRunRow {
-            id: format!("{}-{}", run_id, nr.node_id),
+            id: format!("{}-{}-{}", run_id, nr.node_id, nr.order_idx),
             run_id: run_id.clone(),
             node_id: nr.node_id.clone(),
             role_id: wf.nodes.iter().find(|n| n.id == nr.node_id).map(|n| n.role_id.clone()).unwrap_or_default(),

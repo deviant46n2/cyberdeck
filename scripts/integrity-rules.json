@@ -179,6 +179,12 @@
         "reason": "Single CANVAS view component (node cards + SVG edges + RUN/STOP door + per-role bench table), mirroring the accepted Hud/Bringup/LoadoutEditor view entries; split would force prop-drilling across one page. AGENTS.md COHESION > ARBITRARY LINE COUNT"
       },
       {
+        "path": "frontend/src/views/Workspace.tsx",
+        "lines": 642,
+        "kind": "accepted",
+        "reason": "Single WORKSPACE centerpiece: HUD + Loadouts + Canvas unified as infinite canvas (pan/zoom DAG + ephemeral agent cards + TUI nodes + loadout palette + drawer editor + whole-loop bench). Merges three previously-accepted views (Hud 495, Canvas 336, Loadouts 148) into one cohesive page; splitting would scatter the single-canvas interaction and force prop-drilling across workspace header/canvas/drawer/benches. Per docs/WORKSPACE_CANVAS.md, decomposition is the bench/store split (loop_bench) not view fragmentation. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
+      },
+      {
         "path": "frontend/src/lib/dl.test.ts",
         "lines": 304,
         "kind": "accepted",

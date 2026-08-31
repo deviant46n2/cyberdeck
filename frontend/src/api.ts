@@ -343,6 +343,7 @@ export const opencodeRun = (p: {
   auto: boolean;
   model: string;
   engine: string;
+  ctx: number;
 }) => invoke<void>("opencode_run", p);
 export const opencodeStop = (id: string) =>
   invoke<void>("opencode_stop", { id });
@@ -536,6 +537,7 @@ export interface Workflow {
     max_iterations: number;
   };
   template: boolean;
+  inputs: Record<string, string>;
 }
 
 export interface WfRunRow {
@@ -550,15 +552,15 @@ export interface WfRunRow {
 }
 
 export interface WfStarted { run_id: string; workflow_id: string; }
-export interface WfNodeEvt { run_id: string; node_id: string; ok: boolean; skipped: boolean; error: string; }
+export interface WfNodeEvt { run_id: string; node_id: string; ok: boolean; skipped: boolean; error: string; text: string; }
 export interface WfDoneEvt { run_id: string; workflow_id: string; status: string; tokens_used: number; nodes_ok: number; nodes_failed: number; iterations?: number; }
 
 export const workflowSeed = () => invoke<string>("workflow_seed");
 export const workflowSave = (body: string) => invoke<string>("workflow_save", { body });
 export const workflowList = () => invoke<Workflow[]>("workflow_list");
 export const workflowGet = (workflowId: string) => invoke<Workflow | null>("workflow_get", { workflowId });
-export const workflowRun = (workflowId: string, runner: string, dir?: string | null, model?: string | null) =>
-  invoke<WfStarted>("workflow_run", { workflowId, runner, dir: dir ?? null, model: model ?? null });
+export const workflowRun = (workflowId: string, runner: string, dir?: string | null, model?: string | null, task?: string | null) =>
+  invoke<WfStarted>("workflow_run", { workflowId, runner, dir: dir ?? null, model: model ?? null, task: task ?? null });
 export const workflowStop = (runId: string) => invoke<void>("workflow_stop", { runId });
 export const workflowHistory = (workflowId?: string | null) =>
   invoke<WfRunRow[]>("workflow_history", { workflowId: workflowId ?? null });
@@ -575,3 +577,15 @@ export interface RoleBenchRow {
 }
 export const workflowPerRoleBench = (workflowId: string) =>
   invoke<RoleBenchRow[]>("workflow_per_role_bench", { workflowId });
+
+export interface LoopBenchRow {
+  workflow_id: string;
+  runs: number;
+  best_tps: number;
+  avg_tps: number;
+  last_tps: number;
+  last_wall_ms: number;
+  last_gen_tokens: number;
+}
+export const workflowLoopBench = (workflowId: string) =>
+  invoke<LoopBenchRow | null>("workflow_loop_bench", { workflowId });

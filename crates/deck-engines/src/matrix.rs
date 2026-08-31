@@ -75,6 +75,7 @@ fn fail_row(
         model_rev: None,
         sampling_json: None,
         role_id: None,
+        workflow_id: None,
     }
 }
 
@@ -173,6 +174,7 @@ fn run_cell(
                 model_rev: None,
                 sampling_json: None,
                 role_id: None,
+                workflow_id: None,
             });
         }
     }

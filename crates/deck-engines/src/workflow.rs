@@ -16,7 +16,7 @@ use std::time::Instant;
 
 use deck_core::profile::Engine;
 use deck_core::workflow::{
-    plan, Message, Workflow, WorkflowNode, WorkflowRunStatus,
+    plan, Message, NodeKind, Workflow, WorkflowNode, WorkflowRunStatus,
 };
 
 // ---------------------------------------------------------------- outcomes
@@ -118,11 +118,15 @@ impl NodeRunner for StatelessRunner {
         let host = "127.0.0.1".to_string();
         let port = engine.default_port();
         let prompt = build_prompt(self, node, inputs);
+        // model_ref is vault style `alias@quant` or `ollama/name:tag`; inference wants bare alias/tag.
+        let alias = node.binding.model_ref.split('@').next().unwrap_or(&node.binding.model_ref).trim();
+        let alias = alias.split('/').last().unwrap_or(alias).trim();
+        let model_id = if alias.is_empty() { node.binding.model_ref.as_str() } else { alias };
         let s = crate::inference::run_prompt(
             engine,
             &host,
             port,
-            &node.binding.model_ref,
+            model_id,
             &prompt,
             node.exec.max_tokens.min(self.max_tokens).max(16),
         );
@@ -136,6 +140,30 @@ impl NodeRunner for StatelessRunner {
         } else {
             Err(s.error.unwrap_or_else(|| "generation failed".into()))
         }
+    }
+}
+
+// ---------------------------------------------------------------- echo runner (no-LLM loop proof, tonight)
+
+// Like LiteGraph's EchoRunner in the unit tests — lets you see TUI-to-TUI
+// wiring + loop iterations + bench without any engine up. The CLI/UI expose
+// it as `runner=echo`.
+pub struct EchoRunner;
+
+impl NodeRunner for EchoRunner {
+    fn name(&self) -> &'static str {
+        "echo"
+    }
+    fn run(&self, node: &WorkflowNode, inputs: &[Message]) -> Result<NodeOutcome, String> {
+        let up = inputs.iter().map(|m| m.text.clone()).collect::<Vec<_>>().join(" | ");
+        let task_line = if up.is_empty() { "no upstream".to_string() } else { up };
+        // include the kickoff task visibly so the loop is obviously alive
+        Ok(NodeOutcome {
+            text: format!("[echo {}:{}] saw upstream: {} — gen 42 tokens", node.id, node.role_id, task_line),
+            tps: Some(100.0),
+            ttft_ms: Some(5),
+            gen_tokens: 42,
+        })
     }
 }
 
@@ -266,6 +294,7 @@ pub fn execute(
             &mut tokens_used,
             &mut loop_carry,
             stop,
+            iterations_ran,
         );
         iterations_ran += 1;
         // Budget is enforced continuously inside run_pass; a pass that burned
@@ -347,6 +376,7 @@ fn run_pass(
     tokens_used: &mut u64,
     loop_carry: &mut Option<Message>,
     stop: &AtomicBool,
+    iteration: u32,
 ) -> bool {
     let mut any_node_ran = false;
     for wave in &dp.waves {
@@ -417,6 +447,23 @@ fn run_pass(
             if let Some(carry) = carry {
                 inputs.push(carry);
             }
+            // Kickoff inputs (CrewAI `inputs.task` / Studio `Input`): seed source nodes
+            // on the first iteration so "where do I type the task" has an answer.
+            // Later loop iterations already have `loop_carry`, so this fires once.
+            if inputs.is_empty() && incoming.is_empty() && iteration == 0 && !wf.inputs.is_empty() {
+                let task = wf.inputs.get("task").or_else(|| wf.inputs.values().next()).cloned().unwrap_or_default();
+                if !task.trim().is_empty() {
+                    inputs.push(Message {
+                        id: format!("m-input-task"),
+                        node_run_id: format!("{run_id}-input"),
+                        kind: deck_core::workflow::MessageKind::Text,
+                        text: task,
+                        structured: None,
+                        ref_path: None,
+                        meta: Default::default(),
+                    });
+                }
+            }
 
             let skip = !incoming.is_empty() && !has_unconditional && gated_false == incoming.len();
             if skip {
@@ -432,6 +479,39 @@ fn run_pass(
                     gen_tokens: 0,
                     skipped: true,
                 });
+                continue;
+            }
+
+            // Human gate — does not run an LLM, just surfaces the inputs for approval and pauses
+            if node.kind == NodeKind::Human || node.role_id == "human" {
+                let text = inputs.iter().map(|m| m.text.clone()).collect::<Vec<_>>().join("\n---\n");
+                let text = if text.is_empty() { "human approval required — no inputs yet".into() } else { text };
+                *order += 1;
+                node_results.push(NodeResult {
+                    node_id: node_id.clone(),
+                    ok: true,
+                    text: text.clone(),
+                    error: String::new(),
+                    wall_ms: 0,
+                    order_idx: *order,
+                    tps: None,
+                    ttft_ms: None,
+                    gen_tokens: 0,
+                    skipped: false,
+                });
+                messages.insert(
+                    node_id.clone(),
+                    Message {
+                        id: format!("m-{node_id}"),
+                        node_run_id: format!("{run_id}-{node_id}"),
+                        kind: deck_core::workflow::MessageKind::Text,
+                        text,
+                        structured: None,
+                        ref_path: None,
+                        meta: Default::default(),
+                    },
+                );
+                any_node_ran = true;
                 continue;
             }
 
@@ -516,6 +596,7 @@ pub fn node_to_matrix_row(
         model_rev: None,
         sampling_json: None,
         role_id: Some(node.role_id.clone()),
+        workflow_id: Some(wf.id.clone()),
     })
 }
 
@@ -662,6 +743,7 @@ mod tests {
             }],
             exec_settings: ExecSettings::default(),
             template: false,
+            inputs: Default::default(),
         };
         let stop = AtomicBool::new(false);
         // EchoRunner makes every node output "<id>|<inputs>", which does NOT
@@ -695,6 +777,7 @@ mod tests {
             }],
             exec_settings: ExecSettings::default(),
             template: false,
+            inputs: Default::default(),
         };
         let stop = AtomicBool::new(false);
         let rep = execute(&wf, &EchoRunner, "r-branch-ok".into(), 4, &stop).unwrap();
@@ -766,6 +849,7 @@ mod tests {
             ],
             exec_settings: ExecSettings { max_iterations: 10, ..Default::default() },
             template: false,
+            inputs: Default::default(),
         };
         assert_eq!(wf.validate(), Ok(()));
         let stop = AtomicBool::new(false);
@@ -802,6 +886,7 @@ mod tests {
             }],
             exec_settings: ExecSettings { max_iterations: 2, ..Default::default() },
             template: false,
+            inputs: Default::default(),
         };
         assert_eq!(wf.validate(), Ok(()));
         let stop = AtomicBool::new(false);
@@ -830,6 +915,7 @@ mod tests {
             // 2 tokens budget; each pass of LoopRunner emits ~10 chars => ~2 tokens
             exec_settings: ExecSettings { max_iterations: 20, budget_tokens: 6, ..Default::default() },
             template: false,
+            inputs: Default::default(),
         };
         assert_eq!(wf.validate(), Ok(()));
         let stop = AtomicBool::new(false);

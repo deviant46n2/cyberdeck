@@ -1,23 +1,24 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import * as api from "./api";
 import * as dls from "./lib/dl";
-import Hud from "./views/Hud";
 import Tamagotchi from "./views/Tamagotchi";
 import Vault from "./views/Vault";
-import Loadouts from "./views/Loadouts";
 import Signals from "./views/Signals";
 import Market from "./views/Market";
 import Downloads from "./views/Downloads";
 import Bringup from "./views/Bringup";
 import Bench from "./views/Bench";
-import Canvas from "./views/Canvas";
 import Compare from "./views/Compare";
 import Feeds from "./views/Feeds";
+import Workspace from "./views/Workspace";
 
-const VIEWS = ["HUD", "VAULT", "SIGNALS", "FEEDS", "MARKET", "DOWNLOADS", "LOADOUTS", "COMPARE", "CANVAS", "BENCH"];
+const VIEWS = ["WORKSPACE", "VAULT", "SIGNALS", "FEEDS", "MARKET", "DOWNLOADS", "COMPARE", "BENCH"];
+// legacy views kept for ?legacy=1 debug (HUD/LOADOUTS/CANVAS merged into WORKSPACE per docs/WORKSPACE_CANVAS.md)
+const LEGACY_VIEWS = ["HUD", "LOADOUTS", "CANVAS"];
 
 export default function App() {
-  const [view, setView] = useState("HUD");
+  const legacy = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("legacy");
+  const [view, setView] = useState("WORKSPACE");
   const [booted, setBooted] = useState(false);
   const [models, setModels] = useState<api.ModelRow[]>([]);
   const [dups, setDups] = useState<api.DupRow[]>([]);
@@ -67,7 +68,7 @@ export default function App() {
         <div className="brand">cyberdeck</div>
         <div className="brand-sub">local llm fleet · v0.1</div>
         <nav className="nav">
-          {VIEWS.map((v) => (
+          {(legacy ? [...VIEWS, ...LEGACY_VIEWS] : VIEWS).map((v) => (
             <button
               key={v}
               className={view === v ? "active" : ""}
@@ -92,25 +93,17 @@ export default function App() {
       </aside>
 
       <main className="main">
-        {view === "HUD" && (
-          <Hud
-            models={models}
-            dups={dups}
-            profiles={profiles}
-            onChanged={refresh}
-          />
-        )}
+        {view === "WORKSPACE" && <Workspace models={models} dups={dups} profiles={profiles} onChanged={refresh} />}
         {view === "VAULT" && <Vault models={models} dups={dups} onRefresh={refresh} onReload={reload} />}
         {view === "SIGNALS" && <Signals />}
         {view === "FEEDS" && <Feeds />}
         {view === "MARKET" && <Market />}
         {view === "DOWNLOADS" && <Downloads />}
-        {view === "LOADOUTS" && (
-          <Loadouts profiles={profiles} onChanged={refresh} />
-        )}
         {view === "COMPARE" && <Compare />}
-        {view === "CANVAS" && <Canvas />}
         {view === "BENCH" && <Bench />}
+        {legacy && view === "HUD" && <div className="dim" style={{ padding: 20 }}>HUD merged into WORKSPACE — use ?legacy=1 to re-enable</div>}
+        {legacy && view === "LOADOUTS" && <div className="dim" style={{ padding: 20 }}>LOADOUTS merged into WORKSPACE</div>}
+        {legacy && view === "CANVAS" && <div className="dim" style={{ padding: 20 }}>CANVAS merged into WORKSPACE</div>}
       </main>
 
       <Bringup />

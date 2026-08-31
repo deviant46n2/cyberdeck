@@ -449,7 +449,7 @@ mod tests {
             engine: "llamacpp".into(), model: "qwen".into(), ctx: 8192, task: "humaneval".into(), run: 1,
             verdict: "RUNNING".into(), summary: "".into(), gen_tokens: Some(10), prompt_tokens: Some(5),
             tok_s: Some(50.0), tok_s_kind: "native".into(), wall_ms: 100, output: "hello world".into(), at: 0,
-            workload_id: None, hardware_profile_id: None, engine_version: None, prompt_tps: None, ttft_ms: None, peak_vram_mb: None, model_rev: None, sampling_json: None, role_id: None,
+            workload_id: None, hardware_profile_id: None, engine_version: None, prompt_tps: None, ttft_ms: None, peak_vram_mb: None, model_rev: None, sampling_json: None, role_id: None, workflow_id: None,
         };
         let id = insert_matrix_run(&conn, &row).unwrap();
         let ev = Evaluation { id: 0, matrix_run_id: id, method: "exact".into(), passed: true, score: 1.0, details_json: "{}".into(), at: 0 };
@@ -464,7 +464,7 @@ mod tests {
             engine: "llamacpp".into(), model: model.into(), ctx: 0, task: role.into(), run: 1,
             verdict: "ok".into(), summary: "workflow node".into(), gen_tokens: Some(100), prompt_tokens: None,
             tok_s: tps, tok_s_kind: "wall".into(), wall_ms: 500, output: String::new(), at: 0,
-            workload_id: None, hardware_profile_id: None, engine_version: None, prompt_tps: None, ttft_ms: Some(40), peak_vram_mb: None, model_rev: None, sampling_json: None, role_id: Some(role.into()),
+            workload_id: None, hardware_profile_id: None, engine_version: None, prompt_tps: None, ttft_ms: Some(40), peak_vram_mb: None, model_rev: None, sampling_json: None, role_id: Some(role.into()), workflow_id: None,
         }
     }
 

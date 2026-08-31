@@ -31,6 +31,7 @@ pub struct WfNodeEvt {
     pub ok: bool,
     pub skipped: bool,
     pub error: String,
+    pub text: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -127,6 +128,13 @@ pub fn workflow_per_role_bench(
     deck_core::store::per_role_bench(&conn, &roles)
 }
 
+pub fn workflow_loop_bench(workflow_id: &str) -> anyhow::Result<Option<deck_core::store::LoopBenchRow>> {
+    let db = default_db_path();
+    let conn = open(&db)?;
+    wfstore::ensure_wf_schema(&conn)?;
+    deck_core::store::workflow_loop_bench(&conn, workflow_id)
+}
+
 /// Run `wf` once against `runner`, persisting the run + node rows. Returns the
 /// executor report. Mirrors the CLI door's persistence so both doors leave the
 /// same shape of rows; the caller is responsible for surfacing events.
@@ -157,7 +165,7 @@ fn execute_and_persist(
 
     for nr in &report.node_results {
         let nrow = wfstore::NodeRunRow {
-            id: format!("{}-{}", run_id, nr.node_id),
+            id: format!("{}-{}-{}", run_id, nr.node_id, nr.order_idx),
             run_id: run_id.clone(),
             node_id: nr.node_id.clone(),
             role_id: wf.nodes
@@ -216,12 +224,16 @@ pub fn workflow_run(
     runner: &str,
     dir: Option<&str>,
     model: Option<&str>,
+    task: Option<&str>,
 ) -> anyhow::Result<WfStarted> {
     let db = default_db_path();
     let conn = open(&db)?;
     wfstore::ensure_wf_schema(&conn)?;
-    let wf = wfstore::get_workflow(&conn, workflow_id)?
+    let mut wf = wfstore::get_workflow(&conn, workflow_id)?
         .ok_or_else(|| anyhow::anyhow!("workflow '{workflow_id}' not found"))?;
+    if let Some(t) = task.filter(|s| !s.trim().is_empty()) {
+        wf.inputs.insert("task".into(), t.into());
+    }
     // Pre-flight structural validation (Phase 8f) so a bad graph is rejected at
     // launch rather than failing inside the background thread.
     wf.validate().map_err(anyhow::Error::msg)?;
@@ -277,6 +289,8 @@ pub fn workflow_run(
                 let dir = dir_s
                     .ok_or_else(|| anyhow::anyhow!("agentic runner needs dir"))?;
                 &deck_engines::AgenticRunner { dir, model: model_s }
+            } else if runner_s == "echo" {
+                &deck_engines::EchoRunner
             } else {
                 &deck_engines::StatelessRunner { max_tokens: 8192 }
             };
@@ -298,6 +312,7 @@ pub fn workflow_run(
                             ok: nr.ok,
                             skipped: nr.skipped,
                             error: nr.error.clone(),
+                            text: nr.text.clone(),
                         },
                     );
                 }

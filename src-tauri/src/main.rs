@@ -280,6 +280,7 @@ fn opencode_run(
     auto: bool,
     model: String,
     engine: String,
+    ctx: u32,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -297,7 +298,7 @@ fn opencode_run(
                 _ => deck_tauri::console::Engine::LlamaCpp,
             }
         };
-        deck_tauri::opencode_run(&app, &prompt, &dir, auto, engine_opt, model_opt).map_err(|e| e.to_string())
+        deck_tauri::opencode_run(&app, &prompt, &dir, auto, engine_opt, model_opt, ctx).map_err(|e| e.to_string())
     }));
     Ok(())
 }
@@ -514,9 +515,10 @@ fn workflow_run(
     runner: String,
     dir: Option<String>,
     model: Option<String>,
+    task: Option<String>,
     app: tauri::AppHandle,
 ) -> Result<deck_tauri::WfStarted, String> {
-    deck_tauri::workflow_run(&app, &workflow_id, &runner, dir.as_deref(), model.as_deref())
+    deck_tauri::workflow_run(&app, &workflow_id, &runner, dir.as_deref(), model.as_deref(), task.as_deref())
         .map_err(|e| e.to_string())
 }
 
@@ -548,6 +550,13 @@ async fn workflow_per_role_bench(
         deck_tauri::workflow_per_role_bench(&workflow_id).map_err(|e| e.to_string())
     })
     .await
+}
+
+#[tauri::command]
+async fn workflow_loop_bench(
+    workflow_id: String,
+) -> Result<Option<deck_core::store::LoopBenchRow>, String> {
+    blocking(move || deck_tauri::workflow_loop_bench(&workflow_id).map_err(|e| e.to_string())).await
 }
 
 fn main() {
@@ -627,7 +636,8 @@ fn main() {
             workflow_run,
             workflow_stop,
             workflow_history,
-            workflow_per_role_bench
+            workflow_per_role_bench,
+            workflow_loop_bench
         ])
         .setup(|_app| {
             // Sweep agents orphaned by a previously crashed/crash-killed app

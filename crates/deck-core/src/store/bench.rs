@@ -46,6 +46,8 @@ pub struct MatrixRow {
     /// The canvas Role id this benchmark row fed, if any (Phase 8c).
     #[serde(default)]
     pub role_id: Option<String>,
+    #[serde(default)]
+    pub workflow_id: Option<String>,
 }
 
 /// One role's accumulated bench (Phase 8e): best/avg tok/s across the models the
@@ -106,6 +108,7 @@ pub fn ensure_matrix_schema(conn: &Connection) -> Result<()> {
         ("model_rev", "TEXT"),
         ("sampling_json", "TEXT"),
         ("role_id", "TEXT"),
+        ("workflow_id", "TEXT"),
     ] {
         ensure_column(conn, "matrix_runs", col, ddl)?;
     }
@@ -118,8 +121,8 @@ pub fn insert_matrix_run(conn: &Connection, row: &MatrixRow) -> Result<i64> {
         "INSERT INTO matrix_runs
             (engine, model, ctx, task, run, verdict, summary, gen_tokens,
              prompt_tokens, tok_s, tok_s_kind, wall_ms, output, at,
-             workload_id, hardware_profile_id, engine_version, prompt_tps, ttft_ms, peak_vram_mb, model_rev, sampling_json, role_id)
-          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)",
+             workload_id, hardware_profile_id, engine_version, prompt_tps, ttft_ms, peak_vram_mb, model_rev, sampling_json, role_id, workflow_id)
+          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24)",
         rusqlite::params![
             row.engine,
             row.model,
@@ -144,6 +147,7 @@ pub fn insert_matrix_run(conn: &Connection, row: &MatrixRow) -> Result<i64> {
             row.model_rev,
             row.sampling_json,
             row.role_id,
+            row.workflow_id,
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -201,6 +205,47 @@ pub fn per_role_bench(conn: &Connection, roles: &[&str]) -> Result<Vec<RoleBench
         out.push(r?);
     }
     Ok(out)
+}
+
+/// Whole-loop bench: aggregate over a workflow's runs (Phase 8 unified canvas).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LoopBenchRow {
+    pub workflow_id: String,
+    pub runs: u64,
+    pub best_tps: f64,
+    pub avg_tps: f64,
+    pub last_tps: f64,
+    pub last_wall_ms: u64,
+    pub last_gen_tokens: u64,
+}
+
+pub fn workflow_loop_bench(conn: &Connection, workflow_id: &str) -> Result<Option<LoopBenchRow>> {
+    ensure_matrix_schema(conn)?;
+    let mut stmt = conn.prepare(
+        "SELECT at, SUM(COALESCE(gen_tokens,0)), SUM(wall_ms),
+                CASE WHEN SUM(wall_ms)>0 THEN (SUM(COALESCE(gen_tokens,0))*1000.0/SUM(wall_ms)) ELSE 0 END as loop_tps
+         FROM matrix_runs WHERE workflow_id = ?1 AND tok_s IS NOT NULL GROUP BY at ORDER BY at DESC",
+    )?;
+    let runs: Vec<(i64, u64, u64, f64)> = stmt
+        .query_map([workflow_id], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)? as u64, r.get::<_, i64>(2)? as u64, r.get::<_, f64>(3)?)))?
+        .collect::<Result<Vec<_>, _>>()?;
+    if runs.is_empty() {
+        return Ok(None);
+    }
+    let tps: Vec<f64> = runs.iter().map(|(_, _, _, t)| *t).collect();
+    let best = tps.iter().copied().fold(0.0_f64, f64::max);
+    let avg = tps.iter().sum::<f64>() / tps.len() as f64;
+    let (last_at, last_gen, last_wall, last_tps) = runs[0];
+    let _ = last_at;
+    Ok(Some(LoopBenchRow {
+        workflow_id: workflow_id.to_string(),
+        runs: runs.len() as u64,
+        best_tps: best,
+        avg_tps: avg,
+        last_tps,
+        last_wall_ms: last_wall,
+        last_gen_tokens: last_gen,
+    }))
 }
 
 /// A single live throughput measurement pulled from a running engine's

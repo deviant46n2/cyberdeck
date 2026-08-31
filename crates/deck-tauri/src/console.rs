@@ -125,6 +125,7 @@ pub fn opencode_run(
     auto: bool,
     engine: Engine,
     model: Option<&str>,
+    ctx: u32,
 ) -> anyhow::Result<()> {
     let id = format!(
         "sess-{}",
@@ -139,6 +140,7 @@ pub fn opencode_run(
     if let Some(m) = model.filter(|s| !s.is_empty()) {
         cmd.arg("-m").arg(m);
     }
+    cmd.arg("--ctx").arg(ctx.to_string());
     cmd.arg(prompt);
     cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
@@ -314,4 +316,28 @@ mod tests {
         child.kill().ok();
         child.wait().ok();
     }
+}
+
+/// Kill a process by PID with SIGTERM, then SIGKILL after a 5s grace window
+/// (on a background thread, so an interactive STOP stays snappy).
+pub fn kill_process(pid: u32) {
+    let _ = std::process::Command::new("kill")
+        .arg("-TERM")
+        .arg(format!("-{}", pid))
+        .status();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(5));
+        let _ = std::process::Command::new("kill")
+            .arg("-KILL")
+            .arg(format!("-{}", pid))
+            .status();
+    });
+}
+
+/// Tauri command: kill a process group by PID.
+#[tauri::command]
+pub fn tui_kill(pid: String) -> Result<(), String> {
+    let pgid = pid.parse::<u32>().map_err(|e| format!("invalid pid: {e}"))?;
+    kill_process(pgid);
+    Ok(())
 }

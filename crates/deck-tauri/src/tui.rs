@@ -43,6 +43,19 @@ struct Active {
     master: Box<dyn MasterPty + Send>,
     writer: Mutex<Box<dyn std::io::Write + Send>>,
     child: Mutex<Option<Box<dyn Child + Send>>>,
+    tmux_session: Option<String>,
+}
+
+fn tmux_available() -> bool {
+    std::process::Command::new("tmux")
+        .arg("-V")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+fn tmux_session_name(id: &str) -> String {
+    format!("deck-{id}")
 }
 
 /// Panes and the shared serve process. The serve child is a singleton started
@@ -82,33 +95,98 @@ fn ensure_serve() {
 /// Spawn a new embedded opencode TUI pane that attaches to the shared server,
 /// rooted at `dir`. Returns the pane id. The model is chosen interactively
 /// inside the TUI (e.g. `/models`), just like a normal terminal opencode.
+///
+/// Clean-room tmux persistence (inspired by TermCanvas/Zellij, not copied):
+/// if `tmux` is on PATH, each pane is backed by a detached `tmux` session
+/// `deck-<pane-id>` running `opencode attach …`. The PTY we render is
+/// `tmux attach-session -t <sess>`, so killing the Tauri window detaches but
+/// the session lives — relaunch re-attaches. Without tmux we fall back to the
+/// direct PTY child (previous behaviour).
 pub fn tui_spawn(app: &tauri::AppHandle, dir: &str, cols: u16, rows: u16) -> anyhow::Result<String> {
     ensure_serve();
+    // One truth: deck's vault → opencode.json. Best-effort mirror on first pane
+    // so the TUI `Ask anything` model picker matches `deck workflow` / `deck bench`.
+    let _ = deck_core::opencode_sync::sync_opencode(true);
 
     let pty = native_pty_system();
     let pair = pty
         .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
         .context("open PTY")?;
 
-    let mut pb = CommandBuilder::new("opencode");
-    pb.arg("attach");
-    pb.arg(format!("http://127.0.0.1:{}", serve_port()));
-    pb.arg("--dir");
-    pb.arg(dir);
-    let child = pair.slave.spawn_command(pb).context("spawn opencode attach")?;
+    let id = format!("pane-{}", NEXT_PANE.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
+    let sess = tmux_session_name(&id);
+    let use_tmux = tmux_available();
+
+    let child: Box<dyn Child + Send> = if use_tmux {
+        // Ensure a detached tmux session exists that runs the real opencode client.
+        // `has-session` fails if missing — then we create it.
+        let has = std::process::Command::new("tmux")
+            .args(["has-session", "-t", &sess])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if !has {
+            // Escape dir for shell inside tmux (tmux runs via $SHELL -c).
+            let dir_q = if dir.contains(' ') || dir.contains('\'') {
+                format!("'{}'", dir.replace('\'', "'\\''"))
+            } else {
+                dir.to_string()
+            };
+            let inner = format!("opencode attach http://127.0.0.1:{} --dir {dir_q}", serve_port());
+            let st = std::process::Command::new("tmux")
+                .args(["new-session", "-d", "-s", &sess, "-c", dir, &inner])
+                .output();
+            match st {
+                Ok(o) if o.status.success() => eprintln!("[deck] tui: tmux session {sess} created (dir={dir})"),
+                Ok(o) => {
+                    eprintln!("[deck] tui: tmux new-session failed for {sess}: {}", String::from_utf8_lossy(&o.stderr));
+                    // fall through to direct attach below as fallback — do not return yet
+                }
+                Err(e) => eprintln!("[deck] tui: tmux new-session spawn failed: {e}"),
+            }
+        }
+        // Now attach the PTY to that session. If attach fails, fall back to direct opencode.
+        let mut pb = CommandBuilder::new("tmux");
+        pb.arg("attach-session");
+        pb.arg("-t");
+        pb.arg(&sess);
+        match pair.slave.spawn_command(pb) {
+            Ok(c) => {
+                eprintln!("[deck] tui: pane {id} → tmux {sess} (dir={dir})");
+                c
+            }
+            Err(e) => {
+                eprintln!("[deck] tui: tmux attach failed for {sess}: {e} — falling back to direct opencode attach");
+                let mut pb2 = CommandBuilder::new("opencode");
+                pb2.arg("attach");
+                pb2.arg(format!("http://127.0.0.1:{}", serve_port()));
+                pb2.arg("--dir");
+                pb2.arg(dir);
+                pair.slave.spawn_command(pb2).context("spawn opencode attach (tmux fallback)")?
+            }
+        }
+    } else {
+        let mut pb = CommandBuilder::new("opencode");
+        pb.arg("attach");
+        pb.arg(format!("http://127.0.0.1:{}", serve_port()));
+        pb.arg("--dir");
+        pb.arg(dir);
+        pair.slave.spawn_command(pb).context("spawn opencode attach")?
+    };
     drop(pair.slave);
 
     let master = pair.master;
     let mut reader = master.try_clone_reader().context("clone PTY reader")?;
     let writer = master.take_writer().context("take PTY writer")?;
 
-    let id = format!("pane-{}", NEXT_PANE.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
+    let tmux_sess = if use_tmux { Some(sess.clone()) } else { None };
     PANES.lock().unwrap().insert(
         id.clone(),
         Active {
             master,
             writer: Mutex::new(writer),
             child: Mutex::new(Some(child)),
+            tmux_session: tmux_sess,
         },
     );
 
@@ -164,14 +242,23 @@ pub fn tui_resize(id: &str, cols: u16, rows: u16) -> anyhow::Result<()> {
 }
 
 /// Stop a pane: kill the `opencode attach` child, drop the writer (EOF) and
-/// remove the pane.
+/// remove the pane. If the pane was tmux-backed, also kill the detached session
+/// so we don't leak `deck-*` sessions — the workflow's `tuiEdges` wiring already
+/// captures intent, not the raw tmux name.
 pub fn tui_stop(id: &str) -> anyhow::Result<()> {
     let mut g = PANES.lock().unwrap();
     if let Some(a) = g.remove(id) {
+        let sess = a.tmux_session.clone();
         drop(a.writer.lock().unwrap());
         if let Some(mut c) = a.child.lock().unwrap().take() {
             let _ = c.kill();
             let _ = c.wait();
+        }
+        if let Some(s) = sess {
+            let _ = std::process::Command::new("tmux")
+                .args(["kill-session", "-t", &s])
+                .output();
+            eprintln!("[deck] tui: tmux session {s} killed");
         }
     }
     Ok(())

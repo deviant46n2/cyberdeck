@@ -100,6 +100,8 @@ pub enum NodeKind {
     Stateless,
     /// Stateful, tool-using agent via an opencode session/TUI.
     Agentic,
+    /// Human gate — pauses for approval, does not run an LLM (human-in-the-loop).
+    Human,
 }
 
 /// A canvas cell: a Role bound to a Model, plus graph metadata + exec overrides.
@@ -149,6 +151,7 @@ impl WorkflowNode {
         match self.kind {
             NodeKind::Stateless => "stateless",
             NodeKind::Agentic => "agentic",
+            NodeKind::Human => "human",
         }
     }
 }
@@ -286,6 +289,10 @@ pub struct Workflow {
     pub exec_settings: ExecSettings,
     #[serde(default)]
     pub template: bool,
+    /// Kickoff inputs templated into the first wave (CrewAI `inputs`, Studio `Input`).
+    /// The canonical key is `task`; extra keys are future-facing.
+    #[serde(default)]
+    pub inputs: HashMap<String, String>,
 }
 
 fn default_version() -> u32 { 1 }
@@ -589,6 +596,7 @@ pub fn seed_coding_review() -> Workflow {
         edges: vec![WorkflowEdge { id: "e1".into(), from: "n1".into(), to: "n2".into(), from_port: "output".into(), to_port: "input".into(), condition: None, loop_edge: false }],
         exec_settings: ExecSettings::default(),
         template: true,
+            inputs: Default::default(),
     }
 }
 
@@ -629,6 +637,7 @@ mod tests {
             ],
             exec_settings: ExecSettings::default(),
             template: true,
+            inputs: Default::default(),
         };
         let p = plan(&wf).expect("plan");
         assert_eq!(p.waves.len(), 3);
@@ -654,6 +663,7 @@ mod tests {
             edges: vec![e("e1", "a", "b"), e("e2", "b", "a")],
             exec_settings: ExecSettings::default(),
             template: false,
+            inputs: Default::default(),
         };
         assert!(wf.has_cycle());
         assert!(plan(&wf).is_err());
@@ -722,6 +732,7 @@ mod tests {
             ],
             exec_settings: ExecSettings { max_iterations: 4, ..Default::default() },
             template: false,
+            inputs: Default::default(),
         };
         assert!(!wf.has_cycle(), "loop back-edge must not report a raw cycle");
         assert_eq!(wf.validate(), Ok(()));
@@ -748,6 +759,7 @@ mod tests {
             edges: vec![e("e1", "a", "b"), e("e2", "b", "a")],
             exec_settings: ExecSettings::default(),
             template: false,
+            inputs: Default::default(),
         };
         assert!(wf.has_cycle());
         assert!(plan(&wf).is_err());
@@ -768,6 +780,7 @@ mod tests {
             edges: vec![e("e1", "a", "b"), e_with("e2", "b", "a", None, true)],
             exec_settings: ExecSettings::default(), // max_iterations == 0
             template: false,
+            inputs: Default::default(),
         };
         assert!(!wf.has_cycle());
         assert!(wf.validate().is_err(), "loop with max_iterations 0 must be rejected");

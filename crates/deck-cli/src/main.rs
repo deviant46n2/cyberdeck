@@ -159,6 +159,11 @@ enum Commands {
         #[arg(long, default_value = "quality")]
         objective: String,
     },
+    /// Mirror deck's vault into opencode's model config (one truth)
+    Opencode {
+        #[command(subcommand)]
+        action: OpencodeCmd,
+    },
     /// Download a repo's model file into ~/models (resumable).
     ///
     /// Picks the largest .gguf (or one matching --file/--quant), then
@@ -183,6 +188,16 @@ enum Commands {
     Downloads {
         #[command(subcommand)]
         action: DownloadsCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum OpencodeCmd {
+    /// Dry-run: show what would change in ~/.config/opencode/opencode.json to mirror deck; --write commits
+    Sync {
+        /// Write the mirrored config to disk
+        #[arg(long, default_value_t = false)]
+        write: bool,
     },
 }
 
@@ -341,6 +356,9 @@ enum WorkflowCmd {
         /// opencode model override for the agentic runner
         #[arg(long)]
         model: Option<String>,
+        /// Kickoff task text templated into the first node (CrewAI `inputs.task`)
+        #[arg(long)]
+        task: Option<String>,
     },
     /// List past workflow runs, optionally filtered to one workflow
     History {
@@ -588,7 +606,7 @@ fn main() -> Result<()> {
         Commands::Workflow { action } => match action {
             WorkflowCmd::Save { seed, file } => cmd::workflow::save(seed, file.as_deref()),
             WorkflowCmd::List { json } => cmd::workflow::list(json),
-            WorkflowCmd::Run { id, runner, dir, model } => cmd::workflow::run(&id, &runner, dir.as_deref(), model.as_deref()),
+            WorkflowCmd::Run { id, runner, dir, model, task } => cmd::workflow::run(&id, &runner, dir.as_deref(), model.as_deref(), task.as_deref()),
             WorkflowCmd::History { workflow, json } => cmd::workflow::history(workflow.as_deref(), json),
             WorkflowCmd::Bench { id, json } => cmd::workflow::bench(&id, json),
         },
@@ -608,6 +626,9 @@ fn main() -> Result<()> {
             FeedsCmd::List { json, limit } => cmd::feeds::list(json, limit),
             FeedsCmd::Rank { limit, json, workload } => cmd::feeds::rank(limit, json, workload),
             FeedsCmd::Watch { interval, once } => cmd::feeds::watch(interval, once),
+        },
+        Commands::Opencode { action } => match action {
+            OpencodeCmd::Sync { write } => cmd::opencode::sync(write),
         },
         Commands::Download { repo, file, quant, dry_run } => {
             cmd::download::run(&repo, file.as_deref(), quant.as_deref(), dry_run)
