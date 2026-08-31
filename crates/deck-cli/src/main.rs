@@ -189,6 +189,12 @@ enum Commands {
         #[command(subcommand)]
         action: DownloadsCmd,
     },
+    /// Stage a release build into a separate "production" install you pilot
+    /// real workloads with, while the repo tree stays your dev workspace.
+    /// Builds release, asks before promoting, copies the binaries to
+    /// CYBERDECK_PROD_ROOT (default ~/.local/share/cyberdeck-prod), and
+    /// (re)writes the ~/.local/bin/cyberdeck production shortcut.
+    Promote,
 }
 
 #[derive(Subcommand)]
@@ -640,5 +646,6 @@ fn main() -> Result<()> {
             DownloadsCmd::List { json } => cmd::downloads::list(json),
             DownloadsCmd::Discard { name } => cmd::downloads::discard(&name),
         }
+        Commands::Promote => cmd::promote::run(),
     }
 }

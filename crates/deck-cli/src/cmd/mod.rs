@@ -22,6 +22,7 @@ pub(crate) mod settings;
 pub(crate) mod opencode;
 pub(crate) mod workloads;
 pub(crate) mod workflow;
+pub(crate) mod promote;
 
 pub(crate) fn parse_engine(s: &str) -> Result<deck_core::profile::Engine> {
     deck_core::profile::Engine::parse(s)
