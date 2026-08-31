@@ -130,21 +130,50 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    #[test]
-    fn scan_and_dedup_headless() {
-        let r = scan().expect("scan");
-        assert!(r.indexed > 0, "should find local models");
-        // the known NVFP4 duplicate must surface
-        let hit = r.dups.iter().any(|d| d.wasted_gib > 10.0);
-        assert!(hit, "expected the real duplicate to be reported");
-        let rows = list_models().expect("list");
-        assert_eq!(rows.len(), r.models.len());
+    /// Build a minimal valid GGUF header to a temp path, so `fit` exercises
+    /// its real parse+estimate path without depending on host model files.
+    fn temp_mini_gguf(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "deck-tauri-test-{label}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("mini.gguf");
+        fn wu32(b: &mut Vec<u8>, x: u32) {
+            b.extend_from_slice(&x.to_le_bytes());
+        }
+        fn wu64(b: &mut Vec<u8>, x: u64) {
+            b.extend_from_slice(&x.to_le_bytes());
+        }
+        fn wstr(b: &mut Vec<u8>, s: &str) {
+            wu64(b, s.len() as u64);
+            b.extend_from_slice(s.as_bytes());
+        }
+        // magic + version 3 + tensor_count 0 + 3 KVs (arch, file_type, params)
+        let mut b = Vec::new();
+        wu32(&mut b, 0x4655_4747);
+        wu32(&mut b, 3);
+        wu64(&mut b, 0);
+        wu64(&mut b, 3);
+        wstr(&mut b, "general.architecture");
+        wu32(&mut b, 8 /* String */);
+        wstr(&mut b, "qwen3");
+        wstr(&mut b, "general.file_type");
+        wu32(&mut b, 4 /* U32 */);
+        wu32(&mut b, 15 /* Q4_K_M */);
+        wstr(&mut b, "general.parameter_count");
+        wu32(&mut b, 5 /* I32 */);
+        wu32(&mut b, 1_800_000_000);
+        std::fs::write(&path, &b).unwrap();
+        path
     }
 
     #[test]
     fn fit_reports_verdict() {
+        let gguf = temp_mini_gguf("fit-verdict");
         let f = fit(
-            PathBuf::from("/home/deviant/Qwen3.8-27B-UD-Q3_K_XL.gguf"),
+            gguf.clone(),
             32768,
             0.5,
             0,
@@ -155,6 +184,9 @@ mod tests {
         .expect("fit");
         assert!(!f.verdict.is_empty());
         assert!(f.model_vram_mb > 0);
+        if let Some(dir) = gguf.parent() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
     }
 
     #[test]
