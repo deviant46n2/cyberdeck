@@ -26,13 +26,13 @@
         "path": "crates/deck-cli/src/main.rs",
         "lines": 620,
         "kind": "accepted",
-        "reason": "The CLI entry: clap subcommand/flag enums + dispatch only, exactly the dispatch-door shape AGENTS.md mandates for deck-cli — eleven command enums (Commands/Downloads/Bench/Workloads/Workflow/Hardware/Settings/Feeds/Engine/Profile) plus a top-level match dispatch. The door has to name every subcommand somewhere; spreading the enums across modules for near-line poverty is coupling for nothing. Mirrors the src-tauri main.rs accepted entry. AGENTS.md 'File & Function Size Limits' and 'COHESION > ARBITRARY LINE COUNT'"
+        "reason": "The CLI entry: clap subcommand/flag enums + dispatch only, exactly the dispatch-door shape AGENTS.md mandates for deck-cli \u2014 eleven command enums (Commands/Downloads/Bench/Workloads/Workflow/Hardware/Settings/Feeds/Engine/Profile) plus a top-level match dispatch. The door has to name every subcommand somewhere; spreading the enums across modules for near-line poverty is coupling for nothing. Mirrors the src-tauri main.rs accepted entry. AGENTS.md 'File & Function Size Limits' and 'COHESION > ARBITRARY LINE COUNT'"
       },
       {
         "path": "crates/deck-core/src/gguf.rs",
         "lines": 721,
         "since": "2026-08-28T16:28:25-05:00",
-        "reason": "pre-existing at tool introduction (2026-08-28); parked — revisit on next touching change"
+        "reason": "pre-existing at tool introduction (2026-08-28); parked \u2014 revisit on next touching change"
       },
       {
         "path": "crates/deck-core/src/profile.rs",
@@ -44,7 +44,7 @@
         "path": "crates/deck-core/src/safetensors.rs",
         "lines": 303,
         "kind": "accepted",
-        "reason": "safetensors model-dir reader — a single-purpose parser just over the soft heuristic. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
+        "reason": "safetensors model-dir reader \u2014 a single-purpose parser just over the soft heuristic. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
       },
       {
         "path": "crates/deck-core/src/store/mod.rs",
@@ -74,13 +74,13 @@
         "path": "crates/deck-feeds/src/manager.rs",
         "lines": 646,
         "kind": "accepted",
-        "reason": "The shared DownloadManager queue authority (one truth, two doors — AGENTS.md 'One truth, two doors'): bounded pump + priority queue + .part park/resume semantics + epoch guards against stale-worker clobbering of relaunched lanes + the offline test block with injectable stream fakes. The race/epoch/resume invariants are the 'why' docs the module must carry; splitting the worker from the registry or the pump from the queue would separate the single-flight slots from the workers they supervise (same rationale as the parked deck-engines/src/workflow.rs executor). AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
+        "reason": "The shared DownloadManager queue authority (one truth, two doors \u2014 AGENTS.md 'One truth, two doors'): bounded pump + priority queue + .part park/resume semantics + epoch guards against stale-worker clobbering of relaunched lanes + the offline test block with injectable stream fakes. The race/epoch/resume invariants are the 'why' docs the module must carry; splitting the worker from the registry or the pump from the queue would separate the single-flight slots from the workers they supervise (same rationale as the parked deck-engines/src/workflow.rs executor). AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
       },
       {
         "path": "crates/deck-tauri/src/bringup.rs",
         "lines": 556,
         "kind": "accepted",
-        "reason": "Single shared derive→verify→apply pipeline guarded by the single-flight BRINGUP_RUNNING lock; splitting would move derive_and_verify across a module boundary and couple bringup to test. AGENTS.md 'File & Function Size Limits' and 'COHESION > ARBITRARY LINE COUNT'"
+        "reason": "Single shared derive\u2192verify\u2192apply pipeline guarded by the single-flight BRINGUP_RUNNING lock; splitting would move derive_and_verify across a module boundary and couple bringup to test. AGENTS.md 'File & Function Size Limits' and 'COHESION > ARBITRARY LINE COUNT'"
       },
       {
         "path": "crates/deck-tauri/src/test.rs",
@@ -92,13 +92,13 @@
         "path": "crates/deck-tauri/src/workflow.rs",
         "lines": 395,
         "kind": "accepted",
-        "reason": "The Tauri canvas door: the wf-* event-emitting background run registry (execution + persist + stop, single-flight per workflow) plus the seed/save/list/get/run/stop/history serialization surface. One registry+lifecycle contract in the style of downloads.rs/bringup.rs — splitting would separate the single-flight guard from the workers it supervises. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
+        "reason": "The Tauri canvas door: the wf-* event-emitting background run registry (execution + persist + stop, single-flight per workflow) plus the seed/save/list/get/run/stop/history serialization surface. One registry+lifecycle contract in the style of downloads.rs/bringup.rs \u2014 splitting would separate the single-flight guard from the workers it supervises. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
       },
       {
         "path": "frontend/src/api.ts",
         "lines": 546,
         "kind": "accepted",
-        "reason": "The single invoke door — views never shell out directly, they go through api.ts → Tauri invoke (AGENTS.md 'UI never shells out directly'). Each function is a 1-5 line wrapper; splitting would scatter the adapter contract."
+        "reason": "The single invoke door \u2014 views never shell out directly, they go through api.ts \u2192 Tauri invoke (AGENTS.md 'UI never shells out directly'). Each function is a 1-5 line wrapper; splitting would scatter the adapter contract."
       },
       {
         "path": "frontend/src/lib/dl.ts",
@@ -116,7 +116,7 @@
         "path": "frontend/src/views/Bringup.tsx",
         "lines": 323,
         "kind": "accepted",
-        "reason": "Single bring-up drawer component (derive→verify→apply→bench phases + VRAM breakdown + tweak panel). The entire bring-up UX lives here; splitting would scatter the phase-dot flow and the apply/bench actions. AGENTS.md COHESION > ARBITRARY LINE COUNT"
+        "reason": "Single bring-up drawer component (derive\u2192verify\u2192apply\u2192bench phases + VRAM breakdown + tweak panel). The entire bring-up UX lives here; splitting would scatter the phase-dot flow and the apply/bench actions. AGENTS.md COHESION > ARBITRARY LINE COUNT"
       },
       {
         "path": "frontend/src/views/Market.tsx",
@@ -146,7 +146,7 @@
         "path": "src-tauri/src/main.rs",
         "lines": 603,
         "kind": "accepted",
-        "reason": "Thin #[tauri::command] adapter — each function is 3-8 lines of scaffold over a deck_tauri call; the adapter-layer shape is mandated by AGENTS.md 'src-tauri — thin binary entry'"
+        "reason": "Thin #[tauri::command] adapter \u2014 each function is 3-8 lines of scaffold over a deck_tauri call; the adapter-layer shape is mandated by AGENTS.md 'src-tauri \u2014 thin binary entry'"
       },
       {
         "path": "crates/deck-core/src/workflow.rs",
@@ -158,7 +158,7 @@
         "path": "crates/deck-engines/src/workflow.rs",
         "lines": 849,
         "since": "2026-08-30T01:32:22-05:00",
-        "reason": "PARKED over the 600 hard limit (was 426 before Phase 8f): one cohesive executor module — NodeRunner trait + Stateless/Agentic runners, the branch-skip + bounded-loop DAG driver (run_pass), node_to_matrix_row, and their tests. Runners depend on the driver's NodeOutcome contract; splitting the test block out is the split-plan tripwire, so revisit on next touching change. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
+        "reason": "PARKED over the 600 hard limit (was 426 before Phase 8f): one cohesive executor module \u2014 NodeRunner trait + Stateless/Agentic runners, the branch-skip + bounded-loop DAG driver (run_pass), node_to_matrix_row, and their tests. Runners depend on the driver's NodeOutcome contract; splitting the test block out is the split-plan tripwire, so revisit on next touching change. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
       },
       {
         "path": "crates/deck-core/src/relevance.rs",
@@ -189,6 +189,12 @@
         "lines": 304,
         "kind": "accepted",
         "reason": "Unit tests for the download-state machine: the hoisted event-bus mock harness plus per-scenario tests for enqueue/pump/event/reconcile/discard/priority. The bus-capture + flush helpers ARE the harness every test shares; splitting the file would duplicate the event-bus wiring and the fresh-store-by-module-reset setup. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
+      },
+      {
+        "path": "frontend/src/views/Tamagotchi.tsx",
+        "lines": 588,
+        "kind": "accepted",
+        "reason": "Single sidebar companion component: the SVG pet (whole/legs/eyes/pupils/mouth/cheeks groups) + weighted idle-animation scheduler, Minecraft steak/heart feed HUD with cooldown, and the always-visible SYSTEM telemetry meters \u2014 one cohesive always-on sidebar block. Splitting would scatter the pet's shared mood/tint state and force prop-drilling across one sidebar region. Mirrors the accepted Hud/Bringup/Vault/Canvas view entries. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
       }
     ],
     "artifact-hygiene": [],
