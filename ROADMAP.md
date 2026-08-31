@@ -577,6 +577,12 @@ DISCOVER → FIT → RUN → MEASURE → EVALUATE → COMPARE → RECOMMEND
 
 *DoD (8f landed):* a workflow with `Edge.condition` + a `loop_edge` back-edge (e.g. `dev → rev ⟲ rev` with `not_contains:DONE`, capped by `max_iterations`) imports via `deck workflow save --file`, renders loop/condition markers in CANVAS, and runs end-to-end: the body re-executes while the predicate holds and stops on the terminate predicate, the token budget, or the iteration cap — with skipped downstream nodes reported but not benchmarked.
 
+* **8g — plain-terminal canvas maximization — LANDED (2026-08-31):** the Workspace canvas grows to use the full window and adding agents gets a single configured entry point.
+  - **Fullscreen canvas mode (⛶):** a toggle collapses all chrome into the canvas — header, left WORKFLOWS column, bottom bar, and right drawer are replaced by a floating top-left toolbar (exit fullscreen, `+ TERMINAL`, SELECT, CONNECT TOGETHER) and the canvas fills `100vh`. Design intent: operate in canvas view, with model/role/prompt surfaced as needed rather than always-on panels.
+  - **Single spawn dialog (`+ TERMINAL`):** one dialog configures harness (opencode) + host (`local` GGUF 🔵 / `cloud` 🟣 from per-provider live `/v1/models` catalogs) + optional role (for loops) up front. On SPAWN it opens the TUI and feeds `/model <ref>\r` in-terminal (both local GGUF paths and `provider/model` cloud refs resolve via opencode) and assigns the role — the populated-model, role-bound loop node in one place.
+  - **SELECT tool → CONNECT TOGETHER:** with SELECT armed, clicking a terminal toggles it in the selection (highlighted); `CONNECT TOGETHER (n)` wires every selected terminal to every other as loopable full-mesh edges (`loop_edge: true`), replacing only edges *between* selected terminals and leaving edges to non-selected ones intact. The selection is surfaced as a floating LOOP MODULE card with a human-gate note, replacing the always-on upper-third workflows panel for the plain-terminal mode.
+  - Scope note: this is the birds-eye plain-terminal surface driven by `spawnTuiConfigured`/`toggleSelect`/`connectTogether` in `Workspace.tsx`; the richer node-based VPL wiring graph (React Flow / ComfyUI-style) stays a deferred research item — these wins land the interaction shape (select → connect → loop) without a wiring library first.
+
 ---
 
 ### Phase 9 — Autonomous Daily Driver (P2→P3, long-term, explicitly not MVP)

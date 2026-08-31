@@ -84,6 +84,19 @@ export default function Workspace({
   const [harnessErr, setHarnessErr] = useState("");
   const [pending, setPending] = useState(false);
   const [tuiErr, setTuiErr] = useState("");
+  // Fullscreen canvas mode: collapses all chrome (header / left column /
+  // bottom bar / drawer) to floating overlays so the canvas is the whole view.
+  const [fullCanvas, setFullCanvas] = useState(false);
+  // SELECT tool: click-select 2+ terminals, then CONNECT TOGETHER → full-mesh
+  // loop module. Only active while the select tool is armed.
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Single spawn dialog: one spot to add a terminal with harness + local/cloud
+  // model + role configured up front.
+  const [spawnOpen, setSpawnOpen] = useState(false);
+  const [spawnHost, setSpawnHost] = useState<string>("local");
+  const [spawnModel, setSpawnModel] = useState<string>("");
+  const [spawnRole, setSpawnRole] = useState<string>("");
   // TUI roles + loopable edges — plain terminals become role-bound loop nodes without app-side model wiring
   const [tuiRoles, setTuiRoles] = useState<Map<string, string>>(new Map());
   const tuiRolesRef = useRef<Map<string, string>>(new Map());
@@ -299,6 +312,56 @@ export default function Workspace({
     } catch (e) { setTuiErr(`tui spawn failed: ${String(e)}`); }
   };
 
+  // Spawn a TUI from the spawn dialog, configuring its model (local or cloud,
+  // fed via /model so the interactive session resolves it) and optional role.
+  const spawnTuiConfigured = async (model: string, role: string) => {
+    setTuiErr("");
+    try {
+      const id = await api.tuiSpawn("/home/deviant/Projects/cyberdeck", 90, 28);
+      const cascade = (panes.length % 5) * 32 + 8;
+      setPanes((p) => [...p, { id, dir: "/home/deviant/Projects/cyberdeck", pos: { x: cascade, y: cascade } }]);
+      setSelectedTui(id);
+      if (role.trim()) setTuiRoles((m) => new Map(m).set(id, role.trim()));
+      if (model) {
+        // Give the fresh TUI a moment, then set its model via /model so the
+        // interactive opencode session uses it (local GGUF or cloud provider).
+        setTimeout(async () => {
+          try { await api.tuiWrite(id, Array.from(`/model ${model}\r`, (c) => c.charCodeAt(0))); } catch { /* ignore */ }
+        }, 1200);
+      }
+      setSpawnOpen(false);
+    } catch (e) { setTuiErr(`tui spawn failed: ${String(e)}`); }
+  };
+
+  // SELECT tool: toggle a terminal's membership in the current selection.
+  const toggleSelect = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  // CONNECT TOGETHER: wire every selected terminal to every other as a
+  // loopable full-mesh edge, replacing any prior edges between them.
+  const connectTogether = () => {
+    const ids = [...selected];
+    if (ids.length < 2) return;
+    const next = new Map<string, api.WorkflowEdge>();
+    // Keep existing edges to non-selected terminals untouched.
+    tuiEdges.forEach((e) => { const keep = !(selected.has(e.from) && selected.has(e.to)); if (keep) next.set(e.id, e); });
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        const id = `fc-${ids[i]}-${ids[j]}`;
+        next.set(id, { id, from: ids[i], to: ids[j], from_port: "out", to_port: "in", condition: null, loop_edge: true });
+      }
+    }
+    setTuiEdges([...next.values()]);
+  };
+
+  // Clear the current SELECT-tool selection and de-arm the tool.
+  const clearSelection = () => { setSelected(new Set()); setSelectMode(false); };
+
   const runAgent = async () => {
     if (!prompt.trim()) return;
     // If a TUI is selected, address that TUI directly — no need to click inside the xterm.
@@ -371,11 +434,16 @@ export default function Workspace({
   }, [wf]);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 44px)", overflow: "hidden" }}>
-      {/* header — plain-terminal birds-eye: + TERMINAL is primary, workflows optional */}
+    <div style={{ display: "flex", flexDirection: "column", height: fullCanvas ? "100vh" : "calc(100vh - 44px)", overflow: "hidden" }}>
+      {/* header — plain-terminal birds-eye; collapses in fullscreen canvas mode */}
+      {!fullCanvas && (
       <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "8px 0 6px", flexWrap: "wrap", borderBottom: "1px solid var(--line)", marginBottom: 8 }}>
         <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, color: "var(--muted)" }}>WORKSPACE</span>
-        <button className="action" style={{ fontSize: 11, padding: "6px 12px", fontWeight: 700 }} onClick={() => void spawnTui()} title="spawn plain opencode terminal — stock TUI, plug-and-play">+ TERMINAL</button>
+        <button className="action" style={{ fontSize: 11, padding: "6px 12px", fontWeight: 700 }} onClick={() => setSpawnOpen(true)} title="add a terminal with a configured local or cloud model + role">+ TERMINAL</button>
+        <button className="ghost" style={{ fontSize: 9, padding: "3px 6px", borderColor: selectMode ? "var(--magenta)" : undefined, color: selectMode ? "var(--magenta)" : undefined }} onClick={() => { if (selectMode) clearSelection(); else setSelectMode(true); }} title="select 2+ terminals, then CONNECT TOGETHER to wire a loop module">{selectMode ? "● SELECTING" : "◉ SELECT"}</button>
+        {selected.size >= 2 && selectMode && (
+          <button className="ghost" style={{ fontSize: 9, padding: "3px 6px", borderColor: "var(--pass)", color: "var(--pass)" }} onClick={() => { connectTogether(); clearSelection(); }} title="wire all selected terminals to each other (loopable full-mesh)">CONNECT TOGETHER ({selected.size})</button>
+        )}
         <button className="ghost" style={{ fontSize: 9, padding: "3px 6px", borderColor: showWorkflows ? "var(--magenta)" : undefined, color: showWorkflows ? "var(--magenta)" : undefined }} onClick={() => setShowWorkflows((v) => !v)} title="show workflow DAG — off by default for birds-eye terminals">{showWorkflows ? "◇ WORKFLOWS ON" : "◇ WORKFLOWS OFF"}</button>
         {wf && (
           <div style={{ display: "flex", gap: 6, alignItems: "center", marginLeft: 8, flexWrap: "wrap" }}>
@@ -395,10 +463,12 @@ export default function Workspace({
         <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center", fontSize: 10, color: "var(--dim2)" }}>
           <span>{panes.length} terminals</span>
           {sessions.length > 0 && <span>· {sessions.length} sessions</span>}
+          <button className="ghost" style={{ fontSize: 10, padding: "2px 6px" }} onClick={() => setFullCanvas(true)} title="collapse all chrome — canvas only">⛶ fullscreen</button>
         </div>
       </div>
+      )}
 
-      {residents.some((r) => r.resident && r.profile) && (
+      {!fullCanvas && residents.some((r) => r.resident && r.profile) && (
         <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "center", flexWrap: "wrap", paddingBottom: 6, fontSize: 10 }}>
           {residents.filter((r) => r.resident && r.profile).map((r) => {
             const b = benchBySlot.get(slotKey(r.engine, r.port));
@@ -411,10 +481,11 @@ export default function Workspace({
             );
           })}
         </div>
-      )}
+        )}
 
-      {/* canvas — left workflows list (always) + birds-eye plain terminals */}
+      {/* canvas — left workflows list (hide in fullscreen) + birds-eye plain terminals */}
       <div style={{ display: "flex", gap: 10, flex: 1, minHeight: 0, overflow: "hidden" }}>
+        {!fullCanvas && (
         <div className="card" style={{ width: 200, flex: "none", display: "flex", flexDirection: "column", overflow: "hidden", fontSize: 11 }}>
           <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
             <h3 style={{ fontSize: 11, letterSpacing: 0.6, color: "var(--muted)", margin: 0 }}>WORKFLOWS</h3>
@@ -430,6 +501,7 @@ export default function Workspace({
           </div>
           <div className="dim" style={{ fontSize: 9, borderTop: "1px solid var(--line)", paddingTop: 6, marginTop: 6 }}>human-loop is there — select it to load its terminals (plain TUIs) as the workflow</div>
         </div>
+        )}
         <div ref={sessionsRef} onClick={() => setCtxMenu(null)} style={{ flex: 1, overflow: "auto", position: "relative", background: "var(--panel-2)", borderRadius: 6, padding: 8, minWidth: 320 }}>
           <div style={{ position: "relative", minHeight: 520 }}>
             {/* loopable edges between plain terminals — birds-eye loop wiring */}
@@ -445,7 +517,8 @@ export default function Workspace({
             </svg>
             {/* plain TUI terminals — shown when no workflow selected; workflow loop uses TUIs when a workflow is selected */}
             {!wf && panes.map((p) => (
-              <TuiWindow key={p.id} pane={{ id: p.id, dir: p.dir }} pos={p.pos} selected={selectedTui === p.id} role={tuiRoles.get(p.id)} connecting={connectingFrom === p.id} onStartConnect={(id) => setConnectingFrom(id)} onSelect={(id) => {
+              <TuiWindow key={p.id} pane={{ id: p.id, dir: p.dir }} pos={p.pos} selected={(selectedTui === p.id) || (selectMode && selected.has(p.id))} role={tuiRoles.get(p.id)} connecting={connectingFrom === p.id} onStartConnect={(id) => setConnectingFrom(id)} onSelect={(id) => {
+                if (selectMode) { toggleSelect(id); return; }
                 if (connectingFrom && connectingFrom !== id) {
                   const exists = tuiEdges.some((ee) => ee.from === connectingFrom && ee.to === id);
                   if (!exists) {
@@ -558,8 +631,8 @@ export default function Workspace({
           {tuiErr && <div style={{ background: "rgba(248,81,73,0.1)", border: "1px solid rgba(248,81,73,0.3)", color: "var(--oom)", padding: "6px 10px", fontSize: 11, marginTop: 8 }}>{tuiErr}</div>}
         </div>
 
-        {/* right drawer: TUI session panel (click terminal) OR node inspector */}
-        {(drawerOpen && editing) ? (
+        {/* right drawer: TUI session panel (click terminal) OR node inspector — hidden in fullscreen */}
+        {!fullCanvas && ((drawerOpen && editing) ? (
           <div style={{ width: 380, flex: "none", overflow: "hidden", display: "flex", flexDirection: "column", borderLeft: "1px solid var(--line)", background: "var(--bg)" }}>
             <div className="row" style={{ justifyContent: "space-between", alignItems: "center", padding: "6px 8px", borderBottom: "1px solid var(--line)" }}>
               <span style={{ fontSize: 11, fontWeight: 700, color: "var(--muted)" }}>LOADOUT — {editing.name || "new"}</span>
@@ -653,7 +726,7 @@ export default function Workspace({
               </div>
             );
           })()
-        ) : null}
+        ) : null)}
       </div>
 
       {/* footer benches hidden in plain-terminal mode, shown when workflows on */}
@@ -670,7 +743,8 @@ export default function Workspace({
         </div>
       )}
 
-      {/* bottom bar — single loadout/model picker like agentic apps; also spawns via + TERMINAL above */}
+      {/* bottom bar — single loadout/model picker like agentic apps; also spawns via + TERMINAL above (hidden in fullscreen) */}
+      {!fullCanvas && (
       <div style={{ padding: "8px 0 6px", position: "sticky", bottom: 0, background: "linear-gradient(180deg, transparent, var(--bg) 18%)" }}>
         <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
           <select value={loadout} onChange={(e) => setLoadout(e.target.value)} style={{ background: "var(--panel)", border: "1px solid var(--line)", color: "var(--text)", padding: "6px 10px", fontSize: 11, minWidth: 150 }}>
@@ -724,6 +798,7 @@ export default function Workspace({
           <button className="action" onClick={runAgent} disabled={!prompt.trim() || pending} style={{ padding: "8px 14px", minWidth: 54 }}>↑</button>
         </div>
       </div>
+      )}
       {humanGate && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200 }} onClick={() => setHumanGate(null)}>
           <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--panel)", border: "1px solid var(--line-bright)", width: 560, maxHeight: "80vh", overflow: "auto", padding: 16, boxShadow: "0 20px 60px rgba(0,0,0,0.6)" }}>
@@ -743,6 +818,91 @@ export default function Workspace({
               }}>↺ REQUEST CHANGES (loop back)</button>
             </div>
             <div className="dim" style={{ fontSize: 10, marginTop: 8, textAlign: "center" }}>Wire: <code>developer → reviewer (loop, condition contains:CHANGES)</code> + <code>reviewer → human (condition contains:APPROVED)</code> — human gate pauses here.</div>
+          </div>
+        </div>
+      )}
+
+      {/* fullscreen canvas mode — floating toolbar (canvas fills the viewport) */}
+      {fullCanvas && (
+        <div style={{ position: "fixed", top: 10, left: 10, zIndex: 120, display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start" }}>
+          <div style={{ display: "flex", gap: 6, alignItems: "center", background: "var(--panel)", border: "1px solid var(--line-bright)", boxShadow: "0 6px 24px rgba(0,0,0,0.4)", padding: "6px 8px", borderRadius: 6 }}>
+            <span className="mono" style={{ fontSize: 10, color: "var(--muted)" }}>{panes.length} TUI</span>
+            <button className="action" style={{ fontSize: 10, padding: "4px 8px", fontWeight: 700 }} onClick={() => setSpawnOpen(true)}>+ TERMINAL</button>
+            <button className="ghost" style={{ fontSize: 10, padding: "4px 8px", borderColor: selectMode ? "var(--magenta)" : undefined, color: selectMode ? "var(--magenta)" : undefined }} onClick={() => { if (selectMode) clearSelection(); else setSelectMode(true); }}>{selectMode ? "● SELECTING" : "◉ SELECT"}</button>
+            {selected.size >= 2 && selectMode && (
+              <button className="ghost" style={{ fontSize: 10, padding: "4px 8px", borderColor: "var(--pass)", color: "var(--pass)" }} onClick={() => { connectTogether(); clearSelection(); }}>CONNECT TOGETHER ({selected.size})</button>
+            )}
+            <button className="ghost" style={{ fontSize: 10, padding: "4px 8px" }} onClick={() => setFullCanvas(false)} title="restore chrome">⛶ exit fullscreen</button>
+          </div>
+          {tuiErr && <div className="mono" style={{ fontSize: 9, color: "var(--error, #ff5f56)" }}>{tuiErr}</div>}
+          {/* floating loop-module card for the current SELECT-tool selection */}
+          {selectMode && (
+            <div style={{ background: "var(--panel)", border: "1px solid var(--magenta)", boxShadow: "0 6px 24px rgba(0,0,0,0.4)", padding: 8, borderRadius: 6, fontSize: 10, maxWidth: 260 }}>
+              <div style={{ fontWeight: 700, color: "var(--magenta)", marginBottom: 6 }}>LOOP MODULE{selected.size >= 2 ? ` — ${selected.size} selected` : " — pick terminals"}</div>
+              <div className="dim" style={{ marginBottom: 6 }}>click terminals to select; CONNECT TOGETHER wires them as a loopable full-mesh (loop_edge).</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {[...selected].slice(0, 6).map((id) => <span key={id} className="mono" style={{ fontSize: 9, color: "var(--cyan)" }}>· {tuiRoles.get(id) || id.slice(0, 8)}</span>)}
+                {selected.size > 6 && <span className="dim" style={{ fontSize: 9 }}>+{selected.size - 6} more…</span>}
+              </div>
+              {selected.size >= 2 && <button className="action" style={{ fontSize: 10, marginTop: 8, width: "100%" }} onClick={() => { connectTogether(); clearSelection(); }}>CONNECT TOGETHER</button>}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* single spawn dialog — harness + host/model + role configured up front */}
+      {spawnOpen && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 150, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setSpawnOpen(false)}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--panel)", border: "1px solid var(--line-bright)", width: 480, maxWidth: "92vw", padding: 16, borderRadius: 8, boxShadow: "0 20px 60px rgba(0,0,0,0.6)" }}>
+            <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <h3 style={{ margin: 0, fontSize: 13, color: "var(--text)" }}>+ TERMINAL</h3>
+              <button className="ghost" style={{ fontSize: 10, padding: "2px 6px" }} onClick={() => setSpawnOpen(false)}>✕</button>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, fontSize: 11 }}>
+              <label style={{ display: "flex", flexDirection: "column", gap: 4, color: "var(--muted)" }}>
+                harness
+                <select value="opencode" style={{ background: "var(--panel-2)", border: "1px solid var(--line)", color: "var(--text)", padding: "6px 10px", fontSize: 11 }}>
+                  <option value="opencode">opencode</option>
+                </select>
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: 4, color: "var(--muted)" }}>
+                host
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button className={spawnHost === "local" ? "action" : "ghost"} style={{ fontSize: 11, flex: 1, padding: "6px" }} onClick={() => setSpawnHost("local")}>LOCAL ({models.length})</button>
+                  <button className={spawnHost === "cloud" ? "action" : "ghost"} style={{ fontSize: 11, flex: 1, padding: "6px" }} onClick={() => setSpawnHost("cloud")}>CLOUD (🟣)</button>
+                </div>
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: 4, color: "var(--muted)" }}>
+                model
+                <select value={spawnModel} onChange={(e) => { const v = e.target.value; if (v.startsWith("__cloud_")) { void loadCloudCatalog(v.slice("__cloud_".length)); return; } setSpawnModel(v); }} style={{ background: "var(--panel-2)", border: "1px solid var(--line)", color: "var(--text)", padding: "6px 10px", fontSize: 11 }}>
+                  <option value="">model — auto (pick inside TUI)</option>
+                  {spawnHost === "local" ? (
+                    <optgroup label="LOCAL (resident engines)">
+                      {models.map((m) => <option key={m.path} value={m.path}>{m.name} 🔵</option>)}
+                    </optgroup>
+                  ) : (
+                    (fleet?.providers ?? []).map((p) => (
+                      <optgroup key={p.id} label={p.display.toUpperCase()}>
+                        {catalog.has(p.id) ? catalog.get(p.id)!.map((m) => (
+                          <option key={m.id} value={`${p.id}/${m.id}`}>{m.name ?? m.id} 🟣</option>
+                        )) : (
+                          <option value={`__cloud_${p.id}`}>{catalogLoading ? "loading…" : `⬇ load ${p.id} models`}</option>
+                        )}
+                      </optgroup>
+                    ))
+                  )}
+                </select>
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: 4, color: "var(--muted)" }}>
+                role (for loops)
+                <input value={spawnRole} onChange={(e) => setSpawnRole(e.target.value)} placeholder="primary-developer, reviewer, human… (optional)" style={{ background: "var(--panel-2)", border: "1px solid var(--line)", color: "var(--text)", padding: "6px 10px", fontSize: 11 }} />
+              </label>
+              {spawnModel && <div className="mono dim" style={{ fontSize: 10 }}>will /model: <span style={{ color: "var(--cyan)" }}>{spawnModel}</span></div>}
+              <div className="row" style={{ gap: 8, marginTop: 4 }}>
+                <button className="action" style={{ flex: 1 }} onClick={() => spawnTuiConfigured(spawnModel, spawnRole)}>SPAWN</button>
+                <button className="ghost" style={{ flex: 1 }} onClick={() => { setSpawnOpen(false); setSpawnHost("local"); setSpawnModel(""); setSpawnRole(""); }}>CANCEL</button>
+              </div>
+            </div>
           </div>
         </div>
       )}

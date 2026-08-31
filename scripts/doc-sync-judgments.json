@@ -111,6 +111,14 @@
     {
       "commit": "fbbc3f6",
       "reason": "feat(agents) scaffold deck-agents crate: pure domain crate (model/providers/quota/rewrite types + static catalogs) with no CLI, Tauri, or UI door wired yet \u2014 no user-facing surface the docs describe has changed. Behavior surfaces (deck agents, Tauri commands, appwide picker) land and get documented in subsequent verified pieces."
+    },
+    {
+      "commit": "1385869",
+      "reason": "feat(agents) wire the online fleet door (deck agents CLI + Tauri agents_fleet/catalog/use/quota_set + canvas cloud picker): documented in ROADMAP.md \u00a7Online fleet door (LANDED 2026-08-31) \u2014 local GGUF \u2192 cloud model selection, per-provider live /v1/models catalogs, free-tier quota note, and the two-doors surface."
+    },
+    {
+      "commit": "1d760dc",
+      "reason": "feat(agents) store cloud API keys in the OS keychain via deck-agents::keys (Secret Service/Keychain/Credential Manager): documented in ROADMAP.md \u00a7Provider key storage (LANDED 2026-08-31) \u2014 keychain-first security model, env fallback matching gh, deck secrets + Tauri secret_* doors, and the no-secrets-in-tree invariant."
     }
   ]
 }
