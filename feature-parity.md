@@ -332,6 +332,29 @@ just the blob). Backed by a new `host_metrics` Tauri command over
 ~200 ms). Deliberately UI-only for now: it is a telemetry *display*; the CLI
 surface for host state remains `deck hardware` / fit math.
 
+The sidebar renders two always-on, visually separated blocks: a **PET** block
+(the guy, a Minecraft-style steak feed + heart love pairing, with a 30-minute
+feed cooldown so a couple steaks a day keeps him fed — persisted via
+`pet.*` settings keys) sitting above the **SYSTEM** telemetry meters (VRAM /
+GPU / RAM / CPU). Hunger climbs ~10 pts/hour and love only erodes after hunger
+crosses the neglect line, so care is deliberate, not a button mash.
+
+### Production install separation: `deck promote` (2026-08-31)
+
+`deck promote` stages a release build into a separate "production" install so
+you can pilot real workloads with a fixed binary while the repo tree stays the
+dev workspace. It builds `--release` for `cyberdeck` + `deck`, asks before
+promoting, copies the binaries into `CYBERDECK_PROD_ROOT` (default
+`~/.local/share/cyberdeck-prod`), and (re)writes `~/.local/bin/cyberdeck` + `~/.local/bin/deck`
+wrappers that point `XDG_CONFIG_HOME`/`XDG_DATA_HOME` at dedicated
+`cyberdeck-prod` state trees — so prod never shares its DB, generated units, or
+settings with the dev tree.
+
+The engine PORT/ALIAS contract is unchanged: both dev and prod render systemd
+units for the same fixed slots (:18000/:1919/:11434), so dev (`tauri dev`) and
+prod must not both own the engine ports at once — alternate their hours.
+`deck` can optionally `git push origin master` after promoting.
+
 ### KV cache: KVarN + precision tail (roadmap — 2026-08-30)
 
 Research verdict: **has a place, behind gates.** [KVarN](https://arxiv.org/abs/2606.03458)
