@@ -4,6 +4,7 @@ members = [
     "crates/deck-core",
     "crates/deck-engines",
     "crates/deck-feeds",
+    "crates/deck-agents",
     "crates/deck-cli",
     "crates/deck-tauri",
     "src-tauri",
@@ -17,6 +18,7 @@ edition = "2024"
 deck-core = { path = "crates/deck-core" }
 deck-engines = { path = "crates/deck-engines" }
 deck-feeds = { path = "crates/deck-feeds" }
+deck-agents = { path = "crates/deck-agents" }
 deck-tauri = { path = "crates/deck-tauri" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

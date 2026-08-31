@@ -660,6 +660,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "deck-agents"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "deck-core",
+ "rusqlite",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "deck-cli"
 version = "0.1.0"
 dependencies = [
