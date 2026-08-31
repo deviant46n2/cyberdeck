@@ -106,3 +106,59 @@ pub fn agents_quota_set(provider_id: &str, used: u64) -> Result<()> {
     let c = conn()?;
     deck_agents::ops::record_quota_used(&c, provider_id, used)
 }
+
+// --- provider-key storage (OS keychain) ---
+//
+// These mirror `deck agents secrets` for the Tauri door. Only names and masked
+// values ever cross to the frontend; raw keys are set via `secret_set` and
+// never returned.
+
+/// Resolution read-model for one provider's key: where it comes from + a
+/// masked preview (safe to render).
+#[derive(Serialize)]
+pub struct SecretView {
+    pub provider: String,
+    pub from_keychain: bool,
+    pub from_env: bool,
+    pub env_var: String,
+    pub masked: Option<String>,
+}
+
+/// List providers that have a stored key (names only, grouped with env var).
+pub fn secret_list() -> Result<Vec<String>> {
+    Ok(deck_agents::keys::list())
+}
+
+/// Store a provider's key in the OS keychain. Returns a masked confirmation.
+pub fn secret_set(provider_id: &str, key: &str) -> Result<String> {
+    deck_agents::keys::set(provider_id, key)?;
+    Ok(format!(
+        "stored key for {provider_id} (masked: {})",
+        deck_agents::keys::mask(key)
+    ))
+}
+
+/// Delete a provider's stored key.
+pub fn secret_unset(provider_id: &str) -> Result<()> {
+    deck_agents::keys::delete(provider_id)
+}
+
+/// Where a provider's key resolves from (keychain/env) + a masked preview.
+pub fn secret_check(provider_id: &str) -> Result<SecretView> {
+    let stored = deck_agents::keys::read(provider_id)?.filter(|k| !k.is_empty());
+    let env_var = deck_agents::keys::env_var_name(provider_id);
+    let env = std::env::var(&env_var)
+        .ok()
+        .filter(|v| !v.trim().is_empty());
+    let shown = stored
+        .as_deref()
+        .or(env.as_deref())
+        .map(|k| deck_agents::keys::mask(k));
+    Ok(SecretView {
+        provider: provider_id.to_string(),
+        from_keychain: stored.is_some(),
+        from_env: env.is_some(),
+        env_var,
+        masked: shown,
+    })
+}

@@ -88,6 +88,13 @@ enum Commands {
         #[command(subcommand)]
         action: AgentCmd,
     },
+    /// Manage cloud-provider API keys in the OS keychain (Secret Service on
+    /// Linux). Keys never touch the repo, config files, or logs; resolution is
+    /// keychain-first, <PROVIDER>_API_KEY env fallback.
+    Secrets {
+        #[command(subcommand)]
+        action: SecretCmd,
+    },
     /// PLUG IN a model + engine and let cyberdeck derive the best-max-ctx
     /// loadout, verify it headlessly on a test port (never touching the live
     /// service), then install + start + bench it.
@@ -507,6 +514,31 @@ enum AgentCmd {
 }
 
 #[derive(Subcommand)]
+enum SecretCmd {
+    /// List providers that have a stored key (names only, never the key)
+    List,
+    /// Store a provider's key in the OS keychain. Reads the value from stdin
+    /// so it never appears in argv or shell history; optionally pass it inline.
+    Set {
+        /// provider id: nim | groq | gemini | openrouter | ...
+        provider: String,
+        /// store the key given here instead of prompting on stdin
+        #[arg(short = 'v')]
+        value: Option<String>,
+    },
+    /// Delete a provider's stored key
+    Unset {
+        /// provider id: nim | groq | gemini | openrouter | ...
+        provider: String,
+    },
+    /// Show where a provider's key resolves from + a masked preview
+    Check {
+        /// provider id: nim | groq | gemini | openrouter | ...
+        provider: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum ProfileCmd {
     /// Create a new loadout from flags
     New {
@@ -655,6 +687,12 @@ fn main() -> Result<()> {
                 cmd::agents::use_harness(&harness, &provider, &model)
             }
             AgentCmd::Quota { provider, used } => cmd::agents::quota_set(&provider, used),
+        },
+        Commands::Secrets { action } => match action {
+            SecretCmd::List => cmd::secrets::list(),
+            SecretCmd::Set { provider, value } => cmd::secrets::set(&provider, value),
+            SecretCmd::Unset { provider } => cmd::secrets::unset(&provider),
+            SecretCmd::Check { provider } => cmd::secrets::check(&provider),
         },
         Commands::Workloads { action } => match action {
             WorkloadsCmd::List { json } => cmd::workloads::list(json),

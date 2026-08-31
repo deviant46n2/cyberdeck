@@ -9,3 +9,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
 rusqlite = { workspace = true }
+# OS keychain (Secret Service on Linux, Keychain on macOS, Credential Manager
+# on Windows). default-features=false + sync-secret-service selects the Secret
+# Service store on Linux (the industry-standard keyring daemon: gnome-keyring /
+# KWallet) instead of kernel keyutils.
+keyring = { version = "3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }

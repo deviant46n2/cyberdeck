@@ -57,11 +57,20 @@ pub fn status(conn: &Connection) -> Result<FleetStatus> {
     Ok(FleetStatus { harnesses, providers })
 }
 
-/// Fetch a provider's `/v1/models` catalog. `api_key` optional.
+/// Fetch a provider's `/v1/models` catalog.
+///
+/// When `api_key` is `None`, the provider's key is resolved from the OS
+/// keychain first, then the conventional `<PROVIDER>_API_KEY` env var (see
+/// [`crate::keys`]). The key never leaves this function, so callers get a
+/// live catalog without handling secrets themselves.
 pub fn catalog(provider_id: &str, api_key: Option<&str>) -> Result<Vec<crate::model::ProviderModel>> {
     let p = crate::model::get_provider(provider_id)
         .with_context(|| format!("unknown provider '{provider_id}'"))?;
-    crate::providers::fetch_models(&p, api_key)
+    let key = match api_key {
+        Some(k) => Some(k.to_string()),
+        None => crate::keys::resolve(provider_id),
+    };
+    crate::providers::fetch_models(&p, key.as_deref())
 }
 
 /// Bind a harness to (provider, model): rewrite its config file, record the

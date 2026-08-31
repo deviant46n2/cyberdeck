@@ -625,3 +625,21 @@ export const agentsUse = (harnessId: string, providerId: string, modelId: string
   invoke<string>("agents_use", { harnessId, providerId, modelId });
 export const agentsQuotaSet = (providerId: string, used: number) =>
   invoke<void>("agents_quota_set", { providerId, used });
+
+// --- cloud-provider API key storage (OS keychain) ---
+// Only names + masked previews come back to the UI; raw keys go in via
+// secretSet and are never returned.
+export interface SecretView {
+  provider: string;
+  from_keychain: boolean;
+  from_env: boolean;
+  env_var: string;
+  masked: string | null;
+}
+export const secretList = () => invoke<string[]>("secret_list");
+export const secretSet = (providerId: string, key: string) =>
+  invoke<string>("secret_set", { providerId, key });
+export const secretUnset = (providerId: string) =>
+  invoke<void>("secret_unset", { providerId });
+export const secretCheck = (providerId: string) =>
+  invoke<SecretView>("secret_check", { providerId });

@@ -522,6 +522,26 @@ fn agents_quota_set(provider_id: String, used: u64) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn secret_list() -> Result<Vec<String>, String> {
+    deck_tauri::agents::secret_list().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn secret_set(provider_id: String, key: String) -> Result<String, String> {
+    deck_tauri::agents::secret_set(&provider_id, &key).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn secret_unset(provider_id: String) -> Result<(), String> {
+    deck_tauri::agents::secret_unset(&provider_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn secret_check(provider_id: String) -> Result<deck_tauri::agents::SecretView, String> {
+    deck_tauri::agents::secret_check(&provider_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn delete_model(path: String, delete_file: bool) -> Result<deck_tauri::DeleteResult, String> {
     deck_tauri::delete_model(&path, delete_file).map_err(|e| e.to_string())
 }
@@ -651,6 +671,10 @@ fn main() {
             agents_catalog,
             agents_use,
             agents_quota_set,
+            secret_list,
+            secret_set,
+            secret_unset,
+            secret_check,
             engine_list,
             engine_bin_list,
             engine_bin_set,

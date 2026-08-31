@@ -18,6 +18,7 @@ pub mod providers;
 pub mod rewrite;
 pub mod quota;
 pub mod ops;
+pub mod keys;
 
 /// Human label for an OpenAI-compatible provider category intended to surface
 /// whether an endpoint is a single service or an aggregator/router.

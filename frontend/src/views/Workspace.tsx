@@ -46,6 +46,9 @@ export default function Workspace({
   const [catalog, setCatalog] = useState<Map<string, api.ProviderModel[]>>(new Map());
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [cloudErr, setCloudErr] = useState("");
+  // Per-provider key status (masked + source) so the picker shows which
+  // providers have a stored key without ever rendering the raw secret.
+  const [keyStatus, setKeyStatus] = useState<Map<string, api.SecretView>>(new Map());
   const [ctx, setCtx] = useState(32768);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [status, setStatus] = useState<api.EngineStatus[]>([]);
@@ -103,6 +106,36 @@ export default function Workspace({
   useEffect(() => {
     api.agentsFleet().then(setFleet).catch(() => setFleet(null));
   }, []);
+
+  // Refresh which providers have a stored key (masked status only).
+  const refreshKeys = useCallback(async () => {
+    try {
+      const ids = await api.secretList();
+      const views = await Promise.all(ids.map((id) => api.secretCheck(id)));
+      setKeyStatus(new Map(views.map((v) => [v.provider, v])));
+    } catch {
+      setKeyStatus(new Map());
+    }
+  }, []);
+  useEffect(() => { void refreshKeys(); }, [refreshKeys]);
+
+  // Store / remove a provider's key via the OS keychain, then refresh status.
+  const setProviderKey = useCallback(async (providerId: string) => {
+    const key = window.prompt(`Paste the ${providerId} API key (stored in your OS keychain):`);
+    if (key == null) return; // cancelled
+    const trimmed = key.trim();
+    if (!trimmed) return;
+    try {
+      await api.secretSet(providerId, trimmed);
+      await refreshKeys();
+    } catch (e) { setCloudErr(`can't store ${providerId} key: ${String(e)}`); }
+  }, [refreshKeys]);
+  const unsetProviderKey = useCallback(async (providerId: string) => {
+    try {
+      await api.secretUnset(providerId);
+      await refreshKeys();
+    } catch (e) { setCloudErr(`can't remove ${providerId} key: ${String(e)}`); }
+  }, [refreshKeys]);
 
   // Lazily fetch a provider's /v1/models catalog (cached) the first time the
   // user opens that provider's group.
@@ -650,15 +683,18 @@ export default function Workspace({
             <optgroup label="LOCAL (resident engines)">
               {models.map((m) => <option key={m.path} value={m.path}>{m.name} {isLocalModel(m.path) ? "🔵" : "🟣"}</option>)}
             </optgroup>
-            {(fleet?.providers ?? []).map((p) => (
+            {(fleet?.providers ?? []).map((p) => {
+              const hasKey = keyStatus.get(p.id) && (keyStatus.get(p.id)!.from_keychain || keyStatus.get(p.id)!.from_env);
+              return (
               <optgroup key={p.id} label={`${p.display.toUpperCase()} · ${p.quota_label}`}>
                 {catalog.has(p.id) ? catalog.get(p.id)!.map((m) => (
                   <option key={m.id} value={`${p.id}/${m.id}`}>{m.name ?? m.id}{m.free ? " · free" : ""} {m.context ? ` · ${(m.context / 1000).toFixed(0)}k` : ""} 🟣</option>
                 )) : (
-                  <option value={`__cloud_${p.id}`}>{catalogLoading ? "loading…" : `⬇ load ${p.id} models`}{p.free_note ? ` — ${p.free_note}` : ""}</option>
+                  <option value={`__cloud_${p.id}`}>{catalogLoading ? "loading…" : `⬇ load ${p.id} models`}{p.free_note ? ` — ${p.free_note}` : ""}{hasKey ? "" : " · no key"}</option>
                 )}
               </optgroup>
-            ))}
+              );
+            })}
             <option value="__custom">— custom (provider/model) —</option>
           </select>
           {harnessModel === "__custom" && <input value={customModel} onChange={(e) => setCustomModel(e.target.value)} placeholder="openrouter/anthropic/claude-sonnet-4" style={{ background: "var(--panel)", border: "1px solid var(--magenta)", color: "var(--text)", padding: "6px 10px", fontSize: 11, minWidth: 200 }} />}
@@ -671,6 +707,16 @@ export default function Workspace({
           <div style={{ display: "flex", gap: 12, alignItems: "center", padding: "6px 10px", marginBottom: 6, background: "var(--panel)", border: "1px solid var(--line)", fontSize: 11 }}>
             <label className="row" style={{ gap: 6 }}><input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> auto-approve</label>
             <label className="row" style={{ gap: 6 }}>dir <input value={dir} onChange={(e) => setDir(e.target.value)} style={{ width: 180, background: "var(--bg)", border: "1px solid var(--line)", color: "var(--text)", padding: "2px 6px", fontSize: 11 }} /></label>
+            <span className="dim" style={{ marginLeft: "auto" }}>cloud provider keys</span>
+            {(fleet?.providers ?? []).map((p) => {
+              const st = keyStatus.get(p.id);
+              const has = st && (st.from_keychain || st.from_env);
+              return (
+                <button key={p.id} className="ghost" title={`${p.id}: ${has ? (st?.from_env ? "env var set" : `stored (${st?.masked})`) : "no key"}`} style={{ fontSize: 9, padding: "3px 6px", borderColor: has ? "var(--pass, #3fb950)" : undefined }} onClick={() => { if (has) { if (confirm(`Remove ${p.id} key from keychain? Env override stays.`)) void unsetProviderKey(p.id); } else void setProviderKey(p.id); }}>
+                  {p.id} {has ? "●" : "○"}
+                </button>
+              );
+            })}
           </div>
         )}
         <div style={{ display: "flex", alignItems: "flex-end", gap: 8, background: "var(--panel-2)", border: "1px solid var(--line-bright)", padding: "8px 10px", boxShadow: "0 6px 24px rgba(0,0,0,0.4)" }}>
