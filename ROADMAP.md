@@ -14,6 +14,8 @@ What's missing for the stated vision is **what to bench and why**: no Workload c
 
 The roadmap below keeps the **one-truth-two-doors** contract (`deck-core`/`deck-engines`/`deck-feeds` → `deck-cli` + `deck-tauri` → Tauri/React), evolves dimensions incrementally, and lands the smallest loop that can truthfully answer *"what should I use for this workload on this hardware, and why?"*
 
+> **Strategic guardrail — do not add another major UI surface until the core experimental loop is trustworthy.** The primary product loop is now `Select workload → Select candidate models → Execute → Measure → Evaluate → Compare → Explain winner → Recommend`. Future UI work must strengthen this loop rather than adding new top-level tabs/features. A new view that does not make this loop more credible is deferred.
+
 ---
 
 ## Current State Audit
@@ -277,6 +279,51 @@ Which pieces already exist: download `.part`+resume, metadata inspect, fit, deri
 
 ## Roadmap Phases
 
+### Phase 0R — Process Ownership & Reaping (P0, reliability — before anything else)
+
+*Objective:* Close the lifecycle race in spawned `opencode run` processes so the app cannot leak or orphan a GPU-consuming child.
+
+*Why now:* `PDEATHSIG` + process-group is good but `opencode_stop()` currently removes the `SESSIONS` entry before the waiter has taken/reaped its `Child` handle, and `kill_all()` kills process groups without an explicit `Child`-reaping lifecycle. A crash must never leave an `opencode` process consuming GPU. This is a reliability defect, not a feature.
+
+*Features:*
+
+* Every spawned child has a single, explicit owner and a `Child` handle lifecycle from spawn → wait/reap.
+* `opencode_stop(id)` does not race the waiter: stopping signals the group/pid, the waiter retains or is handed the `Child`, and the child is still `wait()`-ed after `SIGTERM→SIGKILL`.
+* Stopped/cancelled children are reaped (no zombies, no untracked pids).
+* `kill_all()` (app shutdown / `Drop`) leaves no unreaped tracked children; it joins or reaps what it signalled.
+* Preserve existing protections: `PR_SET_PDEATHSIG(SIGKILL)` in the child before exec, `process_group(0)` / `kill(-pgid)` process-group termination, and the `console_reaper.rs` orphan sweep for crash-killed parents.
+* Regression harness covering: (1) normal completion reaps and emits `opencode-done`, (2) manual `opencode_stop(id)` reaps and does not lose the `Child`, (3) process-group termination (SIGTERM-ignored child + children) is killed via group, (4) application shutdown (`kill_all`) reaps everything, (5) crash/parent-death sweep does not leave a GPU-consuming survivor (existing `AGENT_MARKER` + `reap_orphans` invariant preserved).
+
+*Code:* `crates/deck-tauri/src/console.rs` (`SESSIONS`, `opencode_run` / `opencode_stop` / `kill_all`, `term_then_kill` / `is_still_opencode`), `crates/deck-tauri/src/console_reaper.rs` (`AGENT_MARKER`, `reap_orphans`), integration/regression tests for the four paths above (opt-in where a real `opencode` binary is required, otherwise mock `Child`).
+
+*Dep:* None — this gates all other agent work.
+
+*DoD:* `cargo test` includes the four reaping paths; `opencode_stop` called concurrently with waiter completion never loses a `Child` (no unwrap on missing handle); `kill_all` after  N concurrent sessions leaves `SESSIONS` empty and `ps` shows no `DECK_AGENT_SID` survivors; a `kill -9` of the parent leaves no GPU-consuming `opencode` process behind (reaper test).
+
+---
+
+### Phase 0P — Host Portability & Assumption Hardening (P1, 1–2 days, parallel with 0R)
+
+*Objective:* A fresh clone must never silently inherit assumptions about the developer's machine.
+
+*Why:* Audit found `/home/deviant/...` paths in tests/production logic, a hardcoded `ollama/qwen3.8:27b` fallback in `opencode_sync`, and tests that depend on real models/filesystem/GPU. That makes CI and a new workstation behave differently without explanation.
+
+*Features:*
+
+* Remove host-specific literals: no `/home/deviant/...` in production code or in tests that run by default. Test fixtures use `tempdir` / `XDG_DATA_HOME` / `HOME` overrides or explicit env injection.
+* `opencode_sync` fallback: remove silent developer-specific model selection. When no active profile/model exists, return an explicit "no active model/profile" state (or a properly discovered/configured model via `ollama list` / `models_dir` scan) — never a hardcoded `ollama/qwen3.8:27b`.
+* Test taxonomy (no new harness, just convention + `#[ignore]` / feature gates where needed):
+  1. Pure/unit tests — deterministic, portable, no real models/GPU/network; run on every `cargo test`.
+  2. Host integration tests — explicitly opt-in (`--ignored` or `cfg` / env gate), may touch `~/models`, `nvidia-smi`, `systemd`.
+  3. Hardware/model integration tests — explicitly opt-in and clearly documented, require a model/engine and are skipped with an explainable message when absent.
+* Audit remaining assumptions: `HOME` / `XDG_DATA_HOME` / `models_dir` handling, default ports, engine binary discovery, and any fixture that assumes a model is present.
+
+*Code:* `crates/deck-core/src/opencode_sync.rs`, `crates/deck-core/src/safetensors.rs`, `crates/deck-engines/src/lib.rs`, `crates/deck-tauri/src/lib.rs` (test fixtures), plus any other `/home/deviant` hit from `grep -R`; test annotations / `#[ignore]` gating; docs in `AGENTS.md` or `CONTRIBUTING` test section if that file exists, otherwise `ROADMAP.md` stays the source of the taxonomy.
+
+*DoD:* `grep -R "/home/deviant" crates --include="*.rs"` is clean outside `#[ignore]`-gated host tests; `cargo test` on a fresh container with no `~/models` and no GPU passes the default suite and skips host tests with a message; `deck opencode sync` with an empty DB reports "no active model/profile" rather than silently choosing `ollama/qwen3.8:27b`.
+
+---
+
 ### Phase 0 — Stabilize Existing System (P0, 1–2 days)
 
 *Objective:* Pay down drift before new dimensions; keep the critical download→fit→bringup→bench path green and reversible.
@@ -300,18 +347,21 @@ Which pieces already exist: download `.part`+resume, metadata inspect, fit, deri
 
 ---
 
-### Phase 1 — Benchmark Foundation (P0, 3–5 days)
+### Phase 1 — Benchmark Foundation & Provenance (P0, 3–5 days — architectural priority)
 
-*Objective:* Separate MEASUREMENT from EVALUATION and preserve raw data, so future evaluation layers never need to recompute.
+*Objective:* Separate MEASUREMENT from EVALUATION and make every benchmark number explainable. Staged provenance, not a big-bang.
 
-*Why:* Current `MatrixRow` keeps `output` but `bench`/`compare` intermix lexical quality with throughput; you cannot ship deterministic or judge evaluation later without raw provenance.
+*Why:* Current `MatrixRow` keeps `output` but `bench`/`compare` intermix lexical quality with throughput; you cannot ship deterministic or judge evaluation later without raw provenance. Provenance is strategically more important than more UI.
 
-*Features:*
+*Guiding principle:* **Cyberdeck should never present a benchmark number without eventually being able to explain exactly what produced it.**
+
+*Features (staged; not every field on day one):*
 
 * Extend `matrix_runs` additively (`ALTER TABLE` if not exists): `workload_id TEXT`, `hardware_profile_id INTEGER`, `engine_version TEXT`, `prompt_tps REAL`, `ttft_ms INTEGER`, `peak_vram_mb INTEGER`, `model_rev TEXT`, `sampling_json TEXT` (temperature/top_p/reasoning). Extend `bench` with `hardware_profile_id`, `engine_version`.
 * Extend `MatrixRow`/`BenchRow` structs (nullable new fields); `insert_matrix_run` writes them; older rows read as `None`.
 * Enhance `inference::run_prompt` / `health::measure_generation_tps` to capture `ttft_ms` (time from request to first token) and `prompt_tps` when the engine reports it (llama.cpp `prompt_eval_duration`, Ollama `prompt_eval_count/duration`). Fall back graceful. **Reuse existing tooling where it exists:** `llama-bench` / `llama.cpp --bench` and `nvidia-smi dmon` for `peak_vram` are adapters behind the same `GenSample` struct — do not reimplement what the runtime already measures; keep `tok_s_kind` honesty (`native` vs `wall`).
 * No evaluation yet — just measurement enrichment.
+* **Provenance record (target shape, staged adoption):** each `matrix_runs` / `bench` / `evaluations` row should eventually be able to identify, where applicable: `model identity`, `model revision/version`, `quantization`, `engine`, `engine version`, `hardware profile`, `workload`, `context length`, `sampling parameters`, `prompt token count`, `generated token count`, `prompt processing speed`, `generation speed`, `TTFT`, `wall-clock duration`, `peak VRAM`, `success/failure`, `evaluator/version`, `measurement method`, `workflow/run identity`. Implement columns incrementally; never retroactively reinterpret history — rows are immutable + self-describing with the config snapshotted at run time.
 
 *Code:* `crates/deck-core/src/store.rs`, `crates/deck-engines/src/inference.rs`+`health.rs`+`matrix.rs`+`compare.rs`, `crates/deck-cli/src/cmd/bench.rs`, `crates/deck-tauri/src/bench.rs`.
 
@@ -323,11 +373,15 @@ Which pieces already exist: download `.part`+resume, metadata inspect, fit, deri
 
 ---
 
-### Phase 2 — Workloads & Evaluation (P0, 1–2 weeks)
+### Phase 2 — Workloads & Evaluation (P0, 1–2 weeks — Real Evaluation Layer)
 
-*Objective:* Make the system answer "what should I use **for this workload**" with credible, pluggable evaluation.
+*Objective:* Make the system answer "what should I use **for this workload**" with credible, pluggable evaluation and a pipeline that separates concerns.
 
-*Why:* Without workloads, benchmarking is workload-blind; lexical quality lets verbose nonsense beat concise correctness. This is the user-visible unlock for the principle.
+*Why:* Without workloads, benchmarking is workload-blind; lexical quality lets verbose nonsense beat concise correctness. This is the user-visible unlock for the principle. Evaluation is the next major evolution after reliable execution + measurement:
+
+```
+WORKLOAD → TASK → MODEL → OUTPUT → EVALUATOR → QUALITY / SUCCESS
+```
 
 *Features:*
 
@@ -337,6 +391,8 @@ Which pieces already exist: download `.part`+resume, metadata inspect, fit, deri
 * **Leverage existing OSS for the heavy lifting — do not reimplement harnesses:** add `Evaluator::LmEval { tasks: Vec<String>, harness_version }` that shells out to **`EleutherAI/lm-evaluation-harness`** (`lm-eval --model hf --tasks <workload tasks> --output_path /tmp/eval`) via `spawn_blocking` + temp dir + timeout (same isolation as `curl` in `deck-feeds`). Seed mappings: `coding → {humaneval, mbpp}`, `reasoning → {gsm8k, mmlu}`, `instruction → {ifeval}`. Native `exact/regex/json/compile` evaluators remain for repo-local tasks (`pytest`, `cargo test`, `patch_apply`). HELM/OpenCompass are the same pattern later. Store `evaluator_version` in the evaluation row so harness bumps are attributable. Gate on `which lm-eval` — fallback to native evaluators when absent (no hard dep).
 * Keep lexical scorer as `evaluator=lexical-placeholder` for non-structured `assistant` tasks where no harness exists — flagged in UI as placeholder, never presented as benchmark truth.
 * Matrix records `workload_id` per row; `compare` reads it. Model-judge (`pairwise`/`rubric`) is a later `Evaluator::Judge { model: "qwen3.8:32k" }` arm reusing the isolated test-port harness (judge runs on `ollama` resident, not candidate VRAM).
+* **Do not collapse to one opaque score.** Store and surface five distinct dimensions: `performance` (tok/s, TTFT, prompt_tps), `quality` (evaluator score), `task success` (pass/fail), `reliability/failure` (verdict, crash/OOM rate), `resource consumption` (peak VRAM, ctx). An overall rank is derived and auditable, not a hidden scalar. This preserves the ability to compare models across dimensions and explain why one was preferred (e.g. "faster but less reliable").
+* Deterministic/automated evaluators and human evaluation coexist: `Evaluation.method` includes `Human` (UI flag / `workflow NodeKind::Human`) alongside `Deterministic`/`ModelJudge`; both write the same `evaluations` shape. Keep `EchoRunner` + `Human` workflow nodes as deterministic testing infrastructure — they remain useful for pipeline tests without a live model.
 
 *Code:* New `crates/deck-core/src/workload.rs` + `crates/deck-engines/src/evaluation.rs` (or `crates/deck-eval` only if it stays tiny — prefer extending `deck-core`/`deck-engines` first per cohesion rule; do not prematurely create a crate), `store.rs` (`workloads`, `tasks`, `evaluations`), `grid.rs` (workload task expansion), `matrix.rs`/`compare.rs` evaluator hook.
 
@@ -377,30 +433,34 @@ Which pieces already exist: download `.part`+resume, metadata inspect, fit, deri
 
 ---
 
-### Phase 4 — Recommendation Engine (P1, 3–5 days)
+### Phase 4 — Recommendation Engine (P1, 3–5 days — Downstream of Measurement/Evaluation)
 
-*Objective:* Deterministic, explainable "what to use" answers per workload on this hardware.
+*Objective:* Deterministic, explainable "what to use" answers per workload on this hardware — a downstream capability, not an immediate feature.
 
-*Why:* Measurement + evaluation without aggregation is just data. Users want a sentence they can act on.
+*Why:* Measurement + evaluation without aggregation is just data. Users want a sentence they can act on, but only from actual evidence. Recommendation must sit at the end of the evidence pipeline, not replace it:
+
+```
+DISCOVER → FIT → RUN → MEASURE → EVALUATE → COMPARE → RECOMMEND
+```
 
 *Features:*
 
-* Pure fn `recommend(workload, hardware_profile, constraints) -> Vec<RankedCandidate>` in `deck-core::recommend`. Aggregates per `(model, quant, engine, profile_name)` over the hardware: success_rate, mean_quality, P50 tok_s/ttft, VERIFIED/MEASURED flag, fit at `ctx` = `derive_loadout` target.
+* Pure fn `recommend(workload, hardware_profile, constraints) -> Vec<RankedCandidate>` in `deck-core::recommend`. Aggregates per `(model, quant, engine, profile_name)` over the hardware: success_rate, mean_quality, P50 tok_s/ttft, VERIFIED/MEASURED flag, fit at `ctx` = `derive_loadout` target. Inputs are actual `bench`/`matrix_runs` + `evaluations` + `hardware profile` + `resource usage` + `workload results` + `historical performance` — never a synthetic popularity signal.
 * Weighting presets (not ML): `quality-first` (success_rate → mean_quality), `speed-first` (P50 tok_s), `efficient` (quality per GiB VRAM). CLI flag `--objective quality|speed|efficient` surfaces as a slider in UI.
-* Explain line: `"Model X (Q4_K_M) via llama.cpp is your best coding model: 93% task success, 142 tok/s (P50), 15.2 GB VRAM, VERIFIED at 32k ctx on your 5070 Ti (hw#4, driver 555) — 2.1× faster than your current fallback."`
-* Powers Market personalization.
+* Explain line: `"Model X (Q4_K_M) via llama.cpp is your best coding model: 93% task success, 142 tok/s (P50), 15.2 GB VRAM, VERIFIED at 32k ctx on your 5070 Ti (hw#4, driver 555) — 2.1× faster than your current fallback."` The explanation cites the evidence; no opaque "AI recommends this model" output.
+* Powers Market personalization. Do not build an ML recommender before deterministic ranking is credible — opacity before evidence is the anti-goal.
 
 *Code:* New `crates/deck-core/src/recommend.rs`, `store` aggregates query, `deck-cli/src/cmd/recommend.rs` (or `bench best --workload`), `deck-tauri::recommend`.
 
-*API:* `deck recommend --workload coding [--objective quality] [--json]`, `deck bench best` extended with `workload` filter.
+*API:* `deck recommend --workload coding [--objective quality] [--json]`, `deck bench best` extended with `workload` filter. Must be able to answer "which model is best for this workload on this hardware?" with an explainable trace.
 
 *Frontend:* Bench scoreboard groups by `(model×engine×workload)` + explanation banner; Hud header "best per workload" chips.
 
-*Tests:* Recommend over an empty DB returns "insufficient data, run `matrix --workload`"; over seeded `matrix_runs` picks the deterministic winner.
+*Tests:* Recommend over an empty DB returns "insufficient data, run `matrix --workload`"; over seeded `matrix_runs` picks the deterministic winner. No recommendation without provenance.
 
-*Dep:* Phases 2–3.
+*Dep:* Phases 1–3 (provenance + workloads/evaluation + hardware). Do not start before Phase 2 evaluation exists.
 
-*DoD:* User can run `deck recommend --workload reasoning` and get an explainable ranked list that matches `deck bench compare` aggregates.
+*DoD:* User can run `deck recommend --workload reasoning` and get an explainable ranked list that matches `deck bench compare` aggregates and cites `success_rate + tok_s + VRAM + VERIFIED/MEASURED + workload` in the explanation.
 
 ---
 
@@ -417,13 +477,18 @@ Which pieces already exist: download `.part`+resume, metadata inspect, fit, deri
 * Pure `score(Release, hw_profile, installed_models, bench.best) -> f32` in `deck-core::relevance` with `w1·fits_hardware (estimate() PASS/WARN/OOM) + w2·family_overlap (installed arch/quant) + w3·quant_novelty + w4·bench_delta (does a better quant of same family exist?) + w5·recency`. Sort Market/Feeds by score per workload hint.
 * `deck feeds rank --workload coding --limit 20` + Tauri `feeds_rank`.
 
-**O3 — Settings + Audit (S):**
+**O3 — Settings + Audit (S → typed semantic hardening):**
 
 * `settings` (`key TEXT PK, value_json TEXT, updated_at`) + `audit_log(ts, actor, key, old_json, new_json, reason)` in `store.rs`. `deck settings get/set --reason msg` (+ `log`, `undo <ts>`). Typed validation (intervals, enabled_sources, thresholds). Agent writes go through this API — never raw file edits. Covers `AGENTS.md:18–19` requirement.
+* **Hardening (next):** the current store is generic JSON key/value with audit/undo — useful as persistence foundation. Evolve toward **typed, validated semantic settings** at the API layer while retaining the generic storage: `default engine`, `default model/profile`, `context reserve`, `download concurrency`, `automatic benchmarking`, `agent permission level`, `resource limits`, etc. Do not over-engineer now; add typed validation when each setting becomes product-important, not as a speculative schema.
 
 **O4 — What changed / What to test (S):**
 * HUD/SIGNALS "New→Relevant→Worth testing" lane: releases since `fetched_at > last_seen`, filtered to `score > threshold`, enriched with `FIT at ctx`, `DISK`, `tok/s of current best equivalent`. Answers "what changed / what matters".
   **Partial LANDED (2026-08-30):** a dedicated FEEDS view (`frontend/src/views/Feeds.tsx` + route) surfaces the live `feeds_rank` pipeline — hardware-grounded score, `✓/✗ fits`, and the `why` reasons behind each candidate, with a workload-hint selector (coding/reasoning/… reweights family overlap) and a POLL button. **Recency gate also LANDED (2026-08-30):** a `feeds.last_seen` epoch setting (written through the audit-tracked O3 settings store, actor `ui`) drives a persistent NEW marker computed as `fetched_at > last_seen`; "MARK SEEN" is the only thing that advances it, so "what changed since I last looked" survives routine polls. **Download handoff LANDED (2026-08-30):** HF model rows carry a DL action that queues the scored quant (smallest GGUF, shard-set aware) into the shared DownloadManager via the MARKET path, closing the discover→download loop from the feeds lane; CLI door is `deck download`. Still open from O4: automatic DISK/fit-at-ctx enrichment in the lane.
+
+**O6 — Documentation Synchronization (S, parallel with 0P):**
+
+* Bring `README.md`, `ROADMAP.md`, `FUTURE.md`, and architecture docs (`docs/WORKSPACE_CANVAS.md`, `feature-parity.md`, `AGENTS.md`) into alignment with the actual WORKSPACE architecture. README's conceptual model (HUD/VAULT/SIGNALS/MARKET/LOADOUTS/CONSOLE stack table + "Views" section) has drifted behind `App.tsx VIEWS = ["WORKSPACE","VAULT","SIGNALS","FEEDS","MARKET","DOWNLOADS","COMPARE","BENCH"]` and the `?legacy=1` legacy flag. Clearly distinguish: current functionality, legacy behind the flag, active roadmap work (Phases 0R/0P/1–4), and speculative future work (FUTURE.md / Phase 9). Do not rewrite the entire README — surgically update the Stack table, Views list, and any stale terminology, and ensure `ROADMAP.md` ↔ `FUTURE.md` cross-references are not duplicating.
 
 **O5+ (Horizon 2)** deferred: background polling timers, notifications (HUD badge + tray), caching/ETag/429 per source — not in this MVP block.
 
@@ -529,14 +594,17 @@ Which pieces already exist: download `.part`+resume, metadata inspect, fit, deri
 
 | Feature | Impact | Effort | Risk | Priority | Notes |
 |--------|:------:|:------:|:----:|:--------:|-------|
+| **0R process ownership & reaping** | H | S | High | **P0** | Race-free `Child` ownership, stop-vs-waiter, `kill_all` reaping; PDEATHSIG + process-group preserved; regression gate |
+| **0P host portability & assumption hardening** | H | XS | Low | **P1** | Remove `/home/deviant` + hardcoded fallback; test taxonomy pure/host/hw → fresh clone never inherits dev machine |
+| **0D docs synchronization (README/ROADMAP/FUTURE/WORKSPACE_CANVAS)** | M | XS | Low | P1 | Align WORKSPACE architecture (`WORKSPACE` + `?legacy=1`), distinguish current/legacy/active/future |
 | Phase 0 stabilize (schema_version, watchlist fix, integrity) | H | XS | Low | **P0 DONE** | `schema_version` guard + `meta` table landed; watchlist/integrity remain |
-| Phase 1 measure enrich (ttft/prompt_tps/hw link) | H | S | Med | **P0** | Unlocks workloads+hardware; additive migrations |
-| Phase 2 workloads + deterministic evaluators | H | M | Med | **P0** | The workload unlock; keep lexical flagged |
+| Phase 1 measure enrich + provenance (staged) | H | S | Med | **P0** | Unlocks workloads+hardware; staged provenance, never show a number without explainability |
+| Phase 2 workloads + real evaluation layer | H | M | Med | **P0** | The workload unlock; 5 dimensions separated, deterministic+human, EchoRunner/Human remain |
 | O1 feeds foundation (Source+releases catalog) — **DONE** | H | S | Low | P0 DONE | Landed this session |
 | O2 relevance rank | H | S | Low | P0 | Makes Market personal |
-| O3 settings+audit typed API | H | S | Low | P0 | Agent safety prerequisite |
+| O3 settings+audit → typed semantic settings | H | S | Low | P0 | Generic store preserved, typed validation at API layer; agent safety prerequisite |
 | Phase 3 hardware profile + VRAM trust tiers | H | S | Med | P1 | Gives bench provenance; defer if tight |
-| Phase 4 deterministic recommend | H | S | Low | P1 | Explainable sentences; no ML |
+| Phase 4 recommend (downstream, explainable) | H | S | Low | P1 | `DISCOVER→…→RECOMMEND` pipeline, explainable rank over actual evidence |
 | Phase 6 one-click experiment pipeline | H | M | Med | P1 | Closes the loop; depends on 1–2 |
 | Phase 7a–b agent READ/ANALYZE/MODIFY | M | S | Low | P1 | Safe agent value; shell-free |
 | O4 HUD what changed lane | M | S | Low | P1 | FEEDS view + recency gate + feeds→download handoff landed; DISK/fit-at-ctx enrichment open |
@@ -558,7 +626,8 @@ Which pieces already exist: download `.part`+resume, metadata inspect, fit, deri
 | `gguf.rs` 699 parked | Known debt, TRUNC-truncated header heuristic; GQA fix landed last session but header fetch still 2 MiB cap without telemetry | Fit correctness | On next touching change, split parser-vs-Range plumbing only; keep parser pure. No rewrite without measured bug | Low | Parked tripwire already |
 | `matrix_runs`/`bench` schema | History survival not guaranteed without `PRAGMA` + ALTER guard | Lost history | Add `schema_version` + `ensure_column` helper before Phase 1 extends | Low | **RESOLVED** — `schema_version` gate + `ensure_column` landed; `role_id` added additively (Phase 8c) |
 | `inference.rs` 253 lines | OpenAI probe conflates sampling/ttft/reporting; engine protocol is registry but sampling params scattered | Measure enrich | Introduce `Sampling { temp, top_p, ... }` + `GenSample { prompt_tps, ttft_ms, ... }` returned from harness; pure struct | Med | Extend `GenSample` backward-compat (Option new fields) |
-| `Console` opencode passthrough | Shell-lean agent with ambient perms | Block Phase 7 safety | Introduce `agent_tools` Tauri registry (READ/ANALYZE typed verbs) before granting EXECUTE | Low→High if skipped | Gate EXECUTE behind `allow_execute` flag + audit |
+| `Console` opencode passthrough | Shell-lean agent with ambient perms + waiter/`SESSIONS` race | Block Phase 7 safety + leaks GPU | Introduce `agent_tools` Tauri registry (READ/ANALYZE typed verbs) before granting EXECUTE; fix 0R ownership lifecycle (`Child` handoff, stop-vs-waiter, `kill_all` reaping) | Low→High if skipped | Gate EXECUTE behind `allow_execute` flag + audit; 0R regression gate must pass first |
+| `opencode_sync` fallback | Silent `ollama/qwen3.8:27b` on empty DB | Fresh clone inherits dev machine | Explicit "no active model/profile" state or discovered model; remove hardcoded fallback | Low | Part of 0P; pure test is `cargo test` without models |
 
 No rewrite of `fit` estimation, `scanner`, or `systemd` generation — they are the moat.
 
@@ -612,6 +681,14 @@ Cheap habits that keep future options open *without* building anything:
 *Smallest genuinely useful loop — not "every feature shipped":*
 
 > **User can, for a named workload on their actual hardware, answer "what should I use and why" from measured evidence.**
+
+*Guardrail restated:* do not add another major UI surface until this loop is trustworthy:
+
+```
+Select workload → Select candidate models → Execute → Measure → Evaluate → Compare → Explain winner → Recommend
+```
+
+Future UI work strengthens this loop. A new tab that does not make this loop more credible is deferred — even if demoable.
 
 * User picks **Workload = coding** (Phase 2 seed) and runs `deck bench matrix --model ~/models/qwen --workload coding` (or Tauri Compare with workload picker).
 * Benchmarks record raw `output` + deterministic `passed/score` + `ttft_ms/prompt_tps` + `hardware_profile_id` + `engine_version` (Phases 1–3).

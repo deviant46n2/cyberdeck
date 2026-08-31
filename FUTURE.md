@@ -14,10 +14,16 @@ capture, plus the post-MVP depth of partially-covered ideas.
 
 | Idea | Where it lives |
 |------|----------------|
-| Reproducible experiments / provenance | `ROADMAP.md` Phase 1 (`model_rev`, `engine_version`, `sampling_json`, `workload_id`) + Phase 3 (`hardware_profiles`) |
+| Reproducible experiments / provenance | `ROADMAP.md` Phase 1 — **staged provenance** (`model identity/rev/quant`, `engine/version`, `hardware profile`, `workload`, `ctx`, `sampling`, `prompt/gen tokens`, `prompt_tps`/`tok_s`/`TTFT`/`wall_ms`, `peak VRAM`, `verdict`, `evaluator/version`, `measurement method`, `workflow/run id`; guiding principle: never show a number without being able to explain what produced it) + Phase 3 (`hardware_profiles` + `engine_version`) |
 | Hardware-aware feasibility | Already exists: `fit.rs` estimate + `derive_loadout` + BringUp test-port verify; refined by Phase 1 `peak_vram_mb` + Phase 3 VERIFIED/MEASURED tiers |
 | Experiment failure classification | Phase 6 "Failure is data" (`verdict=CRASH/OOM`, `⚠ CRASH` not silent zero) |
-| Agent sandboxing / permissions | Phase 7 permission ladder (READ/ANALYZE/MODIFY/EXECUTE/AUTONOMOUS) + O3 audit log |
+| Agent sandboxing / permissions | Phase 7 permission ladder (READ/ANALYZE/MODIFY/EXECUTE/AUTONOMOUS) + O3 audit log (now hardening toward typed semantic settings: `default engine/model`, `ctx reserve`, `download concurrency`, `auto-bench`, `agent permission`, `resource limits`) |
+| Process lifecycle / crash safety | `ROADMAP.md` Phase 0R — every `Child` has an explicit owner, `opencode_stop` vs waiter race closed, `kill_all` reaps, `PDEATHSIG` + process-group + `console_reaper.rs` `AGENT_MARKER` preserved; regression gate (normal/stop/group/shutdown/crash) |
+| Host portability | `ROADMAP.md` Phase 0P — no `/home/deviant` literals, no silent `ollama/qwen3.8:27b` fallback, test taxonomy pure/host/hw (fresh clone never inherits dev machine) |
+| Evaluation dimensions | `ROADMAP.md` Phase 2 — five separate dimensions (`performance`, `quality`, `task success`, `reliability/failure`, `resource`) never collapsed to one opaque score; deterministic + human evaluators coexist; `EchoRunner`/`Human` remain as deterministic infra |
+| Recommendation as evidence pipeline | `ROADMAP.md` Phase 4 — downstream `DISCOVER→FIT→RUN→MEASURE→EVALUATE→COMPARE→RECOMMEND` over actual bench/workload/hardware/quality data, explainable rank not opaque "AI recommends" |
+| Core experimental loop gate | `ROADMAP.md` Strategic guardrail + MVP guardrail — `Select workload → Select candidates → Execute → Measure → Evaluate → Compare → Explain → Recommend`; no new major UI surface until this loop is trustworthy |
+| Documentation alignment | `ROADMAP.md` O6 — `README`/`ROADMAP`/`FUTURE`/`docs/WORKSPACE_CANVAS.md` aligned to WORKSPACE (`App.tsx VIEWS` + `?legacy=1`) and current/legacy/active/future distinction |
 | Event/streaming of runs | Landed: `console.rs` opencode streaming + `wf-*` events (Phase 8d) |
 | Real-world agent benchmarking | Phase 2 repo-local tasks (`pytest`, `cargo test`, `patch_apply`) + Phase 8 workflows + per-role bench (8e) |
 | Blind model trials | **Already implemented** — `deck bench compare` hides candidates as `trial-NNN` |
@@ -142,3 +148,9 @@ No model blobs in this format.
 *This backlog is deliberately selective: most "roadmap-shaped" ideas already
 live in `ROADMAP.md`. If an idea proves valuable during core-loop use, promote
 it to a roadmap phase then — not before.*
+
+---
+
+## 2026-08-31 audit — what moved to ROADMAP.md
+
+The audit that produced `Phase 0R` (process ownership & reaping), `Phase 0P` (host portability & test taxonomy), the staged provenance principle in `Phase 1`, the five-dimension evaluation invariant in `Phase 2`, the `DISCOVER→…→RECOMMEND` downstream placement in `Phase 4`, the typed semantic settings hardening in `O3`, and `O6` docs synchronization was a **planning-only** pass: no source code was changed. `FUTURE.md` itself was not expanded with new speculative items — the audit findings were deliberately placed on the active roadmap so they gate the core experimental loop, rather than being parked as future ideas.
