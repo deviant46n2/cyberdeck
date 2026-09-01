@@ -89,8 +89,16 @@ fn write_opencode_blocks(
     binding: &HarnessBinding,
 ) -> Option<Value> {
     let mut obj = doc.as_object().cloned().unwrap_or_default();
+    // The apiKey env reference (not the secret — opencode expands {env:VAR}
+    // at runtime) bridges cyberdeck's keychain-first convention to the
+    // harness: opencode cannot read our OS keychain, so the conventional
+    // <PROVIDER>_API_KEY variable is the only credential channel. Missing
+    // env surfaces as the provider's own auth error, never a stored key.
     let block = json!({
-        "options": { "baseURL": provider.base_url },
+        "options": {
+            "baseURL": provider.base_url,
+            "apiKey": format!("{{env:{}}}", crate::keys::env_var_name(&provider.id)),
+        },
         "models": { binding.model_id.clone(): { "name": binding.model_id.clone() } },
     });
     let prov = obj.entry("provider".to_string()).or_insert_with(|| json!({}));
@@ -186,6 +194,11 @@ mod tests {
         assert_eq!(doc["model"], json!("nim/deepseek-v4-pro"));
         assert_eq!(doc["small_model"], json!("nim/deepseek-v4-pro"));
         assert_eq!(doc["provider"]["nim"]["options"]["baseURL"], json!(provider.base_url));
+        assert_eq!(
+            doc["provider"]["nim"]["options"]["apiKey"],
+            json!("{env:NIM_API_KEY}"),
+            "env reference, never a literal key"
+        );
     }
 
     #[test]

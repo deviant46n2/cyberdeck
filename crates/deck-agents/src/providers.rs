@@ -28,34 +28,40 @@ pub fn fetch_models(p: &CloudProvider, api_key: Option<&str>) -> Result<Vec<Prov
 }
 
 fn gemini_static_models() -> Vec<ProviderModel> {
+    // Current generation as of 2026-09: Google retired the 1.5/2.5 family for
+    // new API keys (404 "no longer available to new users"), so the no-key
+    // fallback must list models new keys can actually call. Verified live
+    // against the OpenAI-compatible endpoint; context figures 1M flash-class,
+    // None where unverified. With a key stored, the live catalog supersedes
+    // this list entirely (see fetch_models).
     vec![
         ProviderModel {
-            id: "gemini-1.5-flash".into(),
-            name: "Gemini 1.5 Flash".into(),
+            id: "gemini-3.6-flash".into(),
+            name: "Gemini 3.6 Flash".into(),
             context: Some(1_048_576),
             free: true,
         },
         ProviderModel {
-            id: "gemini-1.5-flash-8b".into(),
-            name: "Gemini 1.5 Flash-8B".into(),
+            id: "gemini-3.5-flash".into(),
+            name: "Gemini 3.5 Flash".into(),
             context: Some(1_048_576),
             free: true,
         },
         ProviderModel {
-            id: "gemini-1.5-pro".into(),
-            name: "Gemini 1.5 Pro".into(),
-            context: Some(2_097_152),
-            free: true,
-        },
-        ProviderModel {
-            id: "gemini-2.0-flash-exp".into(),
-            name: "Gemini 2.0 Flash (Experimental)".into(),
+            id: "gemini-3.5-flash-lite".into(),
+            name: "Gemini 3.5 Flash-Lite".into(),
             context: Some(1_048_576),
             free: true,
         },
         ProviderModel {
-            id: "gemini-2.0-flash-lite-preview".into(),
-            name: "Gemini 2.0 Flash-Lite Preview".into(),
+            id: "gemini-3.1-pro-preview".into(),
+            name: "Gemini 3.1 Pro (Preview)".into(),
+            context: None,
+            free: false,
+        },
+        ProviderModel {
+            id: "gemini-3.1-flash-lite".into(),
+            name: "Gemini 3.1 Flash-Lite".into(),
             context: Some(1_048_576),
             free: true,
         },
