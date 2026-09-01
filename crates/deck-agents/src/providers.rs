@@ -16,8 +16,50 @@ use crate::model::{CloudProvider, ProviderModel};
 /// `api_key` is optional; providers differ on whether listing requires auth.
 pub fn fetch_models(p: &CloudProvider, api_key: Option<&str>) -> Result<Vec<ProviderModel>> {
     let url = format!("{}/models", p.base_url.trim_end_matches('/'));
-    let body = fetch_url(&url, api_key, 20)?;
-    parse_models_response(&body, &p.id)
+    match fetch_url(&url, api_key, 20) {
+        Ok(body) => parse_models_response(&body, &p.id),
+        Err(e) if p.id == "gemini" && e.to_string().contains("404") => {
+            // Google AI Studio OpenAI-compatible endpoint doesn't support /v1/models.
+            // Return a static list of known Gemini models.
+            Ok(gemini_static_models())
+        }
+        Err(e) => Err(e),
+    }
+}
+
+fn gemini_static_models() -> Vec<ProviderModel> {
+    vec![
+        ProviderModel {
+            id: "gemini-1.5-flash".into(),
+            name: "Gemini 1.5 Flash".into(),
+            context: Some(1_048_576),
+            free: true,
+        },
+        ProviderModel {
+            id: "gemini-1.5-flash-8b".into(),
+            name: "Gemini 1.5 Flash-8B".into(),
+            context: Some(1_048_576),
+            free: true,
+        },
+        ProviderModel {
+            id: "gemini-1.5-pro".into(),
+            name: "Gemini 1.5 Pro".into(),
+            context: Some(2_097_152),
+            free: true,
+        },
+        ProviderModel {
+            id: "gemini-2.0-flash-exp".into(),
+            name: "Gemini 2.0 Flash (Experimental)".into(),
+            context: Some(1_048_576),
+            free: true,
+        },
+        ProviderModel {
+            id: "gemini-2.0-flash-lite-preview".into(),
+            name: "Gemini 2.0 Flash-Lite Preview".into(),
+            context: Some(1_048_576),
+            free: true,
+        },
+    ]
 }
 
 /// Parse the OpenAI-compatible `/v1/models` JSON body into provider models.
