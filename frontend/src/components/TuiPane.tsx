@@ -26,7 +26,14 @@ export default function TuiPane({
   onExitedRef.current = onExited;
 
   useEffect(() => {
-    if (!hostRef.current) return;
+    if (!hostRef.current) {
+      console.error(`[TuiPane ${pane.id}] hostRef.current is null — cannot init xterm`);
+      return;
+    }
+    const hostEl = hostRef.current;
+    const rect = hostEl.getBoundingClientRect();
+    console.log(`[TuiPane ${pane.id}] mounting — host size: ${rect.width}×${rect.height}`);
+
     const term = new Terminal({
       cursorBlink: true,
       fontFamily: '"JetBrains Mono", "Fira Code", monospace',
@@ -35,20 +42,36 @@ export default function TuiPane({
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
-    term.open(hostRef.current);
+    term.open(hostEl);
     fit.fit();
+    console.log(`[TuiPane ${pane.id}] xterm opened — cols=${term.cols} rows=${term.rows} host=${hostEl.clientWidth}×${hostEl.clientHeight}`);
+    if (term.cols === 0 || term.rows === 0) {
+      console.error(`[TuiPane ${pane.id}] FitAddon returned 0 dimensions! host clientSize=${hostEl.clientWidth}×${hostEl.clientHeight} offsetSize=${hostEl.offsetWidth}×${hostEl.offsetHeight}`);
+    }
     termRef.current = term;
     fitRef.current = fit;
+
+    let dataCount = 0;
+    let byteCount = 0;
 
     // raw PTY bytes for this pane → terminal
     let unData: (() => void) | undefined;
     let unExited: (() => void) | undefined;
     listen<{ id: string; bytes: number[] }>("tui-data", (e) => {
       if (e.payload.id !== pane.id) return;
+      dataCount++;
+      byteCount += e.payload.bytes.length;
+      if (dataCount <= 3) {
+        console.log(`[TuiPane ${pane.id}] tui-data #${dataCount}: ${e.payload.bytes.length} bytes (total ${byteCount})`);
+      }
       term.write(new Uint8Array(e.payload.bytes));
-    }).then((f) => (unData = f));
+    }).then((f) => {
+      unData = f;
+      console.log(`[TuiPane ${pane.id}] tui-data listener registered`);
+    });
     listen<{ id: string; code: number }>("tui-exited", (e) => {
       if (e.payload.id !== pane.id) return;
+      console.log(`[TuiPane ${pane.id}] tui-exited code=${e.payload.code} (received ${dataCount} data events, ${byteCount} bytes total)`);
       onExitedRef.current(pane.id);
     }).then((f) => (unExited = f));
 
@@ -58,6 +81,7 @@ export default function TuiPane({
     });
 
     return () => {
+      console.log(`[TuiPane ${pane.id}] unmounting — received ${dataCount} data events, ${byteCount} bytes total`);
       d.dispose();
       unData?.();
       unExited?.();
@@ -70,8 +94,16 @@ export default function TuiPane({
     const fit = fitRef.current;
     const term = termRef.current;
     if (!fit || !term) return;
-    const ro = new ResizeObserver(() => {
+    let resizeCount = 0;
+    const ro = new ResizeObserver((entries) => {
+      resizeCount++;
+      const entry = entries[0];
+      const w = entry?.contentRect.width ?? 0;
+      const h = entry?.contentRect.height ?? 0;
       fit.fit();
+      if (resizeCount <= 3 || term.cols === 0 || term.rows === 0) {
+        console.log(`[TuiPane ${pane.id}] resize #${resizeCount}: host=${w.toFixed(0)}×${h.toFixed(0)} → cols=${term.cols} rows=${term.rows}`);
+      }
       void api.tuiResize(pane.id, term.cols, term.rows);
     });
     if (hostRef.current) ro.observe(hostRef.current);

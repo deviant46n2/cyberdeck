@@ -195,6 +195,12 @@
         "lines": 588,
         "kind": "accepted",
         "reason": "Single sidebar companion component: the SVG pet (whole/legs/eyes/pupils/mouth/cheeks groups) + weighted idle-animation scheduler, Minecraft steak/heart feed HUD with cooldown, and the always-visible SYSTEM telemetry meters \u2014 one cohesive always-on sidebar block. Splitting would scatter the pet's shared mood/tint state and force prop-drilling across one sidebar region. Mirrors the accepted Hud/Bringup/Vault/Canvas view entries. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
+      },
+      {
+        "path": "crates/deck-core/src/store/sessions.rs",
+        "lines": 629,
+        "kind": "parked",
+        "reason": "PARKED over 600 hard limit (was 599 before security hardening of update_session to use parameterized queries instead of SQL string interpolation). One cohesive session persistence module: schema, CRUD, handoff generation with timestamp formatting. The parameterized query rewrite added ~30 lines of safe dynamic SQL building. Splitting handoff generation would separate it from the session data it reads; splitting timestamp utils would create a one-function module. Revisit if more session features are added."
       }
     ],
     "artifact-hygiene": [],

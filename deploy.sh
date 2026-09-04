@@ -4,18 +4,16 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-echo "==> building frontend…"
-npm --prefix frontend run build --silent
-
-echo "==> building release binary…"
-cargo build --release -p cyberdeck --quiet
+echo "==> building release binary (with embedded frontend)…"
+cargo tauri build --no-bundle 2>&1 | tail -5
 
 INSTALL_DIR="$HOME/.local/bin"
 DESKTOP_DIR="$HOME/.local/share/applications"
 
 # Install binary
 mkdir -p "$INSTALL_DIR"
-cp target/release/cyberdeck "$INSTALL_DIR/cyberdeck"
+cp target/release/cyberdeck "$INSTALL_DIR/cyberdeck.tmp"
+mv -f "$INSTALL_DIR/cyberdeck.tmp" "$INSTALL_DIR/cyberdeck"
 chmod +x "$INSTALL_DIR/cyberdeck"
 
 # Install icon
@@ -37,4 +35,3 @@ StartupWMClass=cyberdeck
 EOF
 
 echo "==> deployed: $INSTALL_DIR/cyberdeck ($(stat -c%s "$INSTALL_DIR/cyberdeck") bytes)"
-echo "==> desktop entry: $DESKTOP_DIR/cyberdeck.desktop"

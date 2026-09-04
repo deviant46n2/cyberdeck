@@ -17,6 +17,7 @@ export default function TuiWindow({
   role,
   onStartConnect,
   connecting,
+  zoom,
 }: {
   pane: { id: string; dir: string };
   pos: { x: number; y: number };
@@ -28,10 +29,13 @@ export default function TuiWindow({
   role?: string;
   onStartConnect?: (id: string) => void;
   connecting?: boolean;
+  zoom?: number;
 }) {
-  const [size, setSize] = useState<{ w: number; h: number }>({ w: 900, h: 520 });
+  const [size, setSize] = useState<{ w: number; h: number }>({ w: 780, h: 480 });
   const [z, setZ] = useState(1);
   const ref = useRef<HTMLDivElement>(null);
+  const zoomRef = useRef(zoom ?? 1);
+  zoomRef.current = zoom ?? 1;
 
   // bring to front on focus
   const raise = () => {
@@ -45,7 +49,8 @@ export default function TuiWindow({
     const sx = e.clientX, sy = e.clientY;
     const orig = { ...pos };
     const move = (ev: PointerEvent) => {
-      onPos({ x: orig.x + (ev.clientX - sx), y: orig.y + (ev.clientY - sy) });
+      const z = zoomRef.current;
+      onPos({ x: orig.x + (ev.clientX - sx) / z, y: orig.y + (ev.clientY - sy) / z });
     };
     const up = () => {
       window.removeEventListener("pointermove", move);
@@ -62,7 +67,8 @@ export default function TuiWindow({
     const sx = e.clientX, sy = e.clientY;
     const orig = { ...size };
     const move = (ev: PointerEvent) => {
-      setSize({ w: Math.max(320, orig.w + (ev.clientX - sx)), h: Math.max(200, orig.h + (ev.clientY - sy)) });
+      const z = zoomRef.current;
+      setSize({ w: Math.max(320, orig.w + (ev.clientX - sx) / z), h: Math.max(200, orig.h + (ev.clientY - sy) / z) });
     };
     const up = () => {
       window.removeEventListener("pointermove", move);

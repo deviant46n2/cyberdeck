@@ -26,6 +26,7 @@ mod portmap;
 mod profiles;
 mod recommend;
 mod scan;
+pub mod sessions;
 mod settings;
 mod test;
 mod workflow;
@@ -92,6 +93,11 @@ pub use compare::{CandidateStanding, CompareReport, ScoredTrial, compare_run};
 pub use console::{OpDone, OpLine, OpStarted, kill_all, opencode_run, opencode_stop};
 pub use console_reaper::reap_orphans;
 pub use tui::{tui_resize, tui_spawn, tui_stop, tui_write};
+pub use sessions::{
+    SessionView, create_session, delete_session, generate_handoff, get_session,
+    get_session_events, list_sessions, mark_session_complete, mark_session_error,
+    mark_session_running, mark_session_stopped,
+};
 pub use downloads::{
     DownloadDone, DownloadErr, DownloadEvt, DownloadStarted, download_cancel, download_remove,
     download_start, download_states_json, DownloadState,

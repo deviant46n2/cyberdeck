@@ -344,7 +344,8 @@ export const opencodeRun = (p: {
   model: string;
   engine: string;
   ctx: number;
-}) => invoke<void>("opencode_run", p);
+  sessionId?: string;
+}) => invoke<void>("opencode_run", { ...p, sessionId: p.sessionId ?? null });
 export const opencodeStop = (id: string) =>
   invoke<void>("opencode_stop", { id });
 
@@ -661,3 +662,57 @@ export const secretUnset = (providerId: string) =>
   invoke<void>("secret_unset", { providerId });
 export const secretCheck = (providerId: string) =>
   invoke<SecretView>("secret_check", { providerId });
+
+// --- agent sessions ---
+
+export interface SessionView {
+  id: string;
+  project_dir: string;
+  agent: string;
+  model: string;
+  task: string;
+  status: string;
+  created_at: number;
+  started_at: number | null;
+  completed_at: number | null;
+  auto_mode: boolean;
+  ctx_size: number;
+  exit_code: number | null;
+  error_message: string | null;
+  has_handoff: boolean;
+}
+
+export interface SessionEvent {
+  id: number;
+  session_id: string;
+  timestamp: number;
+  kind: string;
+  stream: string;
+  text: string;
+}
+
+export const listSessions = (status?: string | null, limit = 50) =>
+  invoke<SessionView[]>("list_sessions", { status: status ?? null, limit });
+export const getSession = (id: string) =>
+  invoke<SessionView | null>("get_session", { id });
+export const createSession = (p: {
+  projectDir: string;
+  agent: string;
+  model: string;
+  task: string;
+  autoMode: boolean;
+  ctxSize: number;
+}) => invoke<string>("create_session", {
+  projectDir: p.projectDir,
+  agent: p.agent,
+  model: p.model,
+  task: p.task,
+  autoMode: p.autoMode,
+  ctxSize: p.ctxSize,
+});
+export const generateHandoff = (sessionId: string) =>
+  invoke<string>("generate_handoff", { sessionId });
+export const getSessionEvents = (sessionId: string) =>
+  invoke<SessionEvent[]>("get_session_events", { sessionId });
+export const deleteSession = (id: string) =>
+  invoke<void>("delete_session", { id });

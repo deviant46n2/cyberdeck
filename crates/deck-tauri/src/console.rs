@@ -7,6 +7,8 @@ use serde::{Serialize, Deserialize};
 use tauri::Emitter;
 
 use crate::console_reaper::AGENT_MARKER;
+use crate::sessions;
+use deck_core::store::SessionStatus;
 
 /// `PR_SET_PDEATHSIG(SIGKILL)`: the agent dies the moment its parent (this app)
 /// dies, by ANY exit path — clean shutdown, crash, or OOM-kill. Combined with
@@ -82,6 +84,9 @@ struct Session {
     pid: u32,
     engine: Engine,
     child: std::sync::Mutex<Option<std::process::Child>>,
+    /// Set by `opencode_stop` so the waiter thread knows not to overwrite
+    /// the DB status (stopped vs. complete/error race).
+    stopped: std::sync::atomic::AtomicBool,
 }
 
 static SESSIONS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, Session>>> =
@@ -89,12 +94,14 @@ static SESSIONS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<
 static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 /// Streams one session pipe (stdout or stderr) as `opencode-output` events.
-/// Runs until the pipe closes.
+/// Runs until the pipe closes. If `persist` is true, each line is also
+/// written to the session_events table for handoff generation.
 fn spawn_opcode_reader<R: std::io::Read + Send + 'static>(
     app: tauri::AppHandle,
     session: String,
     stream: &'static str,
     pipe: R,
+    persist: bool,
 ) {
     std::thread::spawn(move || {
         let reader = std::io::BufReader::new(pipe);
@@ -104,9 +111,13 @@ fn spawn_opcode_reader<R: std::io::Read + Send + 'static>(
                 OpLine {
                     session: session.clone(),
                     stream: stream.into(),
-                    text: line,
+                    text: line.clone(),
                 },
             );
+            // Persist to DB for handoff generation.
+            if persist {
+                sessions::emit_session_event(&app, &session, "line", stream, &line);
+            }
         }
     });
 }
@@ -118,6 +129,9 @@ fn spawn_opcode_reader<R: std::io::Read + Send + 'static>(
 /// `auto` maps to opencode's `--auto` (auto-approve permissions) — required for
 /// a headless coding session, but it WILL let the agent modify files without
 /// prompting. The UI must surface that trade-off.
+///
+/// If `session_id` is provided, the session is tracked in the DB with status
+/// transitions and persisted output events for handoff generation.
 pub fn opencode_run(
     app: &tauri::AppHandle,
     prompt: &str,
@@ -126,11 +140,20 @@ pub fn opencode_run(
     engine: Engine,
     model: Option<&str>,
     ctx: u32,
+    session_id: Option<&str>,
 ) -> anyhow::Result<()> {
-    let id = format!(
-        "sess-{}",
-        SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-    );
+    let id = session_id.map(String::from).unwrap_or_else(|| {
+        format!(
+            "sess-{}",
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        )
+    });
+
+    // If a session_id was provided, mark it as running in the DB.
+    // emit_session_status handles the DB write + frontend event.
+    if session_id.is_some() {
+        sessions::emit_session_status(app, &id, SessionStatus::Running, None, None);
+    }
     let mut cmd = std::process::Command::new("opencode");
     cmd.arg("run").arg("--dir").arg(dir);
     cmd.env(AGENT_MARKER, &id);
@@ -172,6 +195,7 @@ pub fn opencode_run(
             pid,
             engine,
             child: std::sync::Mutex::new(Some(child)),
+            stopped: std::sync::atomic::AtomicBool::new(false),
         },
     );
 
@@ -187,20 +211,26 @@ pub fn opencode_run(
         Err(e) => eprintln!("[deck] opencode_run: EMIT FAILED id={id}: {e}"),
     }
 
-    spawn_opcode_reader(app.clone(), id.clone(), "stdout", stdout);
-    spawn_opcode_reader(app.clone(), id.clone(), "stderr", stderr);
+    spawn_opcode_reader(app.clone(), id.clone(), "stdout", stdout, session_id.is_some());
+    spawn_opcode_reader(app.clone(), id.clone(), "stderr", stderr, session_id.is_some());
 
     let app_done = app.clone();
     let id_done = id.clone();
+    let has_session = session_id.is_some();
     std::thread::spawn(move || {
         // Take the child OUT from under the lock, then drop the guard: waiting
         // on the session must not hold SESSIONS, or opencode_stop (and the
         // next spawn) would block for the whole session runtime instead of
         // being able to look up the pid and TERM→KILL it.
-        let child = {
+        let (child, stopped_flag) = {
             let mut g = SESSIONS.lock().unwrap();
-            g.get_mut(&id_done)
-                .and_then(|s| s.child.lock().unwrap().take())
+            let session = g.get_mut(&id_done);
+            let stopped = session
+                .as_ref()
+                .map(|s| s.stopped.load(std::sync::atomic::Ordering::SeqCst))
+                .unwrap_or(false);
+            let child = session.and_then(|s| s.child.lock().unwrap().take());
+            (child, stopped)
         };
         let code = match child {
             Some(mut c) => c.wait().map(|s| s.code().unwrap_or(-1)).unwrap_or(-1),
@@ -208,6 +238,25 @@ pub fn opencode_run(
         };
         eprintln!("[deck] opencode_run: session {id_done} exited code={code}");
         SESSIONS.lock().unwrap().remove(&id_done);
+
+        // Update session status in DB and emit event — but only if
+        // opencode_stop hasn't already marked it as stopped. The stop
+        // caller writes "stopped" first; the waiter must not clobber it
+        // with "complete" or "error".
+        if has_session && !stopped_flag {
+            if code == 0 {
+                sessions::emit_session_status(&app_done, &id_done, SessionStatus::Complete, Some(code), None);
+            } else {
+                sessions::emit_session_status(
+                    &app_done,
+                    &id_done,
+                    SessionStatus::Error,
+                    Some(code),
+                    Some(&format!("exit code {code}")),
+                );
+            }
+        }
+
         let _ = app_done.emit(
             "opencode-done",
             OpDone {
@@ -223,12 +272,18 @@ pub fn opencode_run(
 /// Stop a single session by id (SIGTERM, escalating to SIGKILL since `opencode
 /// run` ignores TERM and keeps streaming — observed twice). Unknown ids are
 /// ignored. Multiple sessions can run; this ends only the named one.
+/// If the session was tracked in the DB, it's marked as stopped.
 pub fn opencode_stop(id: &str) -> anyhow::Result<()> {
-    let pid = SESSIONS.lock().unwrap().get(id).map(|s| s.pid);
-    if let Some(pid) = pid {
-        term_then_kill(pid);
+    // Set the stopped flag FIRST so the waiter thread sees it before we
+    // write "stopped" to the DB — prevents the waiter from overwriting
+    // with "complete" or "error" after we mark stopped.
+    if let Some(session) = SESSIONS.lock().unwrap().get(id) {
+        session.stopped.store(true, std::sync::atomic::Ordering::SeqCst);
+        term_then_kill(session.pid);
     }
     SESSIONS.lock().unwrap().remove(id);
+    // Mark as stopped in DB if it exists.
+    let _ = sessions::mark_session_stopped(id);
     Ok(())
 }
 

@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import * as api from "../api";
+import * as sessionStore from "../lib/sessions";
 import { latestBySlot, slotKey } from "../lib/portmap";
 import TuiWindow from "../components/TuiWindow";
+import SessionPanel from "../components/SessionPanel";
 import LoadoutEditor, { defaultProfile } from "./LoadoutEditor";
 
 const ENGINE_NODES: { engine: string; host: string; port: number }[] = [
@@ -52,10 +54,20 @@ export default function Workspace({
   const [ctx, setCtx] = useState(32768);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [status, setStatus] = useState<api.EngineStatus[]>([]);
-  const [sessions, setSessions] = useState<{ id: string; prompt: string; log: string[]; running: boolean; model?: string }[]>([]);
+  // Live opencode_run sessions — tracks running state + canvas card positions.
+  // Session history & persistence use sessionStore (DB-backed) instead.
+  const [liveSessions, setLiveSessions] = useState<{ id: string; prompt: string; log: string[]; running: boolean; model?: string }[]>([]);
   const [panes, setPanes] = useState<{ id: string; dir: string; pos: { x: number; y: number } }[]>([]);
   const cardPos = useRef<Map<string, { x: number; y: number }>>(new Map());
   const sessionCountRef = useRef(0);
+  // Canvas zoom + pan
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const zoomRef = useRef(1);
+  const panRef = useRef({ x: 0, y: 0 });
+  const spaceHeld = useRef(false);
+  useEffect(() => { zoomRef.current = zoom; }, [zoom]);
+  useEffect(() => { panRef.current = pan; }, [pan]);
   const [residents, setResidents] = useState<api.PortMapSlot[]>([]);
   const [benchBySlot, setBenchBySlot] = useState<Map<string, { tps: number; ctx: number; model: string; at: number }>>(() => new Map());
   const sessionsRef = useRef<HTMLDivElement>(null);
@@ -105,12 +117,57 @@ export default function Workspace({
   const [connectingFrom, setConnectingFrom] = useState<string | null>(null);
   const [humanGate, setHumanGate] = useState<{ code: string; from: string; to: string } | null>(null);
   const [wfTuiMap, setWfTuiMap] = useState<Map<string, string>>(new Map());
+  // Session panel: the selected session for detail view.
+  const [selectedSession, setSelectedSession] = useState<string | null>(null);
+  const [sessionList, setSessionList] = useState<sessionStore.Session[]>([]);
+
+  // Initialize the session store on mount.
+  useEffect(() => {
+    sessionStore.init();
+    void sessionStore.loadSessions();
+    const unsub = sessionStore.subscribe(() => {
+      setSessionList(sessionStore.getSnapshot());
+    });
+    return unsub;
+  }, []);
   const wfTuiMapRef = useRef<Map<string, string>>(new Map());
   useEffect(() => { wfTuiMapRef.current = wfTuiMap; }, [wfTuiMap]);
   const [activeWfNode, setActiveWfNode] = useState<string | null>(null);
   const [lastMessage, setLastMessage] = useState<string>("");
   const nodeOutputsRef = useRef<Map<string, string>>(new Map());
-  useEffect(() => { const h = (e: KeyboardEvent) => { if (e.key === "Escape") setConnectingFrom(null); }; window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h); }, []);
+  useEffect(() => { const h = (e: KeyboardEvent) => { if (e.key === "Escape") setConnectingFrom(null); if (e.key === " ") { e.preventDefault(); spaceHeld.current = true; } }; const u = (e: KeyboardEvent) => { if (e.key === " ") spaceHeld.current = false; }; window.addEventListener("keydown", h); window.addEventListener("keyup", u); return () => { window.removeEventListener("keydown", h); window.removeEventListener("keyup", u); }; }, []);
+
+  // Wheel zoom — Ctrl+scroll zooms toward cursor
+  useEffect(() => {
+    const el = sessionsRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      // Ctrl+scroll or space-held = pan
+      if (spaceHeld.current || e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const dx = e.deltaX || 0;
+        const dy = e.deltaY || 0;
+        setPan((p) => ({ x: p.x - dx, y: p.y - dy }));
+        return;
+      }
+      // Plain scroll = zoom toward cursor
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const oldZ = zoomRef.current;
+      const factor = e.deltaY > 0 ? 0.9 : 1.1;
+      const newZ = Math.min(3, Math.max(0.1, oldZ * factor));
+      // Adjust pan so the point under the cursor stays fixed
+      const scale = newZ / oldZ;
+      const newPx = mx - (mx - panRef.current.x) * scale;
+      const newPy = my - (my - panRef.current.y) * scale;
+      setZoom(newZ);
+      setPan({ x: newPx, y: newPy });
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
 
   useEffect(() => { api.listModels().then((m) => setModelPaths(m.map((x) => x.path))).catch(() => {}); }, []);
 
@@ -197,7 +254,8 @@ export default function Workspace({
   useEffect(() => {
     const a = listen<{ id: string; prompt: string }>("opencode-started", (e) => {
       runningSessionIds.current.add(e.payload.id);
-      setSessions((s) => {
+      setLiveSessions((s) => {
+        // Case 1: pending- prefixed optimistic entry (from createSession failure)
         const pending = s.find((x) => x.id.startsWith("pending-") && x.running);
         if (pending) {
           const p = cardPos.current.get(pending.id);
@@ -205,12 +263,16 @@ export default function Workspace({
           cardPos.current.delete(pending.id);
           return s.map((x) => x.id === pending.id ? { ...x, id: e.payload.id, log: [...x.log, `[deck] session ${e.payload.id} started`] } : x);
         }
+        // Case 2: real session ID entry (from createSession success) — already exists, don't duplicate
+        const existing = s.find((x) => x.id === e.payload.id);
+        if (existing) return s;
+        // Case 3: no matching entry at all — add fresh
         sessionCountRef.current += 1;
         return [...s, { id: e.payload.id, prompt: e.payload.prompt, log: [], running: true, model: "" }];
       });
     });
     const b = listen<{ session: string; stream: string; text: string }>("opencode-output", (e) => {
-      setSessions((s) => {
+      setLiveSessions((s) => {
         const target = s.find((x) => x.id === e.payload.session);
         if (target) return s.map((x) => x.id === e.payload.session ? { ...x, log: [...x.log, e.payload.text] } : x);
         const pending = s.find((x) => x.id.startsWith("pending-") && x.running);
@@ -225,7 +287,7 @@ export default function Workspace({
     });
     const c = listen<{ session: string; code: number }>("opencode-done", (e) => {
       runningSessionIds.current.delete(e.payload.session);
-      setSessions((s) => s.map((x) => (x.id === e.payload.session ? { ...x, running: false } : x)));
+      setLiveSessions((s) => s.map((x) => (x.id === e.payload.session ? { ...x, running: false } : x)));
     });
     return () => {
       a.then((f) => f()); b.then((f) => f()); c.then((f) => f());
@@ -392,18 +454,35 @@ export default function Workspace({
     }
     const snap = prompt;
     setHarnessErr(""); setPending(true);
-    const optimisticId = `pending-${Date.now()}`;
+
+    // Create a tracked session in the DB.
+    let sessionId: string | null = null;
+    try {
+      sessionId = await sessionStore.createSession({
+        projectDir: dir,
+        agent: "opencode",
+        model: chosen,
+        task: snap,
+        autoMode: auto,
+        ctxSize: ctx,
+      });
+      setSelectedSession(sessionId);
+    } catch (e) {
+      console.error("[workspace] session create failed:", e);
+    }
+
+    const optimisticId = sessionId || `pending-${Date.now()}`;
     sessionCountRef.current += 1;
     const cascade = (sessionCountRef.current % 5) * 24;
     if (!cardPos.current.has(optimisticId)) cardPos.current.set(optimisticId, { x: cascade, y: cascade });
-    setSessions((s) => [...s, { id: optimisticId, prompt: snap.slice(0, 120), log: [`[deck] spawning opencode ${chosen ? `-m ${chosen}` : ""} --dir ${dir} …`], running: true, model: chosen }]);
+    setLiveSessions((s) => [...s, { id: optimisticId, prompt: snap.slice(0, 120), log: [`[deck] spawning opencode ${chosen ? `-m ${chosen}` : ""} --dir ${dir} …`], running: true, model: chosen }]);
     const withTimeout = <T,>(p: Promise<T>, ms: number, msg: string) => Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new Error(msg)), ms))]);
     try {
-      await withTimeout(api.opencodeRun({ prompt: snap, dir, auto, model: chosen, engine: eng, ctx }), 15000, `opencode harness timed out — is ${eng} UP?`);
+      await withTimeout(api.opencodeRun({ prompt: snap, dir, auto, model: chosen, engine: eng, ctx, sessionId: sessionId ?? undefined }), 15000, `opencode harness timed out — is ${eng} UP?`);
       setPrompt(""); setTimeout(() => inputRef.current?.focus(), 50);
     } catch (e) {
       const msg = String(e); setHarnessErr(msg);
-      setSessions((s) => s.map((x) => x.id === optimisticId ? { ...x, log: [...x.log, `[harness error] ${msg}`], running: false } : x));
+      setLiveSessions((s) => s.map((x) => x.id === optimisticId ? { ...x, log: [...x.log, `[harness error] ${msg}`], running: false } : x));
     } finally { setPending(false); }
   };
   const onKey = (e: React.KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); runAgent(); } };
@@ -462,7 +541,26 @@ export default function Workspace({
         )}
         <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center", fontSize: 10, color: "var(--dim2)" }}>
           <span>{panes.length} terminals</span>
-          {sessions.length > 0 && <span>· {sessions.length} sessions</span>}
+          {sessionStore.getSnapshot().filter((s) => s.status === "running").length > 0 && (
+            <span style={{ color: "var(--cyan)" }}>
+              · {sessionStore.getSnapshot().filter((s) => s.status === "running").length} active
+            </span>
+          )}
+          {sessionStore.getSnapshot().length > 0 && (
+            <button
+              className="ghost"
+              style={{ fontSize: 9, padding: "2px 6px", color: "var(--muted)" }}
+              onClick={() => {
+                // Toggle session history: select the most recent session or deselect.
+                const recent = sessionStore.getSnapshot()[0];
+                if (recent) setSelectedSession(selectedSession ? null : recent.id);
+              }}
+              title="show session history"
+            >
+              {sessionStore.getSnapshot().length} sessions
+            </button>
+          )}
+          {liveSessions.length > 0 && <span>· {liveSessions.length} active</span>}
           <button className="ghost" style={{ fontSize: 10, padding: "2px 6px" }} onClick={() => setFullCanvas(true)} title="collapse all chrome — canvas only">⛶ fullscreen</button>
         </div>
       </div>
@@ -502,22 +600,37 @@ export default function Workspace({
           <div className="dim" style={{ fontSize: 9, borderTop: "1px solid var(--line)", paddingTop: 6, marginTop: 6 }}>human-loop is there — select it to load its terminals (plain TUIs) as the workflow</div>
         </div>
         )}
-        <div ref={sessionsRef} onClick={() => setCtxMenu(null)} style={{ flex: 1, overflow: "auto", position: "relative", background: "var(--panel-2)", borderRadius: 6, padding: 8, minWidth: 320 }}>
-          <div style={{ position: "relative", minHeight: 520 }}>
+        <div ref={sessionsRef} onClick={() => setCtxMenu(null)} onPointerDown={(e) => {
+          // Middle-click or space+drag: start panning
+          if (e.button === 1 || (e.button === 0 && spaceHeld.current)) {
+            e.preventDefault();
+            const sx = e.clientX, sy = e.clientY;
+            const orig = { ...panRef.current };
+            const move = (ev: PointerEvent) => setPan({ x: orig.x + (ev.clientX - sx), y: orig.y + (ev.clientY - sy) });
+            const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+            window.addEventListener("pointermove", move);
+            window.addEventListener("pointerup", up);
+          }
+        }} style={{ flex: 1, overflow: "hidden", position: "relative", background: "var(--panel-2)", borderRadius: 6, minWidth: 320, cursor: "default" }}>
+          {/* zoom-transform wrapper — grid dots + all canvas content lives inside */}
+          <div style={{ position: "absolute", inset: 0, overflow: "hidden" }}>
+            {/* dot grid background — moves with pan, scales with zoom */}
+            <div style={{ position: "absolute", inset: 0, backgroundImage: "radial-gradient(circle, rgba(255,255,255,0.06) 1px, transparent 1px)", backgroundSize: `${24 * zoom}px ${24 * zoom}px`, backgroundPosition: `${pan.x % (24 * zoom)}px ${pan.y % (24 * zoom)}px`, pointerEvents: "none", zIndex: 0 }} />
+            <div style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: "0 0", position: "absolute", top: 0, left: 0, minWidth: "100%", minHeight: "100%" }}>
             {/* loopable edges between plain terminals — birds-eye loop wiring */}
             <svg style={{ position: "absolute", left: 0, top: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
               {tuiEdges.map((e) => {
                 const a = panes.find((pp) => pp.id === e.from);
                 const b = panes.find((pp) => pp.id === e.to);
                 if (!a || !b) return null;
-                const x1 = a.pos.x + 450, y1 = a.pos.y + 260, x2 = b.pos.x + 450, y2 = b.pos.y + 260;
+                const x1 = a.pos.x + 390, y1 = a.pos.y + 240, x2 = b.pos.x + 390, y2 = b.pos.y + 240;
                 const col = e.loop_edge ? "var(--magenta)" : "var(--dim2)";
                 return <g key={e.id}><path d={`M ${x1} ${y1} C ${x1} ${y1+40}, ${x2} ${y2-40}, ${x2} ${y2}`} fill="none" stroke={col} strokeWidth={e.loop_edge ? 2 : 1.2} strokeDasharray={e.loop_edge ? "6 4" : undefined} /><text x={(x1+x2)/2} y={(y1+y2)/2 - 6} textAnchor="middle" fontSize={9} fill={col}>{e.loop_edge ? "⟲ loop" : ""}</text></g>;
               })}
             </svg>
             {/* plain TUI terminals — shown when no workflow selected; workflow loop uses TUIs when a workflow is selected */}
             {!wf && panes.map((p) => (
-              <TuiWindow key={p.id} pane={{ id: p.id, dir: p.dir }} pos={p.pos} selected={(selectedTui === p.id) || (selectMode && selected.has(p.id))} role={tuiRoles.get(p.id)} connecting={connectingFrom === p.id} onStartConnect={(id) => setConnectingFrom(id)} onSelect={(id) => {
+              <TuiWindow key={p.id} pane={{ id: p.id, dir: p.dir }} pos={p.pos} selected={(selectedTui === p.id) || (selectMode && selected.has(p.id))} role={tuiRoles.get(p.id)} connecting={connectingFrom === p.id} onStartConnect={(id) => setConnectingFrom(id)} zoom={zoom} onSelect={(id) => {
                 if (selectMode) { toggleSelect(id); return; }
                 if (connectingFrom && connectingFrom !== id) {
                   const exists = tuiEdges.some((ee) => ee.from === connectingFrom && ee.to === id);
@@ -562,7 +675,7 @@ export default function Workspace({
               const backing = paneId ? panes.find((pp) => pp.id === paneId) : undefined;
               if (backing) {
                 return (
-                  <TuiWindow key={n.id} pane={{ id: backing.id, dir: backing.dir }} pos={n.pos} selected={sel} role={n.role_id} connecting={connectingFrom === n.id} onStartConnect={(id) => setConnectingFrom(n.id)} onSelect={() => {
+                  <TuiWindow key={n.id} pane={{ id: backing.id, dir: backing.dir }} pos={n.pos} selected={sel} role={n.role_id} connecting={connectingFrom === n.id} onStartConnect={(id) => setConnectingFrom(n.id)} zoom={zoom} onSelect={() => {
                     if (connectingFrom && connectingFrom !== n.id) {
                       const exists = wf.edges.some((ee) => ee.from === connectingFrom && ee.to === n.id);
                       if (!exists) {
@@ -609,6 +722,7 @@ export default function Workspace({
                 </div>
               );
             })}
+            </div>
           </div>
           {ctxMenu && (
             <div style={{ position: "fixed", left: ctxMenu.x, top: ctxMenu.y, background: "var(--panel)", border: "1px solid var(--line-bright)", borderRadius: 6, boxShadow: "0 8px 24px rgba(0,0,0,0.5)", zIndex: 99, fontSize: 11, minWidth: 160 }} onClick={() => setCtxMenu(null)}>
@@ -629,9 +743,75 @@ export default function Workspace({
           {wfMsg && <div style={{ color: "var(--warn)", marginTop: 8, fontSize: 10 }}>{wfMsg}</div>}
           {harnessErr && <div style={{ background: "rgba(248,81,73,0.1)", border: "1px solid rgba(248,81,73,0.3)", color: "var(--oom)", padding: "6px 10px", fontSize: 11, marginTop: 8 }}>harness error: {harnessErr}</div>}
           {tuiErr && <div style={{ background: "rgba(248,81,73,0.1)", border: "1px solid rgba(248,81,73,0.3)", color: "var(--oom)", padding: "6px 10px", fontSize: 11, marginTop: 8 }}>{tuiErr}</div>}
+          {/* zoom slider — left edge */}
+          <div style={{ position: "absolute", top: "50%", left: 6, transform: "translateY(-50%)", zIndex: 110, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, background: "rgba(11,11,11,0.85)", border: "1px solid var(--line)", borderRadius: 6, padding: "8px 4px", backdropFilter: "blur(4px)" }}>
+            <button className="ghost" style={{ fontSize: 11, padding: "2px 5px", lineHeight: 1, color: "var(--text)" }} onClick={() => setZoom((z) => Math.min(3, z * 1.25))} title="zoom in">+</button>
+            <input type="range" min={10} max={300} value={Math.round(zoom * 100)} onChange={(e) => setZoom(Number(e.target.value) / 100)} style={{ writingMode: "vertical-lr", direction: "rtl", width: 20, height: 120, accentColor: "var(--cyan)", cursor: "pointer" }} title={`${Math.round(zoom * 100)}%`} />
+            <button className="ghost" style={{ fontSize: 11, padding: "2px 5px", lineHeight: 1, color: "var(--text)" }} onClick={() => setZoom((z) => Math.max(0.1, z / 1.25))} title="zoom out">−</button>
+            <span className="mono" style={{ fontSize: 8, color: "var(--dim2)", marginTop: 2 }}>{Math.round(zoom * 100)}%</span>
+            <button className="ghost" style={{ fontSize: 8, padding: "2px 3px", color: "var(--dim2)", marginTop: 2 }} onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }} title="reset zoom and pan">FIT</button>
+          </div>
+          {/* minimap — bottom right */}
+          <div style={{ position: "absolute", bottom: 8, right: 8, width: 180, height: 120, zIndex: 110, background: "rgba(11,11,11,0.85)", border: "1px solid var(--line)", borderRadius: 6, overflow: "hidden", backdropFilter: "blur(4px)", cursor: "pointer" }} onPointerDown={(e) => {
+            // Click on minimap: jump to that position
+            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            const mx = e.clientX - rect.left;
+            const my = e.clientY - rect.top;
+            // Compute the bounding box of all panes
+            const allPos = panes.map((p) => ({ x: p.pos.x, y: p.pos.y, w: 780, h: 480 }));
+            if (allPos.length === 0) return;
+            const minX = Math.min(...allPos.map((a) => a.x)) - 50;
+            const minY = Math.min(...allPos.map((a) => a.y)) - 50;
+            const maxX = Math.max(...allPos.map((a) => a.x + a.w)) + 50;
+            const maxY = Math.max(...allPos.map((a) => a.y + a.h)) + 50;
+            const cw = maxX - minX || 1;
+            const ch = maxY - minY || 1;
+            const sx = 180 / cw;
+            const sy = 120 / ch;
+            const s = Math.min(sx, sy);
+            const canvasX = mx / s + minX;
+            const canvasY = my / s + minY;
+            // Center viewport on that point
+            const viewEl = sessionsRef.current;
+            if (viewEl) {
+              const vw = viewEl.clientWidth;
+              const vh = viewEl.clientHeight;
+              setPan({ x: vw / 2 - canvasX * zoomRef.current, y: vh / 2 - canvasY * zoomRef.current });
+            }
+          }}>
+            {(() => {
+              if (panes.length === 0) return <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, color: "var(--dim2)" }}>no terminals</div>;
+              const allPos = panes.map((p) => ({ x: p.pos.x, y: p.pos.y, w: 780, h: 480 }));
+              const minX = Math.min(...allPos.map((a) => a.x)) - 50;
+              const minY = Math.min(...allPos.map((a) => a.y)) - 50;
+              const maxX = Math.max(...allPos.map((a) => a.x + a.w)) + 50;
+              const maxY = Math.max(...allPos.map((a) => a.y + a.h)) + 50;
+              const cw = maxX - minX || 1;
+              const ch = maxY - minY || 1;
+              const s = Math.min(180 / cw, 120 / ch);
+              // Viewport rect in canvas coords
+              const viewEl = sessionsRef.current;
+              const vw = viewEl ? viewEl.clientWidth : 800;
+              const vh = viewEl ? viewEl.clientHeight : 600;
+              const vLeft = (-panRef.current.x / zoomRef.current);
+              const vTop = (-panRef.current.y / zoomRef.current);
+              const vW = vw / zoomRef.current;
+              const vH = vh / zoomRef.current;
+              return (
+                <svg width={180} height={120} style={{ position: "absolute", inset: 0 }}>
+                  {/* terminals */}
+                  {allPos.map((a, i) => (
+                    <rect key={i} x={(a.x - minX) * s} y={(a.y - minY) * s} width={a.w * s} height={a.h * s} rx={2} fill={selected.has(panes[i]?.id) ? "rgba(210,153,34,0.5)" : "rgba(0,255,170,0.25)"} stroke={selected.has(panes[i]?.id) ? "var(--magenta)" : "rgba(0,255,170,0.4)"} strokeWidth={0.5} />
+                  ))}
+                  {/* viewport rect */}
+                  <rect x={(vLeft - minX) * s} y={(vTop - minY) * s} width={vW * s} height={vH * s} fill="none" stroke="rgba(255,255,255,0.5)" strokeWidth={1} strokeDasharray="3 2" rx={1} />
+                </svg>
+              );
+            })()}
+          </div>
         </div>
 
-        {/* right drawer: TUI session panel (click terminal) OR node inspector — hidden in fullscreen */}
+        {/* right drawer: Session panel OR TUI session panel OR loadout editor OR node inspector — hidden in fullscreen */}
         {!fullCanvas && ((drawerOpen && editing) ? (
           <div style={{ width: 380, flex: "none", overflow: "hidden", display: "flex", flexDirection: "column", borderLeft: "1px solid var(--line)", background: "var(--bg)" }}>
             <div className="row" style={{ justifyContent: "space-between", alignItems: "center", padding: "6px 8px", borderBottom: "1px solid var(--line)" }}>
@@ -640,11 +820,25 @@ export default function Workspace({
             </div>
             <div style={{ flex: 1, overflow: "auto" }}><LoadoutEditor initial={editing} modelPaths={modelPaths} onClose={() => { setDrawerOpen(false); setEditing(null); }} onSaved={() => { setDrawerOpen(false); setEditing(null); onChanged(); }} /></div>
           </div>
+        ) : selectedSession ? (
+          <div style={{ width: 440, flex: "none", overflow: "hidden", display: "flex", flexDirection: "column", borderLeft: "1px solid var(--line)", background: "var(--bg)" }}>
+            <SessionPanel
+              sessionId={selectedSession}
+              onDismiss={() => setSelectedSession(null)}
+              onContinue={(sid) => {
+                const s = sessionStore.find(sid);
+                if (s) {
+                  setPrompt(s.task);
+                  setSelectedSession(null);
+                  setTimeout(() => inputRef.current?.focus(), 50);
+                }
+              }}
+            />
+          </div>
         ) : selectedTui ? (
           (() => {
             const p = panes.find((x) => x.id === selectedTui);
             if (!p) return null;
-            const sess = sessions.find((s) => s.id === selectedTui);
             const role = tuiRoles.get(p.id) || "";
             const edges = tuiEdges.filter((e) => e.from === p.id || e.to === p.id);
             return (
@@ -698,12 +892,6 @@ export default function Workspace({
                   <button className="ghost" style={{ fontSize: 11, color: "var(--oom)", flex: 1 }} onClick={() => { void api.tuiStop(p.id); setPanes((a) => a.filter((x) => x.id !== p.id)); setSelectedTui(null); }}>CLOSE TERMINAL</button>
                   <button className="ghost" style={{ fontSize: 11, flex: 1 }} onClick={() => setSelectedTui(null)}>DISMISS</button>
                 </div>
-                {sess && (
-                  <div style={{ borderTop: "1px solid var(--line)", paddingTop: 8 }}>
-                    <div style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)", marginBottom: 4 }}>AGENT LOG</div>
-                    <div className="term" style={{ maxHeight: 120, overflow: "auto", fontSize: 10 }}>{sess.log.map((l,i)=><div key={i}>{l}</div>)}</div>
-                  </div>
-                )}
               </div>
             );
           })()
@@ -740,6 +928,38 @@ export default function Workspace({
         <div className="card" style={{ marginTop: 8, fontSize: 11 }}>
           <h3 style={{ fontSize: 11, letterSpacing: 0.6, color: "var(--muted)", margin: 0, marginBottom: 6 }}>PER-ROLE BENCH</h3>
           {bench.length === 0 ? <div className="dim">no per-role bench yet</div> : <table><thead><tr><th>ROLE</th><th>MODEL</th><th>BEST</th><th>AVG</th></tr></thead><tbody>{bench.map((b) => <tr key={`${b.role_id}:${b.model}:${b.engine}`}><td className="mono" style={{ color: "var(--cyan)" }}>{b.role_id}</td><td className="mono">{b.model}</td><td className="mono" style={{ color: "var(--pass)" }}>{b.best_tps.toFixed(1)}</td><td className="mono dim">{b.avg_tps.toFixed(1)}</td></tr>)}</tbody></table>}
+        </div>
+      )}
+
+      {/* session history — recent sessions with status + quick actions */}
+      {!fullCanvas && sessionList.length > 0 && (
+        <div style={{ marginTop: 6, fontSize: 10, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          <span style={{ color: "var(--muted)", fontWeight: 700, letterSpacing: 0.5, fontSize: 9 }}>SESSIONS</span>
+          {sessionList.slice(0, 8).map((s) => {
+            const statusColor = s.status === "complete" ? "var(--pass)" : s.status === "running" ? "var(--cyan)" : s.status === "error" ? "var(--oom)" : s.status === "stopped" ? "var(--warn)" : "var(--dim2)";
+            return (
+              <button
+                key={s.id}
+                className="ghost"
+                style={{
+                  fontSize: 9,
+                  padding: "2px 6px",
+                  borderColor: selectedSession === s.id ? statusColor : undefined,
+                  color: statusColor,
+                  maxWidth: 180,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+                onClick={() => setSelectedSession(selectedSession === s.id ? null : s.id)}
+                title={`${s.task || "no task"} — ${s.model || "no model"} — ${s.status}`}
+              >
+                <span style={{ width: 5, height: 5, borderRadius: "50%", background: statusColor, display: "inline-block", marginRight: 4, verticalAlign: "middle" }} />
+                {s.task ? s.task.slice(0, 24) : s.id.slice(0, 12)}
+              </button>
+            );
+          })}
+          {sessionList.length > 8 && <span className="dim" style={{ fontSize: 9 }}>+{sessionList.length - 8} more</span>}
         </div>
       )}
 

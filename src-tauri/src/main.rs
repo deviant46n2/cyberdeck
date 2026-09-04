@@ -281,9 +281,10 @@ fn opencode_run(
     model: String,
     engine: String,
     ctx: u32,
+    session_id: Option<String>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
-    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let model_opt = if model.is_empty() {
             None
         } else {
@@ -298,9 +299,9 @@ fn opencode_run(
                 _ => deck_tauri::console::Engine::LlamaCpp,
             }
         };
-        deck_tauri::opencode_run(&app, &prompt, &dir, auto, engine_opt, model_opt, ctx).map_err(|e| e.to_string())
-    }));
-    Ok(())
+        deck_tauri::opencode_run(&app, &prompt, &dir, auto, engine_opt, model_opt, ctx, session_id.as_deref()).map_err(|e| e.to_string())
+    }))
+    .unwrap_or_else(|_| Err("opencode_run panicked".into()))
 }
 
 #[tauri::command]
@@ -646,6 +647,49 @@ async fn workflow_loop_bench(
     blocking(move || deck_tauri::workflow_loop_bench(&workflow_id).map_err(|e| e.to_string())).await
 }
 
+// --- agent sessions ---
+
+#[tauri::command]
+fn list_sessions(
+    status: Option<String>,
+    limit: usize,
+) -> Result<Vec<deck_tauri::SessionView>, String> {
+    deck_tauri::list_sessions(status.as_deref(), limit).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_session(id: String) -> Result<Option<deck_tauri::SessionView>, String> {
+    deck_tauri::get_session(&id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn create_session(
+    project_dir: String,
+    agent: String,
+    model: String,
+    task: String,
+    auto_mode: bool,
+    ctx_size: u32,
+) -> Result<String, String> {
+    deck_tauri::create_session(&project_dir, &agent, &model, &task, auto_mode, ctx_size)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn generate_handoff(session_id: String) -> Result<String, String> {
+    deck_tauri::generate_handoff(&session_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_session_events(session_id: String) -> Result<Vec<deck_core::store::SessionEvent>, String> {
+    deck_tauri::get_session_events(&session_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_session(id: String) -> Result<(), String> {
+    deck_tauri::delete_session(&id).map_err(|e| e.to_string())
+}
+
 fn main() {
     // NVIDIA + Wayland: WebKitGTK's GBM/DMA-BUF scanout path fails with
     // "Failed to create GBM buffer ... Invalid argument" and the window stays
@@ -738,7 +782,13 @@ fn main() {
             workflow_stop,
             workflow_history,
             workflow_per_role_bench,
-            workflow_loop_bench
+            workflow_loop_bench,
+            list_sessions,
+            get_session,
+            create_session,
+            generate_handoff,
+            get_session_events,
+            delete_session
         ])
         .setup(|_app| {
             // Sweep agents orphaned by a previously crashed/crash-killed app
