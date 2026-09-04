@@ -33,13 +33,13 @@ pub mod scoring;
 pub mod workflow;
 
 pub use health::{
-    BringupOutcome, OOM_MARKERS, fetch_metrics, health_ok, health_ok_any, health_wait,
-    measure_generation_tps, parse_tps,
-    verify_on_test_port,
+    BringupOutcome, OOM_MARKERS, detect_engine_version, fetch_metrics, health_ok, health_ok_any,
+    health_wait, measure_generation_tps, parse_tps, verify_on_test_port,
 };
 pub use inference::run_prompt;
 pub use systemd::{
-    apply, backup_existing, backup_file, install, reload_daemon, restore_last_good, start, stop,
+    apply, backup_existing, backup_file, install, is_active, reload_daemon, restore_last_good,
+    start, start_system, stop, stop_system,
 };
 pub use unit::{build_args, render_unit};
 pub use workflow::{AgenticRunner, EchoRunner, ExecReport, NodeOutcome, NodeResult, NodeRunner, StatelessRunner, execute, node_to_matrix_row};

@@ -103,7 +103,7 @@ pub use market::{
     watch_add, watch_remove, watchlist,
 };
 pub use feeds::{FeedsPollResult, RankedRelease, Release, feeds_list, feeds_poll, feeds_rank};
-pub use portmap::{PortMapSlot, engine_start, engine_stop, port_map_status};
+pub use portmap::{PortMapSlot, engine_start, engine_stop, ollama_is_running, ollama_start, ollama_stop, port_map_status};
 pub use agent::{analyze_relevance, agent_tools};
 pub use hardware::{hardware_profile, host_metrics};
 pub use deck_core::hardware::LiveMetrics;
@@ -119,8 +119,8 @@ pub use profiles::{
     use_profile,
 };
 pub use scan::{
-    DeleteResult, DupRow, ModelRow, ScanResult, dedup, dedup_delete, delete_model,
-    index_downloaded, list_models, scan,
+    DeleteResult, DupRow, ModelRow, ScanResult, add_scan_dir, dedup, dedup_delete, delete_model,
+    index_downloaded, list_models, list_scan_dirs, remove_scan_dir, scan,
 };
 pub use test::{
     TestLine, TestPhase, TestResult, TweakResult, test_profile, test_profile_tweaked, test_stop,

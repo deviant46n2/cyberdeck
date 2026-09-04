@@ -225,20 +225,12 @@ pub(crate) fn bench_and_record(app2: &tauri::AppHandle, p: &Profile, line: &impl
         let db = deck_core::store::default_db_path();
         if let Ok(conn) = deck_core::store::open(&db) {
             deck_core::store::ensure_bench_schema(&conn).ok();
-            let row = deck_core::store::BenchRow {
-                id: 0,
-                engine: format!("{:?}", p.engine).to_lowercase(),
-                host: p.host.clone(),
-                port: p.port,
-                model: p.model.clone(),
-                ctx: p.ctx_size,
-                tps: v,
-                at,
-                hardware_profile_id: None,
-                engine_version: None,
-                prompt_tps: None,
-                ttft_ms: None,
-            };
+            let engine_version = deck_engines::detect_engine_version(p.engine, &p.host, p.port);
+            let engine_str = format!("{:?}", p.engine).to_lowercase();
+            let row = deck_core::store::BenchRow::with_provenance(
+                &conn, &engine_str, &p.host, p.port, &p.model, p.ctx_size, v, at,
+                engine_version, None, None,
+            );
             match deck_core::store::insert_bench(&conn, &row) {
                 Ok(id) => line(format!("[bench] recorded #{id}: {v:.1} tok/s")),
                 Err(e) => line(format!("[bench] record failed: {e}")),
@@ -446,23 +438,13 @@ pub fn test_model_start(
                 .unwrap_or(0);
             if let Ok(conn) = deck_core::store::open(&deck_core::store::default_db_path()) {
                 deck_core::store::ensure_bench_schema(&conn).ok();
-                let _ = deck_core::store::insert_bench(
-                    &conn,
-                    &deck_core::store::BenchRow {
-                        id: 0,
-                        engine: format!("{:?}", p.engine).to_lowercase(),
-                        host: p.host.clone(),
-                        port: p.port,
-                        model: p.model.clone(),
-                        ctx: p.ctx_size,
-                        tps: v,
-                        at,
-                        hardware_profile_id: None,
-                        engine_version: None,
-                        prompt_tps: None,
-                        ttft_ms: None,
-                    },
+                let engine_version = deck_engines::detect_engine_version(p.engine, &p.host, p.port);
+                let engine_str = format!("{:?}", p.engine).to_lowercase();
+                let row = deck_core::store::BenchRow::with_provenance(
+                    &conn, &engine_str, &p.host, p.port, &p.model, p.ctx_size, v, at,
+                    engine_version, None, None,
                 );
+                let _ = deck_core::store::insert_bench(&conn, &row);
             }
         }
 

@@ -31,35 +31,21 @@ pub fn bench_now(
     model: &str,
     ctx: u32,
 ) -> anyhow::Result<BenchRow> {
-    let tps = deck_engines::measure_generation_tps(
-        deck_core::profile::Engine::parse(engine)
-            .ok_or_else(|| anyhow::anyhow!("unknown engine '{engine}'"))?,
-        host,
-        port,
-        model,
-    )
-    .map_err(|e| anyhow::anyhow!(e))?;
+    let eng = deck_core::profile::Engine::parse(engine)
+        .ok_or_else(|| anyhow::anyhow!("unknown engine '{engine}'"))?;
+    let tps = deck_engines::measure_generation_tps(eng, host, port, model)
+        .map_err(|e| anyhow::anyhow!(e))?;
+    let engine_version = deck_engines::detect_engine_version(eng, host, port);
     let at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
-    let row = deck_core::store::BenchRow {
-        id: 0,
-        engine: engine.to_string(),
-        host: host.to_string(),
-        port,
-        model: model.to_string(),
-        ctx,
-        tps,
-        at,
-        hardware_profile_id: None,
-        engine_version: None,
-        prompt_tps: None,
-        ttft_ms: None,
-    };
     let db = deck_core::store::default_db_path();
     let conn = deck_core::store::open(&db)?;
     deck_core::store::ensure_bench_schema(&conn)?;
+    let row = deck_core::store::BenchRow::with_provenance(
+        &conn, engine, host, port, model, ctx, tps, at, engine_version, None, None,
+    );
     let id = deck_core::store::insert_bench(&conn, &row)?;
     Ok(BenchRow {
         id,

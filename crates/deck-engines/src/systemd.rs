@@ -131,6 +131,35 @@ pub fn stop(unit: &str) -> Result<()> {
     Ok(())
 }
 
+/// Start a system-level service (no `--user` flag). Used for engines like
+/// ollama whose unit lives under `/usr/lib/systemd/system/`.
+pub fn start_system(unit: &str) -> Result<()> {
+    Command::new("systemctl")
+        .args(["start", unit])
+        .status()
+        .with_context(|| format!("systemctl start {unit}"))?;
+    Ok(())
+}
+
+/// Stop a system-level service (no `--user` flag).
+pub fn stop_system(unit: &str) -> Result<()> {
+    let _ = Command::new("systemctl")
+        .args(["stop", unit])
+        .status();
+    Ok(())
+}
+
+/// Check whether a systemd unit is currently active (running).
+/// Works for both user and system services.
+pub fn is_active(unit: &str, system: bool) -> bool {
+    let mut cmd = Command::new("systemctl");
+    if !system {
+        cmd.arg("--user");
+    }
+    cmd.args(["is-active", "--quiet", unit]);
+    cmd.status().map(|s| s.success()).unwrap_or(false)
+}
+
 /// Applies a profile: renders + installs + starts + health-waits. On failure,
 /// walks the ctx ladder (rewriting --ctx-size) and retries. Final fallback
 /// restores the previously-active unit from its .bak if present.

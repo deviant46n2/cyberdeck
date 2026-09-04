@@ -58,6 +58,9 @@ pub struct EngineDescriptor {
     pub test_port: u16,
     pub model_source: ModelSource,
     pub protocol: EngineProtocol,
+    /// True for system-level services (e.g. ollama.service) that need
+    /// `systemctl` without `--user`.
+    pub is_system_service: bool,
 }
 
 impl Engine {
@@ -71,6 +74,7 @@ impl Engine {
                 test_port: 18999,
                 model_source: ModelSource::LocalPath,
                 protocol: EngineProtocol::OpenAiChat,
+                is_system_service: false,
             },
             Engine::FreeToken => &EngineDescriptor {
                 id: "freetoken",
@@ -80,6 +84,7 @@ impl Engine {
                 test_port: 18998,
                 model_source: ModelSource::LocalPath,
                 protocol: EngineProtocol::OpenAiChat,
+                is_system_service: false,
             },
             Engine::Ollama => &EngineDescriptor {
                 id: "ollama",
@@ -89,6 +94,7 @@ impl Engine {
                 test_port: 18997,
                 model_source: ModelSource::OllamaStore,
                 protocol: EngineProtocol::OllamaChat,
+                is_system_service: true,
             },
         }
     }
@@ -104,6 +110,12 @@ impl Engine {
 
     pub fn systemd_unit(&self) -> &'static str {
         self.descriptor().unit_name
+    }
+
+    /// True for system-level services (ollama) that need `systemctl` without
+    /// `--user`.
+    pub fn is_system_service(&self) -> bool {
+        self.descriptor().is_system_service
     }
 
     pub fn default_port(self) -> u16 {

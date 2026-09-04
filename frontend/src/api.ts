@@ -437,6 +437,24 @@ export const deleteModel = (path: string, deleteFile: boolean) =>
 export const dedupDelete = (identity: string, deleteFile: boolean) =>
   invoke<number>("dedup_delete", { identity, deleteFile });
 
+// ---- extra scan directories ----
+
+export const listScanDirs = () => invoke<string[]>("list_scan_dirs");
+
+export const addScanDir = (path: string) =>
+  invoke<void>("add_scan_dir", { path });
+
+export const removeScanDir = (path: string) =>
+  invoke<boolean>("remove_scan_dir", { path });
+
+// ---- ollama daemon control ----
+
+export const ollamaIsRunning = () => invoke<boolean>("ollama_is_running");
+
+export const ollamaStart = () => invoke<void>("ollama_start");
+
+export const ollamaStop = () => invoke<void>("ollama_stop");
+
 export interface DupRow {
   identity: string;
   wasted_gib: number;

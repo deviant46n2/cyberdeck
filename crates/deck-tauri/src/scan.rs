@@ -46,7 +46,13 @@ fn gib(bytes: u64) -> f64 {
 
 /// Refresh the index from configured roots; returns the fresh inventory.
 pub fn scan() -> anyhow::Result<ScanResult> {
-    let roots = deck_core::scanner::default_roots();
+    let mut roots = deck_core::scanner::default_roots();
+    // Merge user-configured extra scan directories.
+    let db = deck_core::store::default_db_path();
+    let conn = deck_core::store::open(&db)?;
+    let extra = deck_core::store::scan_dirs(&conn)?;
+    drop(conn);
+    roots.extend(extra);
     let mut models = deck_core::scanner::scan(&roots)?;
 
     // Also index ollama models — they live as blobs under /var/lib/ollama/blobs
@@ -273,6 +279,39 @@ pub fn dedup_delete(identity: &str, delete_file: bool) -> anyhow::Result<usize> 
     let db = deck_core::store::default_db_path();
     let conn = deck_core::store::open(&db)?;
     deck_core::store::dedup_delete(&conn, identity, delete_file)
+}
+
+// ---------------------------------------------------- extra scan directories
+
+/// List user-configured extra scan directories.
+pub fn list_scan_dirs() -> anyhow::Result<Vec<String>> {
+    let db = deck_core::store::default_db_path();
+    let conn = deck_core::store::open(&db)?;
+    Ok(deck_core::store::scan_dirs(&conn)?
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect())
+}
+
+/// Add a directory to the extra scan list.
+pub fn add_scan_dir(path: &str) -> anyhow::Result<()> {
+    let p = std::path::Path::new(path);
+    if !p.is_absolute() {
+        anyhow::bail!("Path must be absolute");
+    }
+    if !p.is_dir() {
+        anyhow::bail!("Not a directory: {path}");
+    }
+    let db = deck_core::store::default_db_path();
+    let conn = deck_core::store::open(&db)?;
+    deck_core::store::add_scan_dir(&conn, path)
+}
+
+/// Remove a directory from the extra scan list.
+pub fn remove_scan_dir(path: &str) -> anyhow::Result<bool> {
+    let db = deck_core::store::default_db_path();
+    let conn = deck_core::store::open(&db)?;
+    deck_core::store::remove_scan_dir(&conn, path)
 }
 
 #[cfg(test)]

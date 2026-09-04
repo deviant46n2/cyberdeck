@@ -552,6 +552,36 @@ fn dedup_delete(identity: String, delete_file: bool) -> Result<usize, String> {
 }
 
 #[tauri::command]
+fn list_scan_dirs() -> Result<Vec<String>, String> {
+    deck_tauri::list_scan_dirs().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn add_scan_dir(path: String) -> Result<(), String> {
+    deck_tauri::add_scan_dir(&path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn remove_scan_dir(path: String) -> Result<bool, String> {
+    deck_tauri::remove_scan_dir(&path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn ollama_is_running() -> bool {
+    deck_tauri::ollama_is_running()
+}
+
+#[tauri::command]
+fn ollama_start() -> Result<(), String> {
+    deck_tauri::ollama_start().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn ollama_stop() -> Result<(), String> {
+    deck_tauri::ollama_stop().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn workflow_seed() -> Result<String, String> {
     blocking(move || deck_tauri::workflow_seed().map_err(|e| e.to_string())).await
 }
@@ -629,6 +659,12 @@ fn main() {
             dedup,
             delete_model,
             dedup_delete,
+            list_scan_dirs,
+            add_scan_dir,
+            remove_scan_dir,
+            ollama_is_running,
+            ollama_start,
+            ollama_stop,
             fit,
             save_profile,
             delete_profile,

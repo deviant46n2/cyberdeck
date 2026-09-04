@@ -273,6 +273,40 @@ pub struct BenchRow {
     pub ttft_ms: Option<u64>,
 }
 
+impl BenchRow {
+    /// Create a BenchRow with hardware profile auto-captured.
+    /// `engine_version` is passed through (detect it from the running engine).
+    pub fn with_provenance(
+        conn: &Connection,
+        engine: &str,
+        host: &str,
+        port: u16,
+        model: &str,
+        ctx: u32,
+        tps: f64,
+        at: i64,
+        engine_version: Option<String>,
+        prompt_tps: Option<f64>,
+        ttft_ms: Option<u64>,
+    ) -> Self {
+        let hardware_profile_id = super::capture_hardware_profile(conn).ok();
+        BenchRow {
+            id: 0,
+            engine: engine.to_string(),
+            host: host.to_string(),
+            port,
+            model: model.to_string(),
+            ctx,
+            tps,
+            at,
+            hardware_profile_id,
+            engine_version,
+            prompt_tps,
+            ttft_ms,
+        }
+    }
+}
+
 pub fn ensure_bench_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS bench (

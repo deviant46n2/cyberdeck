@@ -196,8 +196,9 @@ fn execute_and_persist(
     // Phase 8e: record a per-role bench row for each engine-backed node so
     // matrix_runs accumulates "which model best at which role" for the canvas
     // (mirrors the CLI door — one truth, two doors).
+    let hw_id = deck_core::store::capture_hardware_profile(conn).ok();
     for nr in &report.node_results {
-        if let Some(row) = deck_engines::node_to_matrix_row(wf, nr, now()) {
+        if let Some(row) = deck_engines::node_to_matrix_row(wf, nr, now(), hw_id, None) {
             deck_core::store::insert_matrix_run(conn, &row)?;
         }
     }

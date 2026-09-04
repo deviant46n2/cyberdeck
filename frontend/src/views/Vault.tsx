@@ -69,6 +69,8 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
   const [activeFlavors, setActiveFlavors] = useState<Set<string>>(new Set());
   const [reloadTick, setReloadTick] = useState(0);
   const [editing, setEditing] = useState<api.Profile | null>(null);
+  const [ollamaRunning, setOllamaRunning] = useState<boolean>(false);
+  const [ollamaBusy, setOllamaBusy] = useState(false);
   const dupIds = new Set(dups.flatMap((d) => d.members));
   const localEngines = useEngineList("LocalPath");
 
@@ -88,7 +90,7 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
     let alive = true;
     const poll = async () => {
       try {
-        const [slots, pro] = await Promise.all([api.portMapStatus("127.0.0.1"), api.listProfiles()]);
+        const [slots, pro, ollama] = await Promise.all([api.portMapStatus("127.0.0.1"), api.listProfiles(), api.ollamaIsRunning()]);
         const byName = new Map(pro.map((p) => [p.name, p]));
         const paths = new Set<string>();
         const engMap = new Map<string, string>();
@@ -99,7 +101,7 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
             if (pr) { paths.add(pr.model); engMap.set(pr.model, s.engine); active.add(s.profile); }
           }
         }
-        if (alive) { setLoadedPaths(paths); setLoadedEngine(engMap); setProfiles(pro); setActiveFlavors(active); }
+        if (alive) { setLoadedPaths(paths); setLoadedEngine(engMap); setProfiles(pro); setActiveFlavors(active); setOllamaRunning(ollama); }
       } catch {}
     };
     void poll();
@@ -123,6 +125,25 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
     if (!eng) return;
     if (!confirm(`STOP ${eng} — frees VRAM, clears slot?`)) return;
     try { await api.engineStop(eng); setLoadedPaths((prev) => { const n = new Set(prev); n.delete(path); return n; }); } catch (e) { alert(String(e)); }
+  };
+
+  const toggleOllama = async () => {
+    setOllamaBusy(true);
+    try {
+      if (ollamaRunning) {
+        await api.ollamaStop();
+        setOllamaRunning(false);
+      } else {
+        await api.ollamaStart();
+        setOllamaRunning(true);
+        // Trigger a rescan so ollama models appear
+        setTimeout(() => { void onRefresh(); }, 1500);
+      }
+    } catch (e) {
+      alert(`Ollama toggle failed: ${String(e)}`);
+    } finally {
+      setOllamaBusy(false);
+    }
   };
 
   const remove = async (path: string) => {
@@ -188,7 +209,18 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
 
   return (
     <>
-      <div className="view-title">VAULT</div>
+      <div className="view-title" style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        VAULT
+        <button
+          className={ollamaRunning ? "action" : "ghost"}
+          style={{ fontSize: 10, padding: "3px 10px", marginLeft: "auto" }}
+          onClick={toggleOllama}
+          disabled={ollamaBusy}
+          title={ollamaRunning ? "Ollama is running — click to stop" : "Ollama is stopped — click to start"}
+        >
+          {ollamaBusy ? "..." : ollamaRunning ? "OLLAMA ● ON" : "OLLAMA ○ OFF"}
+        </button>
+      </div>
 
       {dups.length > 0 && (
         <div className="card" style={{ marginBottom: 16, borderColor: "var(--oom)" }}>

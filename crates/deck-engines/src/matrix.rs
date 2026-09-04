@@ -138,6 +138,8 @@ fn run_cell(
         }
     };
     let host = profile.host.clone();
+    // Detect engine version once while the engine is alive.
+    let engine_version = crate::detect_engine_version(cell.engine, &host, test_port);
     for (task, prompt) in tasks {
         for run in 0..runs {
             let s: GenSample = run_prompt(
@@ -167,7 +169,7 @@ fn run_cell(
                 at,
                 workload_id: None,
                 hardware_profile_id: None,
-                engine_version: None,
+                engine_version: engine_version.clone(),
                 prompt_tps: s.prompt_tps,
                 ttft_ms: s.ttft_ms,
                 peak_vram_mb: None,

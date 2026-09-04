@@ -115,3 +115,22 @@ pub fn engine_start(engine_id: &str) -> anyhow::Result<()> {
     deck_engines::apply(&p, false)?;
     Ok(())
 }
+
+// ---- ollama daemon control (system service) ----
+
+/// Check if the ollama daemon is currently running.
+pub fn ollama_is_running() -> bool {
+    deck_engines::is_active("ollama.service", true)
+}
+
+/// Start the ollama system service. Returns an error if it fails.
+pub fn ollama_start() -> anyhow::Result<()> {
+    deck_engines::start_system("ollama.service")?;
+    Ok(())
+}
+
+/// Stop the ollama system service.
+pub fn ollama_stop() -> anyhow::Result<()> {
+    deck_engines::stop_system("ollama.service")?;
+    Ok(())
+}

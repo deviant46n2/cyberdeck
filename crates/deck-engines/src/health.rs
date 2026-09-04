@@ -57,6 +57,62 @@ pub fn health_ok_any(host: &str, port: u16) -> bool {
     false
 }
 
+/// Detect the engine version string from a running engine.
+///
+/// Strategy:
+/// 1. Try parsing `llama_version` from Prometheus `/metrics` (llama.cpp exports this).
+/// 2. Fall back to running the engine binary with `--version`.
+/// 3. For Ollama, try `/api/version`.
+/// Returns None if none of these work.
+pub fn detect_engine_version(engine: Engine, host: &str, port: u16) -> Option<String> {
+    // Strategy 1: parse from /metrics (llama.cpp exports llama_version_info or similar)
+    if let Ok(text) = fetch_metrics(host, port) {
+        for line in text.lines() {
+            let l = line.trim();
+            // llama.cpp exports: # HELP llama_version llama.cpp version
+            // or: llama_version{...} "bXXX"
+            if l.contains("llama_version") && !l.starts_with('#') {
+                if let Some(v) = l.split_whitespace().last().map(|s| s.trim_matches('"').to_string()) {
+                    if !v.is_empty() && v != "0" {
+                        return Some(v);
+                    }
+                }
+            }
+        }
+    }
+    // Strategy 2: Ollama /api/version
+    if engine == Engine::Ollama {
+        let url = format!("http://{host}:{port}/api/version");
+        let agent = agent(Duration::from_secs(3));
+        if let Ok(r) = agent.get(&url).call() {
+            if let Ok(body) = r.into_body().read_to_string() {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body) {
+                    if let Some(ver) = v.get("version").and_then(|v| v.as_str()) {
+                        return Some(ver.to_string());
+                    }
+                }
+            }
+        }
+    }
+    // Strategy 3: run engine binary --version
+    let bin_name = match engine {
+        Engine::LlamaCpp => "llama-server",
+        Engine::FreeToken => "ft",
+        Engine::Ollama => "ollama",
+    };
+    if let Ok(out) = std::process::Command::new(bin_name).arg("--version").output() {
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        for line in stdout.lines().chain(stderr.lines()) {
+            let l = line.trim();
+            if !l.is_empty() {
+                return Some(l.to_string());
+            }
+        }
+    }
+    None
+}
+
 /// Pulls the raw Prometheus text from a running engine's /metrics endpoint.
 pub fn fetch_metrics(host: &str, port: u16) -> anyhow::Result<String> {
     let url = format!("http://{host}:{port}/metrics");

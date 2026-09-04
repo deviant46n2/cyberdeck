@@ -290,22 +290,84 @@ pub fn dedup_delete(conn: &Connection, identity: &str, delete_file: bool) -> Res
 }
 /// Removes rows whose path is not in `keep`. Keeps the index honest when a
 /// model is deleted or moved between scans.
+///
+/// Because `profiles.model_id` references `models(id)` and the bundled SQLite
+/// has `SQLITE_DEFAULT_FOREIGN_KEYS=1`, we must NULL out any profile links
+/// before deleting the model row — otherwise the FK constraint fires error 787.
 pub fn prune(conn: &Connection, keep: &[String]) -> Result<usize> {
-    let existing: Vec<String> = {
-        let mut stmt = conn.prepare("SELECT path FROM models")?;
-        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+    let existing: Vec<(i64, String)> = {
+        let mut stmt = conn.prepare("SELECT id, path FROM models")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
         rows.flatten().collect()
     };
     let keep_set: std::collections::HashSet<&str> = keep.iter().map(|s| s.as_str()).collect();
     let mut removed = 0;
-    for path in existing {
+    for (id, path) in existing {
         if !keep_set.contains(path.as_str()) {
-            conn.execute("DELETE FROM models WHERE path = ?1", [path.clone()])?;
+            // Unlink any profiles that reference this model before deleting.
+            conn.execute(
+                "UPDATE profiles SET model_id = NULL WHERE model_id = ?1",
+                [id],
+            )?;
+            conn.execute("DELETE FROM models WHERE path = ?1", [path])?;
             removed += 1;
         }
     }
     Ok(removed)
 }
+
+// ---------------------------------------------------- extra scan directories
+
+/// Read the user-configured extra scan directories from the settings table.
+/// Returns an empty vec when none have been added yet.
+pub fn scan_dirs(conn: &Connection) -> Result<Vec<PathBuf>> {
+    let json = settings_get(conn, "extra_scan_dirs")?.unwrap_or_else(|| "[]".into());
+    let dirs: Vec<String> = serde_json::from_str(&json).unwrap_or_default();
+    Ok(dirs.into_iter().map(PathBuf::from).collect())
+}
+
+/// Append a directory to the extra scan list (idempotent — duplicates are
+/// ignored). The path is stored as-is; canonicalisation happens at scan time.
+pub fn add_scan_dir(conn: &Connection, path: &str) -> Result<()> {
+    let mut dirs: Vec<String> = {
+        let json = settings_get(conn, "extra_scan_dirs")?.unwrap_or_else(|| "[]".into());
+        serde_json::from_str(&json).unwrap_or_default()
+    };
+    if !dirs.iter().any(|d| d == path) {
+        dirs.push(path.to_string());
+        settings_set(
+            conn,
+            "extra_scan_dirs",
+            &serde_json::to_string(&dirs)?,
+            "cli",
+            &format!("add scan dir: {path}"),
+        )?;
+    }
+    Ok(())
+}
+
+/// Remove a directory from the extra scan list.
+pub fn remove_scan_dir(conn: &Connection, path: &str) -> Result<bool> {
+    let mut dirs: Vec<String> = {
+        let json = settings_get(conn, "extra_scan_dirs")?.unwrap_or_else(|| "[]".into());
+        serde_json::from_str(&json).unwrap_or_default()
+    };
+    let before = dirs.len();
+    dirs.retain(|d| d != path);
+    if dirs.len() < before {
+        settings_set(
+            conn,
+            "extra_scan_dirs",
+            &serde_json::to_string(&dirs)?,
+            "cli",
+            &format!("remove scan dir: {path}"),
+        )?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

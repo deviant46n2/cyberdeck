@@ -210,6 +210,13 @@ enum Commands {
     /// CYBERDECK_PROD_ROOT (default ~/.local/share/cyberdeck-prod), and
     /// (re)writes the ~/.local/bin/cyberdeck production shortcut.
     Promote,
+    /// Manage extra directories the scanner walks in addition to the defaults
+    /// (~/models, ~/.cache/huggingface/hub). Use this to add Jan, LM Studio,
+    /// or any custom model storage location.
+    Dirs {
+        #[command(subcommand)]
+        action: DirsCmd,
+    },
 }
 
 #[derive(Subcommand)]
@@ -539,6 +546,25 @@ enum SecretCmd {
 }
 
 #[derive(Subcommand)]
+enum DirsCmd {
+    /// List configured extra scan directories
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Add a directory to the scan list
+    Add {
+        /// Absolute path to a directory containing models
+        path: String,
+    },
+    /// Remove a directory from the scan list
+    Remove {
+        /// Path to remove (must match exactly)
+        path: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum ProfileCmd {
     /// Create a new loadout from flags
     New {
@@ -735,5 +761,10 @@ fn main() -> Result<()> {
             DownloadsCmd::Discard { name } => cmd::downloads::discard(&name),
         }
         Commands::Promote => cmd::promote::run(),
+        Commands::Dirs { action } => match action {
+            DirsCmd::List { json } => cmd::dirs::list(json),
+            DirsCmd::Add { path } => cmd::dirs::add(&path),
+            DirsCmd::Remove { path } => cmd::dirs::remove(&path),
+        },
     }
 }

@@ -117,20 +117,12 @@ pub(crate) fn run(
         let db = deck_core::store::default_db_path();
         let conn = deck_core::store::open(&db)?;
         deck_core::store::ensure_bench_schema(&conn)?;
-        let row = deck_core::store::BenchRow {
-            id: 0,
-            engine: format!("{:?}", p.engine).to_lowercase(),
-            host: p.host.clone(),
-            port: p.port,
-            model: p.model.clone(),
-            ctx: p.ctx_size,
-            tps,
-            at,
-            hardware_profile_id: None,
-            engine_version: None,
-            prompt_tps: None,
-            ttft_ms: None,
-        };
+        let engine_version = deck_engines::detect_engine_version(p.engine, &p.host, p.port);
+        let engine_str = format!("{:?}", p.engine).to_lowercase();
+        let row = deck_core::store::BenchRow::with_provenance(
+            &conn, &engine_str, &p.host, p.port, &p.model, p.ctx_size, tps, at,
+            engine_version, None, None,
+        );
         let id = deck_core::store::insert_bench(&conn, &row)?;
         println!("[bringup] bench recorded #{id}: {tps:.1} tok/s");
     } else {

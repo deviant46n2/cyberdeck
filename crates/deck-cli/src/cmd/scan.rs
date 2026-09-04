@@ -3,7 +3,13 @@
 use anyhow::Result;
 
 pub(crate) fn run() -> Result<()> {
-    let roots = deck_core::scanner::default_roots();
+    let mut roots = deck_core::scanner::default_roots();
+    // Merge user-configured extra scan directories.
+    let db = deck_core::store::default_db_path();
+    let conn = deck_core::store::open(&db)?;
+    let extra = deck_core::store::scan_dirs(&conn)?;
+    drop(conn); // release before the heavy scan walk
+    roots.extend(extra);
     let mut models = deck_core::scanner::scan(&roots)?;
 
     // Also index ollama models.
@@ -48,7 +54,6 @@ pub(crate) fn run() -> Result<()> {
         }
     }
 
-    let db = deck_core::store::default_db_path();
     let mut conn = deck_core::store::open(&db)?;
     let n = deck_core::store::upsert_many(&mut conn, &models)?;
     let keep: Vec<String> = models

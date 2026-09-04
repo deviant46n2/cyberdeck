@@ -20,6 +20,7 @@ pub(crate) fn record(
     let eng = super::parse_engine(&engine)?;
     let tps = deck_engines::measure_generation_tps(eng, &host, port, &model)
         .map_err(anyhow::Error::msg)?;
+    let engine_version = deck_engines::detect_engine_version(eng, &host, port);
     let at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
@@ -27,21 +28,9 @@ pub(crate) fn record(
     let db = deck_core::store::default_db_path();
     let conn = deck_core::store::open(&db)?;
     deck_core::store::ensure_bench_schema(&conn)?;
-    let hw_id = deck_core::store::capture_hardware_profile(&conn).ok();
-    let row = deck_core::store::BenchRow {
-        id: 0,
-        engine: engine.clone(),
-        host: host.clone(),
-        port,
-        model: model.clone(),
-        ctx,
-        tps,
-        at,
-        hardware_profile_id: hw_id,
-        engine_version: None,
-        prompt_tps: None,
-        ttft_ms: None,
-    };
+    let row = deck_core::store::BenchRow::with_provenance(
+        &conn, &engine, &host, port, &model, ctx, tps, at, engine_version, None, None,
+    );
     let id = deck_core::store::insert_bench(&conn, &row)?;
     println!("recorded #{id}: {tps:.1} tok/s from {engine} {host}:{port}");
     Ok(())

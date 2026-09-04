@@ -565,6 +565,8 @@ pub fn node_to_matrix_row(
     wf: &Workflow,
     nr: &NodeResult,
     at: i64,
+    hardware_profile_id: Option<i64>,
+    engine_version: Option<String>,
 ) -> Option<deck_core::store::MatrixRow> {
     // A skipped node never ran against an engine — nothing to benchmark.
     if nr.skipped {
@@ -588,8 +590,8 @@ pub fn node_to_matrix_row(
         output: if nr.ok { nr.text.clone() } else { String::new() },
         at,
         workload_id: None,
-        hardware_profile_id: None,
-        engine_version: None,
+        hardware_profile_id,
+        engine_version,
         prompt_tps: None,
         ttft_ms: nr.ttft_ms,
         peak_vram_mb: None,
@@ -711,7 +713,7 @@ mod tests {
             gen_tokens: 512,
             skipped: false,
         };
-        let row = node_to_matrix_row(&wf, &nr, 1755500000).unwrap();
+        let row = node_to_matrix_row(&wf, &nr, 1755500000, None, None).unwrap();
         // n1 binds role + a model (from the seed); role_id threaded for 8e
         assert_eq!(row.role_id.as_deref(), Some(wf.nodes[0].role_id.as_str()));
         assert_eq!(row.model, wf.nodes[0].binding.model_ref);
@@ -755,7 +757,7 @@ mod tests {
         let consumer = rep.node_results.iter().find(|r| r.node_id == "consumer").unwrap();
         assert!(consumer.skipped, "consumer gated out must be skipped");
         // Skipped nodes produce no bench row.
-        assert!(node_to_matrix_row(&wf, consumer, 0).is_none());
+        assert!(node_to_matrix_row(&wf, consumer, 0, None, None).is_none());
     }
 
     #[test]
