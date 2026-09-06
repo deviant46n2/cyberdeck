@@ -156,7 +156,7 @@ KV-qtype, MoE cache, or reasoning flags by hand.
      gracefully instead of failing the bring-up)
 
 3. **Verify headlessly (never touch the live service).** Reuse the test
-   harness: stop live, spawn on the test port (`LlamaCpp 18999` /
+   harness: stop live, spawn on the test port (`LlamaCpp 18995` /
    `FreeToken 18998`), `health_ok_any` poll, `/metrics` check, OOM-scan the
    log. If it OOMs or doesn't reach health, walk `ctx_ladder` down and retry.
    This is exactly the autotune idea, but **one-shot toward max ctx** by default.
@@ -220,7 +220,7 @@ numbers to find the best model→task assignment."*
   ollama). Ollama is structurally separate: it serves its own store, not
   arbitrary `~/models` quants — that constraint is enforced, not papered over.
 - **Each cell** boots the engine headlessly on its **test port** (llamacpp
-  :18999, freetoken :18998, ollama :18997), runs every `--task "label=prompt"`
+  :18995, freetoken :18998, ollama :18997), runs every `--task "label=prompt"`
   the requested `--runs` times, then **tears down — one cell at a time, so VRAM
   is never contended across engines.**
 - **Records raw ingredients**, not just a number: `prompt_tokens`,
@@ -525,7 +525,7 @@ having at all. They are the reason this project exists, not Odysseus parity.
   can scaffold the Rust command + HUD wiring.)
 
 ### B4. Test harness with service isolation
-- Live unit stopped → draft spawned on test port (`LlamaCpp 18999`,
+- Live unit stopped → draft spawned on test port (`LlamaCpp 18995`,
   `FreeToken 18998`) → OOM-scanned → `health_ok_any` polled → live restored.
 - `DONE` — a real differentiator; no other tool does safe in-place loadout swaps.
 

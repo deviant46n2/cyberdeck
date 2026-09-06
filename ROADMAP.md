@@ -8,13 +8,32 @@ Previous correction (2026-08-29) already removed the offline-first constraint fr
 
 ## Executive Summary
 
-Cyberdeck's existing strength is **fleet control + fit + bringup + isolated bench** — systemd units per engine-fixed port (`:18000`/`:1919`/`:11434`), GGUF/safetensors parsing (`deck-core`), VRAM fit (`fit.rs` → PASS/WARN/OOM), derived max-ctx `BringUp` (`deck-engines::derive_loadout` → test port `18999`/`18998` → bench → apply), and the matrix/compare grid (`matrix_runs` + `bench` tables, `health::measure_generation_tps` as the single measurement path). That's the differentiator over Odysseus and it must not be rewritten.
+Cyberdeck's existing strength is **fleet control + fit + bringup + isolated bench** — systemd units per engine-fixed port (`:18000`/`:1919`/`:11434`), GGUF/safetensors parsing (`deck-core`), VRAM fit (`fit.rs` → PASS/WARN/OOM), derived max-ctx `BringUp` (`deck-engines::derive_loadout` → test port `18995`/`18998` → bench → apply), and the matrix/compare grid (`matrix_runs` + `bench` tables, `health::measure_generation_tps` as the single measurement path). That's the differentiator over Odysseus and it must not be rewritten.
 
 What's missing for the stated vision is **what to bench and why**: no Workload concept, evaluation is a lexical placeholder (`scoring.rs`: `0.25·variety + 0.75·(1-bigram)`), hardware is ephemeral (`nvidia-smi` per call, not a persistent profile), raw bench provenance is thin, online discovery is now founded (O1 `releases` table + `deck-feeds::feeds` adapters + `deck feeds poll/list`) but no relevance scoring / personalized MARKET, no recommendation engine, no typed settings/audit, and the agent is still opencode-passthrough rather than a Cyberdeck operator.
 
 The roadmap below keeps the **one-truth-two-doors** contract (`deck-core`/`deck-engines`/`deck-feeds` → `deck-cli` + `deck-tauri` → Tauri/React), evolves dimensions incrementally, and lands the smallest loop that can truthfully answer *"what should I use for this workload on this hardware, and why?"*
 
 > **Strategic guardrail — do not add another major UI surface until the core experimental loop is trustworthy.** The primary product loop is now `Select workload → Select candidate models → Execute → Measure → Evaluate → Compare → Explain winner → Recommend`. Future UI work must strengthen this loop rather than adding new top-level tabs/features. A new view that does not make this loop more credible is deferred.
+
+---
+
+## Current Focus (read this first)
+
+The active milestone is making the measured-evidence loop trustworthy (see
+MVP Definition). Until it is, no new major UI surface and no new subsystem.
+
+| Horizon | What | Where it is tracked |
+|---------|------|---------------------|
+| **Now (P0)** | Reliability + evidence foundations: 0R process ownership, Phase 0 remainder, Phase 1 provenance, Phase 2 workloads/evaluation, O2 relevance rank, O3 typed settings/audit | Priority Matrix P0 rows; "Next 8" items 1–4 |
+| **Next (P1)** | Downstream of evidence: 0P portability, 0D docs sync, Phase 3 hardware tiers, Phase 4 recommend, Phase 6 first slice, Phase 7a–b safe agent verbs, O4 what-changed lane | Priority Matrix P1 rows; "Next 8" items 5–8 |
+| **Later (P2→P3)** | Consented EXECUTE, Canvas remainder, autonomous daemon, long-term vision | Priority Matrix P2/P3 rows; Long-Term Vision |
+| **Never without a phase** | Anything in "Things Not To Build Yet" or `FUTURE.md` | Parking lot — interesting, not committed |
+
+A roadmap item is not authorization to implement it. If it is not in **Now**,
+it is not active work — no matter how interesting. New capabilities enter
+through integration first (see Integration Candidates); native builds need a
+phase here plus a `DECISIONS.md`-grade reason.
 
 ---
 
@@ -664,6 +683,23 @@ No rewrite of `fit` estimation, `scanner`, or `systemd` generation — they are 
 > same ideas that *are* roadmap-shaped are already covered by phases above and
 > are cross-referenced, not duplicated. Promotion path: survive real-core-loop
 > use first, then become a phase here.
+
+---
+
+## Integration Candidates (evaluate integration first — nothing here is approved work)
+
+Per `DECISIONS.md` (Integration Before Recreation): when cyberdeck needs one
+of these, investigate the named boundary before building anything native. A
+candidate becomes work only via a phase above, never on its own.
+
+| Need | Integration boundary (investigate first) |
+|------|------------------------------------------|
+| Agent frameworks / coding agents | Runner seam (`AgenticRunner` / `StatelessRunner`) — opencode stays external; harness routing delegated to OSS |
+| Local model runtimes | `EngineDescriptor` + `engine_bin` (system installs) — never fork/vendor a runtime |
+| Cloud model providers | Online-fleet-door pattern (live catalog + harness config routing) — never vendored SDKs |
+| Remote I/O (HF, GitHub, feeds) | `deck-feeds` adapters + system `curl` — no mandatory cloud/AI SDK dependency |
+| Model serving (Ollama store) | Ollama serves itself; cyberdeck binds the slot, not the server |
+| Browser automation, computer-use, vision/OCR, gaming tooling, external orchestration | No consumer in the core loop — stays parked in `FUTURE.md` until a phase names one |
 
 ---
 

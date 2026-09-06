@@ -35,6 +35,39 @@ problem requires them. The development process must remain simpler than the
 product it builds. The tooling suite already exists — extend it, don't
 reinvent it.
 
+## Scope Control (READ SECOND)
+
+**Cyberdeck is the product.** Its value is orchestrating models, agents,
+tools, and capabilities together — not reimplementing every capability it
+uses. When an existing open-source project, model, runtime, framework, or
+tool already provides something cyberdeck needs, the default is to integrate
+it, not rebuild it:
+
+**Need → Existing solution → Integration → Test → Continue**
+
+— never **Need → New subsystem → Scope growth → Core loop delayed.**
+
+- **Protect the milestone.** Implement blockers, unfinished core
+  capabilities, reliability fixes, test enablers, and current-milestone work
+  first (see `ROADMAP.md` Current Focus). A new feature never displaces
+  unfinished core functionality for being more interesting.
+- **Investigate before building.** A dependency is not a project. Before
+  creating a subsystem, check for an existing implementation and name the
+  integration boundary: plugin, adapter, protocol, API, service, or runner
+  seam. New capabilities enter through the existing crate seams
+  (`deck-core` / `deck-engines` / `deck-feeds`) or a documented adapter —
+  not as new top-level machinery.
+- **Requirements vs. ideas.** An interesting technology (agent frameworks,
+  runtimes, browser automation, vision/OCR, orchestration systems, …) is
+  not a requirement. Exploration is allowed; commitment is not automatic.
+  Park non-milestone ideas in `FUTURE.md`, never in the active build.
+- **Flag scope expansion before implementing it.** If the work would
+  substantially change project scope, stop: state the integration boundary
+  you would use instead, or give the concrete technical reason a native
+  implementation is necessary (core to cyberdeck, not reasonably
+  integrable, or integration would be technically worse). See
+  `DECISIONS.md` — Integration Before Recreation.
+
 ## Communication & Honesty
 
 - Be direct and honest. Never be sycophantic or validating.
@@ -185,6 +218,21 @@ works MUST be followed by a build, and you must verify the running binary is
 newer than the newest source (that is exactly what the gate's `stale-binary`
 section measures). Never claim a fix/feature works against an unbuilt change.
 
+**WARNING — `cargo build --release -p cyberdeck` does NOT embed the frontend.**
+It compiles only the Rust crates and produces a binary that opens to a blank
+"can't connect to localhost" screen. The Tauri bundler must run to embed the
+Vite-built frontend dist into the binary. The correct commands:
+
+- **Full deploy** (recommended — builds + embeds frontend + installs to
+  `~/.local/bin`): `./deploy.sh`
+- **Build only** (no install): `cargo tauri build --no-bundle`
+- **Dev mode** (HMR, no install): `npm run tauri dev`
+
+After deploy, both `~/.local/bin/cyberdeck` and `~/.local/bin/cyberdeck-stable`
+are updated (the stable copy is the docked launcher). Never use bare
+`cargo build --release -p cyberdeck` for the Tauri app — it will silently
+produce a broken binary.
+
 ### Branch convention
 - `master` is the single mainline; all work lands here. Solo project, no
   release lines. Known-good states get tags, not branches.
@@ -235,6 +283,7 @@ Before finalizing any commit, ensure:
    entries with written reasons).
 5. No model blobs, `.part` files, or secrets are added to the tree (the gate
    checks, but don't rely on it alone).
-6. The affected binary was rebuilt and verified (`npm run tauri dev` for the
-   app, `cargo build -p deck-cli` for the CLI).
+6. The affected binary was rebuilt and verified (`./deploy.sh` for the Tauri
+   app, `cargo build -p deck-cli` for the CLI). Do NOT use
+   `cargo build --release -p cyberdeck` — it omits the frontend embed.
 7. Commit scope is coherent; push at the boundary.

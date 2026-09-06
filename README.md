@@ -23,6 +23,20 @@ Named for what it is: a personal machine for loading capability shards.
 5. **Boring internals.** Neon synthwave shell, plain Rust underneath.
 6. **Backups before writes.** Any file cyberdeck generates over gets a timestamped `.bak` first.
 
+## Scope
+
+**Cyberdeck is the product** — an orchestration environment that brings
+models, agents, tools, and capabilities together. It does not reimplement
+every capability it uses: when an existing open-source project, runtime, or
+tool already provides what cyberdeck needs, the default is to **integrate it
+before rebuilding it** (plugin, adapter, protocol, API, or runner seam —
+see `DECISIONS.md`).
+
+Work priority is the current milestone and the core loop
+(download→test→bench→recommend); interesting adjacent tech stays in
+`FUTURE.md` until it earns a phase in `ROADMAP.md`. Exploration is allowed —
+commitment is not automatic.
+
 ## Phases
 
 | # | Name | Ships |
@@ -106,6 +120,11 @@ deck bench record [--engine llamacpp] [--host 127.0.0.1] [--port 18000] \
     [--model ?] [--ctx 0]        # probe /metrics, store generation tok/s
 deck bench list                  # recent readings (shared with the app)
 deck bench best                  # best tok/s per (model, engine) across history
+deck bench matrix --model <gguf|dir> [--workload coding] [--live host:port]
+                                 # headless grid per cell; --live samples the
+                                 # running server instead (single-GPU safe)
+deck bench compare --model <gguf|dir> [--workload coding] [--live host:port]
+                                 # blind A/B over the grid (opaque trial ids)
 deck download <repo> [--file] [--quant] [--dry-run]  # resumable single-file download to ~/models
 ```
 
@@ -128,7 +147,7 @@ The flagship flow: **pick a model, pick an engine, let cyberdeck do the rest.**
    layer offload (FreeToken spills weights to RAM), Flash Attention, reasoning
    budget for reasoning models, and engine-specific server flags. Handles both
    GGUF files and safetensors model-dirs (e.g. FreeToken NVFP4 shards).
-2. **Verifies headlessly** on a dedicated test port (`:18999` llmacpp /
+2. **Verifies headlessly** on a dedicated test port (`:18995` llamacpp /
    `:18998` freetoken) — the live service is untouched. Watches for OOM,
    walks the ctx ladder down if the max-ctx candidate OOMs, and only proceeds
    once it actually serves.

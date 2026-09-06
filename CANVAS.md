@@ -74,7 +74,8 @@ Relevant tables:
 - `profiles` — `name`, `engine`, `body` (JSON). The **`Profile` is a fully
   specified engine launch** (bin, model path, every flag, ctx ladder, port,
   sampling, resource cgroup limits). Port map: `llamacpp :18000`, `freetoken
-  :1919`, `ollama :11434`; test ports `:18999/:18998/:18997`.
+   :1919`, `ollama :11434`, `uncensored :18999`; test ports
+   `:18995/:18996/:18998/:18997` (llamacpp/uncensored/freetoken/ollama).
 - `residents` — `engine_id → profile_name, resident` (which profile is bound
   to which slot).
 - `matrix_runs` — the measurement record: `engine, model, ctx, task, run,
