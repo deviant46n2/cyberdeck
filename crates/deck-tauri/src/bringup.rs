@@ -226,7 +226,10 @@ pub(crate) fn bench_and_record(app2: &tauri::AppHandle, p: &Profile, line: &impl
         if let Ok(conn) = deck_core::store::open(&db) {
             deck_core::store::ensure_bench_schema(&conn).ok();
             let engine_version = deck_engines::detect_engine_version(p.engine, &p.host, p.port);
-            let engine_str = format!("{:?}", p.engine).to_lowercase();
+            // Canonical store id ("uncensored"), not the Debug variant name
+            // ("uncensoredllamacpp") — bench rows must join with matrix_runs
+            // on (model, engine).
+            let engine_str = p.engine.store_id().to_string();
             let row = deck_core::store::BenchRow::with_provenance(
                 &conn, &engine_str, &p.host, p.port, &p.model, p.ctx_size, v, at,
                 engine_version, None, None,
@@ -439,7 +442,8 @@ pub fn test_model_start(
             if let Ok(conn) = deck_core::store::open(&deck_core::store::default_db_path()) {
                 deck_core::store::ensure_bench_schema(&conn).ok();
                 let engine_version = deck_engines::detect_engine_version(p.engine, &p.host, p.port);
-                let engine_str = format!("{:?}", p.engine).to_lowercase();
+                // Canonical store id — see bench_and_record above.
+                let engine_str = p.engine.store_id().to_string();
                 let row = deck_core::store::BenchRow::with_provenance(
                     &conn, &engine_str, &p.host, p.port, &p.model, p.ctx_size, v, at,
                     engine_version, None, None,

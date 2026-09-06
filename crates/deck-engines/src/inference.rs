@@ -142,13 +142,25 @@ fn sample_from_openai_json(j: &serde_json::Value, wall: u64) -> GenSample {
             let ms = j.pointer("/timings/prompt_ms").and_then(|v| v.as_f64())?;
             if ms > 0.0 { Some(n as f64 / (ms / 1000.0)) } else { None }
         });
-    GenSample {
-        ok: true,
-        text: j
-            .pointer("/choices/0/message/content")
+    // Reasoning models (e.g. `--reasoning-format deepseek`) can return empty
+    // `content` with everything in `reasoning_content`. Those are still
+    // generated tokens (the tok/s above counts them) — record them rather
+    // than a dishonest empty output that fails every evaluator.
+    let content = j
+        .pointer("/choices/0/message/content")
+        .and_then(|c| c.as_str())
+        .unwrap_or_default();
+    let text = if content.is_empty() {
+        j.pointer("/choices/0/message/reasoning_content")
             .and_then(|c| c.as_str())
             .unwrap_or_default()
-            .to_string(),
+            .to_string()
+    } else {
+        content.to_string()
+    };
+    GenSample {
+        ok: true,
+        text,
         prompt_tokens: j.pointer("/usage/prompt_tokens").and_then(|v| v.as_u64()),
         gen_tokens,
         tok_s,

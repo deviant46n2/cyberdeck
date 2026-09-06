@@ -20,7 +20,7 @@ pub fn run(model: PathBuf, workload: String, engines: Vec<String>, ollama: Vec<S
         let parsed: Vec<deck_core::profile::Engine> = engines.iter().map(|e| super::parse_engine(e)).collect::<Result<Vec<_>, _>>()?;
         deck_engines::grid::build_cells(&model, &parsed, &ollama)?
     };
-    let rows = deck_engines::matrix::run_matrix(&cells, &opts.tasks, opts.runs, opts.max_tokens, Duration::from_secs(240), &opts.bins);
+    let rows = deck_engines::matrix::run_matrix(&cells, &opts.tasks, opts.runs, opts.max_tokens, Duration::from_secs(240), &opts.bins, Some(&workload), None);
     println!("[experiment] matrix: {} trial(s) recorded", rows.len());
     // recommend
     match deck_core::recommend::recommend(&workload, &objective) {

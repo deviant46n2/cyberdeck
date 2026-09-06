@@ -11,7 +11,22 @@ use tauri::Emitter;
 
 use deck_core::store::{self, Session, SessionEvent, SessionStatus};
 
+/// Test-only database override so unit tests never touch (or race on) the
+/// production DB. Production code always uses the default path — these
+/// statics only exist under `cfg(test)`. Two locks on purpose: tests hold
+/// `TEST_SERIAL` for their whole body (serializing each other) while `conn()`
+/// only briefly borrows `TEST_DB_PATH` — one shared mutex here would
+/// self-deadlock, since `conn()` runs inside the test holding the guard.
+#[cfg(test)]
+static TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+#[cfg(test)]
+static TEST_DB_PATH: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync::Mutex::new(None);
+
 fn conn() -> Result<Connection> {
+    #[cfg(test)]
+    if let Some(p) = TEST_DB_PATH.lock().unwrap().clone() {
+        return store::open(&p).map_err(anyhow::Error::from);
+    }
     let db = store::default_db_path();
     store::open(&db).map_err(anyhow::Error::from)
 }
@@ -79,7 +94,15 @@ pub fn create_session(
     auto_mode: bool,
     ctx_size: u32,
 ) -> Result<String> {
-    let id = format!("sess-{}", now());
+    // Nanosecond ids: two agents launched in the same second must not share
+    // an id (second-resolution ids collided — in tests and in production).
+    let id = format!(
+        "sess-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    );
     let session = Session {
         id: id.clone(),
         project_dir: project_dir.to_string(),
@@ -267,8 +290,22 @@ pub fn emit_session_status(
 mod tests {
     use super::*;
 
+    /// Point this test at a fresh temp DB. The returned guard serializes the
+    /// tests and must be held for the whole test body.
+    fn use_temp_db(name: &str) -> std::sync::MutexGuard<'static, ()> {
+        let guard = TEST_SERIAL.lock().unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "cyberdeck-test-sessions-{name}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        *TEST_DB_PATH.lock().unwrap() = Some(path);
+        guard
+    }
+
     #[test]
     fn create_and_list_sessions() {
+        let _guard = use_temp_db("create");
         let id = create_session("/tmp", "opencode", "qwen3.8-27b", "test task", true, 32768).unwrap();
         let sessions = list_sessions(None, 10).unwrap();
         assert!(!sessions.is_empty());
@@ -289,6 +326,7 @@ mod tests {
 
     #[test]
     fn handoff_roundtrip() {
+        let _guard = use_temp_db("handoff");
         let id = create_session("/tmp", "opencode", "test-model", "do something", false, 16384).unwrap();
         mark_session_running(&id).unwrap();
         add_session_event(&id, "line", "stdout", "started working").unwrap();

@@ -50,7 +50,7 @@ export interface BenchRow {
 
 // --- engine registry (mirrors deck_core::profile::EngineDescriptor) ---
 
-export type EngineId = "llamacpp" | "freetoken" | "ollama";
+export type EngineId = "llamacpp" | "uncensored" | "freetoken" | "ollama";
 export type EngineSource = "LocalPath" | "OllamaStore";
 
 /** One registered runtime: store id, display name, ports, where models come
@@ -83,7 +83,7 @@ export const engineBinClear = (storeId: string) => invoke<void>("engine_bin_clea
 /** Full editable loadout shape — mirrors deck_core::profile::Profile. */
 export interface Profile {
   name: string;
-  engine: "LlamaCpp" | "FreeToken";
+  engine: "LlamaCpp" | "UncensoredLlamaCpp" | "FreeToken";
   bin: string;
   model: string;
   alias: string;
@@ -158,8 +158,8 @@ export const fit = (p: {
   reserve: number;
   offload: boolean;
 }) => invoke<FitRow>("fit", p);
-export const useProfile = (name: string, dryRun: boolean) =>
-  invoke<UseResult>("use_profile", { name, dryRun });
+export const useProfile = (name: string, dryRun: boolean, managed = false) =>
+  invoke<UseResult>("use_profile", { name, dryRun, managed });
 
 export const signalsCheck = (limit: number) =>
   invoke<SignalRow[]>("signals_check", { limit });
@@ -281,6 +281,46 @@ export const portMapStatus = (host: string) =>
 export const engineStop = (engine: string) =>
   invoke<void>("engine_stop", { engine });
 
+// --- unmanaged llama-server processes (ad-hoc, not via systemd) ---
+export interface UnmanagedProcess {
+  pid: number;
+  port: number | null;
+  model: string | null;
+  display: string;
+  cmd: string;
+  /** If the process lives in a systemd user unit, its name (e.g. llama-uncensored.service). */
+  systemd_unit: string | null;
+}
+
+export const unmanagedEngines = () =>
+  invoke<UnmanagedProcess[]>("unmanaged_engines");
+
+export const unmanagedStop = (pid: number) =>
+  invoke<void>("unmanaged_stop", { pid });
+
+export const unmanagedStart = (pid: number) =>
+  invoke<void>("unmanaged_start", { pid });
+
+// --- external systemd services (hand-rolled, not cyberdeck-managed) ---
+export interface ExternalService {
+  unit: string;
+  description: string;
+  model: string | null;
+  display: string;
+  port: number | null;
+  active: boolean;
+  exec_start: string;
+}
+
+export const externalServices = () =>
+  invoke<ExternalService[]>("external_services");
+
+export const externalServiceStart = (unit: string) =>
+  invoke<void>("external_service_start", { unit });
+
+export const externalServiceStop = (unit: string) =>
+  invoke<void>("external_service_stop", { unit });
+
 // --- blind A/B compare ---
 export interface ScoredTrial {
   trial: string;
@@ -319,22 +359,26 @@ export interface CompareReport {
 }
 
 export const compareRun = (p: {
-  model: string;
+  models: string[];
   engines: string[];
   ollama: string[];
   tasks: string[];
   runs: number;
   maxTokens: number;
   seed: number;
+  live?: string | null;
+  workload?: string | null;
 }) =>
   invoke<CompareReport>("compare_run", {
-    model: p.model,
+    models: p.models,
     engines: p.engines,
     ollama: p.ollama,
     tasks: p.tasks,
     runs: p.runs,
     maxTokens: p.maxTokens,
     seed: p.seed,
+    live: p.live ?? null,
+    workload: p.workload ?? null,
   });
 
 export const opencodeRun = (p: {
@@ -368,7 +412,8 @@ export const renderProfileUnit = (p: Profile) =>
   invoke<string>("render_profile_unit", { profile: p });
 
 export const TEST_PORTS: Record<Profile["engine"], number> = {
-  LlamaCpp: 18999,
+  LlamaCpp: 18995,
+  UncensoredLlamaCpp: 18996,
   FreeToken: 18998,
 };
 export const testLoadout = (p: Profile, testPort: number) =>

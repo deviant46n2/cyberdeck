@@ -264,7 +264,12 @@ fn choose_verdict(standings: &mut [CandidateStanding]) -> String {
 
 /// Execute the grid blind: run everything through `run_matrix` (persisting to
 /// `matrix_runs`), then score and blind.
-pub fn run_compare(cells: &[MatrixCell], opts: &CompareOpts<'_>, seed: u64) -> CompareReport {
+pub fn run_compare(
+    cells: &[MatrixCell],
+    opts: &CompareOpts<'_>,
+    seed: u64,
+    progress: Option<&dyn Fn(&str)>,
+) -> CompareReport {
     let rows = crate::matrix::run_matrix(
         cells,
         opts.tasks,
@@ -272,6 +277,26 @@ pub fn run_compare(cells: &[MatrixCell], opts: &CompareOpts<'_>, seed: u64) -> C
         opts.max_tokens,
         opts.boot_timeout,
         opts.bins,
+        None,
+        progress,
     );
+    report_from_rows(rows, seed)
+}
+
+/// Blind A/B against one already-running server (no boot, no teardown) —
+/// the VRAM-safe path; rows persist exactly like `run_compare`.
+#[allow(clippy::too_many_arguments)]
+pub fn run_compare_live(
+    cells: &[MatrixCell],
+    host: &str,
+    port: u16,
+    tasks: &[(String, String)],
+    runs: u32,
+    max_tokens: u32,
+    workload: Option<&str>,
+    seed: u64,
+    progress: Option<&dyn Fn(&str)>,
+) -> CompareReport {
+    let rows = crate::matrix::run_matrix_live(cells, host, port, tasks, runs, max_tokens, workload, progress);
     report_from_rows(rows, seed)
 }

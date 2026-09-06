@@ -9,10 +9,11 @@ import Downloads from "./views/Downloads";
 import Bringup from "./views/Bringup";
 import Bench from "./views/Bench";
 import Compare from "./views/Compare";
+import Recommend from "./views/Recommend";
 import Feeds from "./views/Feeds";
 import Workspace from "./views/Workspace";
 
-const VIEWS = ["WORKSPACE", "VAULT", "SIGNALS", "FEEDS", "MARKET", "DOWNLOADS", "COMPARE", "BENCH"];
+const VIEWS = ["WORKSPACE", "VAULT", "SIGNALS", "FEEDS", "MARKET", "DOWNLOADS", "COMPARE", "BENCH", "RECOMMEND"];
 // legacy views kept for ?legacy=1 debug (HUD/LOADOUTS/CANVAS merged into WORKSPACE per docs/WORKSPACE_CANVAS.md)
 const LEGACY_VIEWS = ["HUD", "LOADOUTS", "CANVAS"];
 
@@ -101,6 +102,7 @@ export default function App() {
         {view === "DOWNLOADS" && <Downloads />}
         {view === "COMPARE" && <Compare />}
         {view === "BENCH" && <Bench />}
+        {view === "RECOMMEND" && <Recommend />}
         {legacy && view === "HUD" && <div className="dim" style={{ padding: 20 }}>HUD merged into WORKSPACE — use ?legacy=1 to re-enable</div>}
         {legacy && view === "LOADOUTS" && <div className="dim" style={{ padding: 20 }}>LOADOUTS merged into WORKSPACE</div>}
         {legacy && view === "CANVAS" && <div className="dim" style={{ padding: 20 }}>CANVAS merged into WORKSPACE</div>}

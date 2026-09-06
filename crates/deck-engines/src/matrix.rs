@@ -107,51 +107,41 @@ fn plan_profile(cell: &MatrixCell, bins: &HashMap<Engine, PathBuf>) -> Result<Pr
     }
 }
 
-/// Run a single cell (boot → sample all tasks/runs → teardown).
-fn run_cell(
+/// Sample every task × run against an already-reachable engine and push the
+/// trials into `rows`. Shared by the booted cell and the live-server cell —
+/// the only difference is who started the server. `progress` fires after each
+/// completed trial so callers (UI event streams, CLI heartbeats) can show the
+/// run is alive during multi-minute grids.
+#[allow(clippy::too_many_arguments)]
+fn sample_tasks(
     cell: &MatrixCell,
-    bins: &HashMap<Engine, PathBuf>,
+    host: &str,
+    port: u16,
+    ctx: u32,
+    engine_version: Option<String>,
     tasks: &[(String, String)],
     runs: u32,
     max_tokens: u32,
-    boot_timeout: Duration,
+    workload_id: Option<String>,
+    progress: Option<&dyn Fn(&str)>,
     rows: &mut Vec<MatrixRow>,
 ) {
-    let profile = match plan_profile(cell, bins) {
-        Ok(p) => p,
-        Err(e) => {
-            for (task, _) in tasks {
-                rows.push(fail_row(cell, 0, task, 0, "ERROR", &e));
-            }
-            return;
-        }
-    };
-    let test_port = cell.engine.test_port();
-    let ctx = profile.ctx_size;
-    let mut child = match boot_on_test_port(&profile, test_port, boot_timeout) {
-        Ok(c) => c,
-        Err((v, s)) => {
-            for (task, _) in tasks {
-                rows.push(fail_row(cell, ctx, task, 0, &v, &s));
-            }
-            return;
-        }
-    };
-    let host = profile.host.clone();
-    // Detect engine version once while the engine is alive.
-    let engine_version = crate::detect_engine_version(cell.engine, &host, test_port);
     for (task, prompt) in tasks {
         for run in 0..runs {
             let s: GenSample = run_prompt(
                 cell.engine,
-                &host,
-                test_port,
+                host,
+                port,
                 &cell.model_id,
                 prompt,
                 max_tokens,
             );
             let at = now_epoch();
             let verdict = if s.ok { "RUNNING" } else { "ERROR" };
+            if let Some(emit) = progress {
+                let tps = s.tok_s.map(|t| format!("{t:.1} tok/s")).unwrap_or_else(|| "no reading".into());
+                emit(&format!("{} × {} run {run}: {verdict} ({tps})", cell.display, task));
+            }
             rows.push(MatrixRow {
                 engine: cell.engine.store_id().to_string(),
                 model: cell.display.clone(),
@@ -167,7 +157,7 @@ fn run_cell(
                 wall_ms: s.wall_ms,
                 output: s.text,
                 at,
-                workload_id: None,
+                workload_id: workload_id.clone(),
                 hardware_profile_id: None,
                 engine_version: engine_version.clone(),
                 prompt_tps: s.prompt_tps,
@@ -180,29 +170,87 @@ fn run_cell(
             });
         }
     }
-    let _ = child.kill();
-    let _ = child.wait();
 }
 
-/// Run the whole grid and persist every trial to the `matrix_runs` table.
-pub fn run_matrix(
-    cells: &[MatrixCell],
+/// Run a single cell (boot → sample all tasks/runs → teardown).
+#[allow(clippy::too_many_arguments)]
+fn run_cell(
+    cell: &MatrixCell,
+    bins: &HashMap<Engine, PathBuf>,
     tasks: &[(String, String)],
     runs: u32,
     max_tokens: u32,
     boot_timeout: Duration,
-    bins: &HashMap<Engine, PathBuf>,
-) -> Vec<MatrixRow> {
-    let mut rows = Vec::new();
-    for cell in cells {
-        eprintln!(
-            "[matrix] cell: {} × {} → test :{}",
-            cell.display,
-            cell.engine.descriptor().display,
-            cell.engine.test_port()
-        );
-        run_cell(cell, bins, tasks, runs, max_tokens, boot_timeout, &mut rows);
+    workload_id: Option<String>,
+    progress: Option<&dyn Fn(&str)>,
+    rows: &mut Vec<MatrixRow>,
+) {
+    let profile = match plan_profile(cell, bins) {
+        Ok(p) => p,
+        Err(e) => {
+            for (task, _) in tasks {
+                let mut r = fail_row(cell, 0, task, 0, "ERROR", &e);
+                r.workload_id = workload_id.clone();
+                rows.push(r);
+            }
+            return;
+        }
+    };
+    let test_port = cell.engine.test_port();
+    let ctx = profile.ctx_size;
+    let mut child = match boot_on_test_port(&profile, test_port, boot_timeout) {
+        Ok(c) => c,
+        Err((v, s)) => {
+            for (task, _) in tasks {
+                let mut r = fail_row(cell, ctx, task, 0, &v, &s);
+                r.workload_id = workload_id.clone();
+                rows.push(r);
+            }
+            return;
+        }
+    };
+    let host = profile.host.clone();
+    // Detect engine version once while the engine is alive.
+    let engine_version = crate::detect_engine_version(cell.engine, &host, test_port);
+    sample_tasks(cell, &host, test_port, ctx, engine_version, tasks, runs, max_tokens, workload_id, progress, rows);
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// Run a single cell against an already-running server (no boot, no
+/// teardown). This is the VRAM-safe path on single-GPU machines where a
+/// second copy of the model cannot coexist with the live resident: the
+/// caller points at the live slot and the trials measure exactly what the
+/// user actually runs. `ctx` is recorded as 0 (unknown) — live mode never
+/// re-derives the server's launch config.
+#[allow(clippy::too_many_arguments)]
+fn run_cell_live(
+    cell: &MatrixCell,
+    host: &str,
+    port: u16,
+    tasks: &[(String, String)],
+    runs: u32,
+    max_tokens: u32,
+    workload_id: Option<String>,
+    progress: Option<&dyn Fn(&str)>,
+    rows: &mut Vec<MatrixRow>,
+) {
+    if !crate::health_ok_any(host, port) {
+        for (task, _) in tasks {
+            let mut r = fail_row(cell, 0, task, 0, "TIMEOUT", &format!("no live server at {host}:{port}"));
+            r.workload_id = workload_id.clone();
+            rows.push(r);
+        }
+        return;
     }
+    let engine_version = crate::detect_engine_version(cell.engine, host, port);
+    sample_tasks(cell, host, port, 0, engine_version, tasks, runs, max_tokens, workload_id, progress, rows);
+}
+
+/// Persist trials + evaluations. Shared by both grid modes so live and
+/// booted rows carry the same provenance (hardware profile, workload id,
+/// per-task evaluator verdict).
+fn persist_rows(rows: &[MatrixRow], workload_id: Option<&str>) {
     if let Ok(conn) = deck_core::store::open(&deck_core::store::default_db_path()) {
         let _ = deck_core::store::ensure_matrix_schema(&conn);
         let _ = deck_core::store::ensure_evaluations_schema(&conn);
@@ -214,9 +262,10 @@ pub fn run_matrix(
                 for t in w.tasks { eval_map.entry(t.label).or_insert((t.evaluator, t.evaluator_config)); }
             }
         }
-        for r in &rows {
+        for r in rows {
             let mut r2 = r.clone();
             r2.hardware_profile_id = hw_id;
+            r2.workload_id = workload_id.map(str::to_string);
             if let Ok(id) = deck_core::store::insert_matrix_run(&conn, &r2) {
                 let (ev, cfg) = eval_map.get(&r.task).cloned().unwrap_or(("lexical-placeholder".into(), "".into()));
                 let evaluator = crate::evaluation::evaluator_for(&ev, &cfg);
@@ -226,5 +275,56 @@ pub fn run_matrix(
             }
         }
     }
+}
+
+/// Run the whole grid and persist every trial to the `matrix_runs` table.
+#[allow(clippy::too_many_arguments)]
+pub fn run_matrix(
+    cells: &[MatrixCell],
+    tasks: &[(String, String)],
+    runs: u32,
+    max_tokens: u32,
+    boot_timeout: Duration,
+    bins: &HashMap<Engine, PathBuf>,
+    workload_id: Option<&str>,
+    progress: Option<&dyn Fn(&str)>,
+) -> Vec<MatrixRow> {
+    let mut rows = Vec::new();
+    for cell in cells {
+        eprintln!(
+            "[matrix] cell: {} × {} → test :{}",
+            cell.display,
+            cell.engine.descriptor().display,
+            cell.engine.test_port()
+        );
+        run_cell(cell, bins, tasks, runs, max_tokens, boot_timeout, workload_id.map(str::to_string), progress, &mut rows);
+    }
+    persist_rows(&rows, workload_id);
+    rows
+}
+
+/// Run the whole grid against one already-running server and persist every
+/// trial. Same rows, same provenance as `run_matrix` — minus the boot.
+#[allow(clippy::too_many_arguments)]
+pub fn run_matrix_live(
+    cells: &[MatrixCell],
+    host: &str,
+    port: u16,
+    tasks: &[(String, String)],
+    runs: u32,
+    max_tokens: u32,
+    workload_id: Option<&str>,
+    progress: Option<&dyn Fn(&str)>,
+) -> Vec<MatrixRow> {
+    let mut rows = Vec::new();
+    for cell in cells {
+        eprintln!(
+            "[matrix-live] cell: {} × {} → live {host}:{port}",
+            cell.display,
+            cell.engine.descriptor().display,
+        );
+        run_cell_live(cell, host, port, tasks, runs, max_tokens, workload_id.map(str::to_string), progress, &mut rows);
+    }
+    persist_rows(&rows, workload_id);
     rows
 }

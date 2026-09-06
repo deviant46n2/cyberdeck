@@ -38,37 +38,47 @@ pub fn recommend(workload_id: &str, objective: &str) -> Result<Vec<RankedCandida
     // success_rate from evaluations where available, else assume lexical placeholder pass.
     // We read evaluations grouped by model+engine via task match (cheap proxy).
     use std::collections::HashMap;
-    let mut groups: HashMap<(String,String), Vec<(Option<f64>, bool)>> = HashMap::new();
-    // load evaluations map: matrix_run -> (passed, score)
-    let mut eval_map: HashMap<i64, (bool,f64)> = HashMap::new();
-    if let Ok(mut s) = conn.prepare("SELECT matrix_run_id, passed, score FROM evaluations") {
-        if let Ok(rm) = s.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)? != 0, r.get::<_, f64>(2)?))) {
-            for r in rm.flatten() { eval_map.insert(r.0, (r.1, r.2)); }
-        }
+    // (tok_s, passed, proxy_scored): proxy methods (lm_eval stand-in,
+    // lexical placeholder) are honest signal of last resort, not verdicts.
+    type Trial = (Option<f64>, bool, bool);
+    let mut groups: HashMap<(String, String), Vec<Trial>> = HashMap::new();
+    // load evaluations map: matrix_run -> (passed, score, method)
+    let mut eval_map: HashMap<i64, (bool,f64,String)> = HashMap::new();
+    if let Ok(mut s) = conn.prepare("SELECT matrix_run_id, passed, score, method FROM evaluations")
+        && let Ok(rm) = s.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)? != 0, r.get::<_, f64>(2)?, r.get::<_, String>(3)?)))
+    {
+        for r in rm.flatten() { eval_map.insert(r.0, (r.1, r.2, r.3)); }
     }
     // matrix id lookup for each row's id — we need ids, so re-query with id
     let mut stmt2 = conn.prepare(&format!("SELECT id, model, engine, tok_s FROM matrix_runs WHERE task IN ({placeholders})"))?;
     let id_rows = stmt2.query_map(rusqlite::params_from_iter(task_labels.iter()), |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, Option<f64>>(3)?)))?.collect::<Result<Vec<_>,_>>()?;
 
     for (id, model, engine, tok_s) in id_rows {
-        let (passed, score) = eval_map.get(&id).cloned().unwrap_or((true, 0.5));
-        groups.entry((model, engine)).or_default().push((tok_s, passed));
+        let (passed, score, method) = eval_map.get(&id).cloned().unwrap_or((true, 0.5, "lexical-placeholder".into()));
+        let proxy = method == "lm_eval" || method == "lexical-placeholder";
+        groups.entry((model, engine)).or_default().push((tok_s, passed, proxy));
         let _ = score;
     }
 
     let mut out: Vec<RankedCandidate> = Vec::new();
     for ((model, engine), vals) in groups {
         let runs = vals.len();
-        let successes = vals.iter().filter(|(_, p)| *p).count();
+        let successes = vals.iter().filter(|(_, p, _)| *p).count();
+        let proxy_n = vals.iter().filter(|(_, _, x)| *x).count();
         let success_rate = successes as f64 / runs as f64;
-        let toks: Vec<f64> = vals.iter().filter_map(|(t, _)| *t).collect();
+        let toks: Vec<f64> = vals.iter().filter_map(|(t, _, _)| *t).collect();
         let mean_tok_s = if toks.is_empty() { None } else { Some(toks.iter().sum::<f64>() / toks.len() as f64) };
         let mut sorted = toks.clone();
         sorted.sort_by(|a,b| a.partial_cmp(b).unwrap());
         let p50 = if sorted.is_empty() { None } else { Some(sorted[sorted.len()/2]) };
         // mean_score approximated as success_rate for now (real score avg needs eval score)
         let mean_score = success_rate;
-        let explain = format!("{model} via {engine}: {success_rate:.0}% task success, {} tok/s (p50), {runs} runs", p50.map(|v| format!("{v:.1}")).unwrap_or_else(|| "—".into()));
+        let proxy_note = if proxy_n > 0 {
+            format!(" ({proxy_n}/{runs} proxy-scored)")
+        } else {
+            String::new()
+        };
+        let explain = format!("{model} via {engine}: {:.0}% task success, {} tok/s (p50), {runs} runs{proxy_note}", success_rate * 100.0, p50.map(|v| format!("{v:.1}")).unwrap_or_else(|| "—".into()));
         out.push(RankedCandidate { model, engine, runs, success_rate, mean_score, p50_tok_s: p50, mean_tok_s, explain });
     }
 

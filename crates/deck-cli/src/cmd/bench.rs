@@ -99,6 +99,23 @@ pub(crate) fn resolve_tasks(cli_tasks: &[String], workload: Option<&str>) -> Res
     Ok(tasks)
 }
 
+/// Parse a `--live` address ("host:port", ":port", or bare "port" with a
+/// 127.0.0.1 default) into its parts.
+fn parse_host_port(addr: &str) -> Result<(String, u16)> {
+    let (host, port_s) = match addr.rsplit_once(':') {
+        Some(("", p)) => ("127.0.0.1", p),
+        Some((h, p)) if !h.is_empty() => (h, p),
+        _ => ("127.0.0.1", addr.trim_start_matches(':')),
+    };
+    if host.contains(':') || port_s.is_empty() {
+        anyhow::bail!("--live must be \"host:port\", got {addr:?}");
+    }
+    let port: u16 = port_s
+        .parse()
+        .map_err(|_| anyhow::anyhow!("--live must be \"host:port\", got {addr:?}"))?;
+    Ok((host.to_string(), port))
+}
+
 /// Parsed matrix knobs shared down to the grid runner.
 pub(crate) struct GridOpts {
     pub(crate) tasks: Vec<(String, String)>,
@@ -150,12 +167,18 @@ fn build_cells(
 /// The scientific grid: local quants × local-source engines, plus any requested
 /// Ollama ids (each × ollama). Every cell is booted headlessly on the engine's
 /// dedicated test port, run through each task × run, recorded, then torn down.
+///
+/// With `live = Some("host:port")` the grid instead samples an already-running
+/// server (no boot, no teardown) — the VRAM-safe path on single-GPU machines
+/// where a second copy of the model cannot coexist with the live resident.
 pub(crate) fn matrix(
     model: PathBuf,
     engines: Vec<String>,
     ollama: Vec<String>,
     opts: GridOpts,
     out: Option<PathBuf>,
+    live: Option<String>,
+    workload: Option<String>,
 ) -> Result<()> {
     let cells = build_cells(&model, &engines, &ollama)?;
 
@@ -167,14 +190,33 @@ pub(crate) fn matrix(
         opts.max_tokens
     );
 
-    let rows = deck_engines::matrix::run_matrix(
-        &cells,
-        &opts.tasks,
-        opts.runs,
-        opts.max_tokens,
-        Duration::from_secs(240),
-        &opts.bins,
-    );
+    // Per-trial heartbeat so long grids show life while running.
+    let progress = |s: &str| eprintln!("[trial] {s}");
+    let rows = match live {
+        Some(addr) => {
+            let (host, port) = parse_host_port(&addr)?;
+            deck_engines::matrix::run_matrix_live(
+                &cells,
+                &host,
+                port,
+                &opts.tasks,
+                opts.runs,
+                opts.max_tokens,
+                workload.as_deref(),
+                Some(&progress),
+            )
+        }
+        None => deck_engines::matrix::run_matrix(
+            &cells,
+            &opts.tasks,
+            opts.runs,
+            opts.max_tokens,
+            Duration::from_secs(240),
+            &opts.bins,
+            workload.as_deref(),
+            Some(&progress),
+        ),
+    };
 
     for r in &rows {
         let tps = r
@@ -215,15 +257,10 @@ pub(crate) fn compare(
     opts: GridOpts,
     seed: u64,
     out: Option<PathBuf>,
+    live: Option<String>,
+    workload: Option<String>,
 ) -> Result<()> {
     let cells = build_cells(&model, &engines, &ollama)?;
-    let compare_opts = deck_engines::compare::CompareOpts {
-        tasks: &opts.tasks,
-        runs: opts.runs,
-        max_tokens: opts.max_tokens,
-        boot_timeout: Duration::from_secs(240),
-        bins: &opts.bins,
-    };
     eprintln!(
         "[compare] grid: {} candidate(s), {} task(s) × {} run(s), seed={seed}",
         cells.len(),
@@ -231,7 +268,33 @@ pub(crate) fn compare(
         opts.runs
     );
 
-    let report = deck_engines::compare::run_compare(&cells, &compare_opts, seed);
+    let progress = |s: &str| eprintln!("[trial] {s}");
+    let report = match live {
+        Some(addr) => {
+            let (host, port) = parse_host_port(&addr)?;
+            deck_engines::compare::run_compare_live(
+                &cells,
+                &host,
+                port,
+                &opts.tasks,
+                opts.runs,
+                opts.max_tokens,
+                workload.as_deref(),
+                seed,
+                Some(&progress),
+            )
+        }
+        None => {
+            let compare_opts = deck_engines::compare::CompareOpts {
+                tasks: &opts.tasks,
+                runs: opts.runs,
+                max_tokens: opts.max_tokens,
+                boot_timeout: Duration::from_secs(240),
+                bins: &opts.bins,
+            };
+            deck_engines::compare::run_compare(&cells, &compare_opts, seed, Some(&progress))
+        }
+    };
 
     println!(
         "trial        {:>6}  {:>7}  {:<5} {:>8}   candidate",

@@ -109,8 +109,16 @@ fn test_stop() -> Result<(), String> {
 }
 
 #[tauri::command]
-fn use_profile(name: String, dry_run: bool, managed: bool) -> Result<UseResult, String> {
-    deck_tauri::use_profile(&name, dry_run, managed).map_err(|e| e.to_string())
+async fn use_profile(name: String, dry_run: bool, managed: bool, app: tauri::AppHandle) -> Result<UseResult, String> {
+    let app2 = app.clone();
+    let name2 = name.clone();
+    blocking(move || {
+        deck_tauri::use_profile_with_progress(&name, dry_run, managed, &|step| {
+            let _ = app2.emit("use-profile-step", serde_json::json!({ "name": &name2, "step": step }));
+        })
+        .map_err(|e| e.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -246,16 +254,19 @@ fn bench_history() -> Result<Vec<deck_tauri::BenchRow>, String> {
 /// and return the scored report for the Compare tab.
 #[tauri::command]
 async fn compare_run(
-    model: String,
+    app: tauri::AppHandle,
+    models: Vec<String>,
     engines: Vec<String>,
     ollama: Vec<String>,
     tasks: Vec<String>,
     runs: u32,
     max_tokens: u32,
     seed: u64,
+    live: Option<String>,
+    workload: Option<String>,
 ) -> Result<deck_tauri::CompareReport, String> {
     blocking(move || {
-        deck_tauri::compare_run(model, engines, ollama, tasks, runs, max_tokens, seed)
+        deck_tauri::compare_run(&app, models, engines, ollama, tasks, runs, max_tokens, seed, live, workload)
     })
     .await
 }
@@ -583,6 +594,36 @@ fn ollama_stop() -> Result<(), String> {
 }
 
 #[tauri::command]
+fn unmanaged_engines() -> Vec<deck_tauri::UnmanagedProcess> {
+    deck_tauri::unmanaged_engines()
+}
+
+#[tauri::command]
+fn unmanaged_start(pid: u32) -> Result<(), String> {
+    deck_tauri::unmanaged_start(pid).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn unmanaged_stop(pid: u32) -> Result<(), String> {
+    deck_tauri::unmanaged_stop(pid).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn external_services() -> Vec<deck_tauri::ExternalService> {
+    deck_tauri::external_services()
+}
+
+#[tauri::command]
+fn external_service_start(unit: String) -> Result<(), String> {
+    deck_tauri::external_service_start(&unit).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn external_service_stop(unit: String) -> Result<(), String> {
+    deck_tauri::external_service_stop(&unit).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn workflow_seed() -> Result<String, String> {
     blocking(move || deck_tauri::workflow_seed().map_err(|e| e.to_string())).await
 }
@@ -695,6 +736,10 @@ fn main() {
     // "Failed to create GBM buffer ... Invalid argument" and the window stays
     // black. Force the software compositing fallback before WebKit spawns.
     unsafe { std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1") };
+    // WebKitGTK on NVIDIA Wayland also fails to present content (blank
+    // window). The .desktop file sets GDK_BACKEND=x11 to route through
+    // XWayland — set_var here won't work because GTK reads the backend
+    // at dlopen time, before main() runs. Keep this comment as a reminder.
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             scan_with_event,
@@ -761,6 +806,12 @@ fn main() {
             engine_bin_clear,
             port_map_status,
             engine_stop,
+            unmanaged_engines,
+            unmanaged_start,
+            unmanaged_stop,
+            external_services,
+            external_service_start,
+            external_service_stop,
             feeds_poll,
             feeds_list,
             feeds_rank,

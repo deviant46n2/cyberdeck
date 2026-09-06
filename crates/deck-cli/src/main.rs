@@ -305,6 +305,10 @@ enum BenchCmd {
         /// Per-engine binary override, "engine=path" (repeatable; else profile default)
         #[arg(long)]
         bin: Vec<String>,
+        /// Sample an already-running server at "host:port" instead of booting
+        /// headless cells (VRAM-safe on single-GPU machines)
+        #[arg(long)]
+        live: Option<String>,
         /// Write machine-readable results (all trials) to this JSON path
         #[arg(long)]
         out: Option<PathBuf>,
@@ -340,6 +344,10 @@ enum BenchCmd {
         /// PRNG seed for opaque trial-id assignment (tie-breaks re-runs)
         #[arg(long, default_value_t = 20260828)]
         seed: u64,
+        /// Sample an already-running server at "host:port" instead of booting
+        /// headless cells (VRAM-safe on single-GPU machines)
+        #[arg(long)]
+        live: Option<String>,
         /// Write the full blind report (candidates + scored trials) to this JSON path
         #[arg(long)]
         out: Option<PathBuf>,
@@ -663,11 +671,12 @@ fn main() -> Result<()> {
                 runs,
                 max_tokens,
                 bin,
+                live,
                 out,
             } => {
                 let tasks = cmd::bench::resolve_tasks(&task, workload.as_deref())?;
                 let opts = cmd::bench::GridOpts::parse_parts(tasks, runs, max_tokens, &bin)?;
-                cmd::bench::matrix(model, engines, ollama, opts, out)
+                cmd::bench::matrix(model, engines, ollama, opts, out, live, workload)
             }
             BenchCmd::Compare {
                 model,
@@ -679,11 +688,12 @@ fn main() -> Result<()> {
                 max_tokens,
                 bin,
                 seed,
+                live,
                 out,
             } => {
                 let tasks = cmd::bench::resolve_tasks(&task, workload.as_deref())?;
                 let opts = cmd::bench::GridOpts::parse_parts(tasks, runs, max_tokens, &bin)?;
-                cmd::bench::compare(model, engines, ollama, opts, seed, out)
+                cmd::bench::compare(model, engines, ollama, opts, seed, out, live, workload)
             }
         },
         Commands::Bringup {
