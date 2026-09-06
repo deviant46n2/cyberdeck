@@ -17,22 +17,30 @@ const VERDICT_COLOR: Record<string, string> = {
 /** PORT MAP — the residency card. One row per engine's fixed slot: live
  * state, the profile bound to it (from the residents table), and the latest
  * recorded tok/s so you can see where to type before you type. Stopping a
- * slot clears its binding and leaves the other residents untouched. */
+ * slot clears its binding and leaves the other residents untouched.
+ *
+ * Also shows llama-server processes not in cyberdeck's slot system — these
+ * may be truly ad-hoc or live in a user-managed systemd unit. The STOP
+ * button uses systemctl stop when a unit is detected (avoiding restart
+ * loops), or SIGTERM for raw processes. */
 export default function PortMap({ onChanged }: { onChanged?: () => void }) {
   const [slots, setSlots] = useState<api.PortMapSlot[] | null>(null);
   const [bench, setBench] = useState<Map<string, import("../lib/portmap").SlotBench>>(
     () => new Map()
   );
+  const [unmanaged, setUnmanaged] = useState<api.UnmanagedProcess[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState("");
 
   const load = useCallback(async () => {
-    const [s, hist] = await Promise.all([
+    const [s, hist, um] = await Promise.all([
       api.portMapStatus("127.0.0.1"),
       api.benchHistory(),
+      api.unmanagedEngines(),
     ]);
     setSlots(sortSlots(s));
     setBench(latestBySlot(hist));
+    setUnmanaged(um);
   }, []);
 
   useEffect(() => {
@@ -60,6 +68,34 @@ export default function PortMap({ onChanged }: { onChanged?: () => void }) {
     setMsg("");
     try {
       await api.engineStart(engine);
+      await load();
+      onChanged?.();
+    } catch (e) {
+      setMsg(String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const stopPid = async (pid: number) => {
+    setBusy(`pid:${pid}`);
+    setMsg("");
+    try {
+      await api.unmanagedStop(pid);
+      await load();
+      onChanged?.();
+    } catch (e) {
+      setMsg(String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const startPid = async (pid: number) => {
+    setBusy(`start:${pid}`);
+    setMsg("");
+    try {
+      await api.unmanagedStart(pid);
       await load();
       onChanged?.();
     } catch (e) {
@@ -142,6 +178,61 @@ export default function PortMap({ onChanged }: { onChanged?: () => void }) {
           );
         })
       )}
+
+      {/* Ad-hoc processes not managed by systemd — these eat VRAM silently */}
+      {unmanaged.length > 0 && (
+        <>
+          <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginTop: 10, borderTop: "1px solid var(--border)", paddingTop: 8 }}>
+            <h3 style={{ fontSize: 10, letterSpacing: 0.6, color: "var(--warn)", margin: 0 }}>UNMANAGED PROCESSES</h3>
+            <span className="dim" style={{ fontSize: 9 }}>
+              not part of cyberdeck's slot system · free VRAM by stopping
+            </span>
+          </div>
+          {unmanaged.map((p) => (
+            <div key={p.pid} className="row" style={{ gap: 8, marginTop: 6, alignItems: "center" }}>
+              <span
+                title={p.systemd_unit ? `systemd unit: ${p.systemd_unit}` : "ad-hoc (no systemd)"}
+                style={{
+                  width: 7, height: 7, borderRadius: "50%", flexShrink: 0,
+                  background: p.systemd_unit ? "var(--cyan)" : "var(--warn)",
+                  boxShadow: "none",
+                }}
+              />
+              <span className="mono" style={{ width: 92, fontSize: 11 }}>{p.display}</span>
+              <span className="mono dim" style={{ width: 58, fontSize: 10 }}>
+                {p.port != null ? `:${p.port}` : ""}
+              </span>
+              <span className="mono" style={{ flex: 1, fontSize: 10, color: p.systemd_unit ? "var(--cyan)" : "var(--dim2)" }}>
+                {p.systemd_unit ?? `pid:${p.pid}`}
+              </span>
+              <span className="mono dim" style={{ fontSize: 9, width: 92, textAlign: "right" }}>
+                {p.systemd_unit ? "systemd" : "ad-hoc"}
+              </span>
+              {p.systemd_unit && (
+                <button
+                  className="ghost"
+                  style={{ fontSize: 9, padding: "3px 7px", borderColor: "var(--pass)", color: "var(--pass)" }}
+                  onClick={() => startPid(p.pid)}
+                  disabled={busy === `start:${p.pid}`}
+                  title={`systemctl start ${p.systemd_unit}`}
+                >
+                  {busy === `start:${p.pid}` ? "…" : "START"}
+                </button>
+              )}
+              <button
+                className="ghost"
+                style={{ fontSize: 9, padding: "3px 7px", borderColor: "var(--oom)", color: "var(--oom)" }}
+                onClick={() => stopPid(p.pid)}
+                disabled={busy === `pid:${p.pid}`}
+                title={p.systemd_unit ? `systemctl stop ${p.systemd_unit}` : `kill pid ${p.pid} — sends SIGTERM`}
+              >
+                {busy === `pid:${p.pid}` ? "…" : "STOP"}
+              </button>
+            </div>
+          ))}
+        </>
+      )}
+
       {msg && <div style={{ color: "var(--oom)", marginTop: 8, fontSize: 10 }}>{msg}</div>}
     </div>
   );

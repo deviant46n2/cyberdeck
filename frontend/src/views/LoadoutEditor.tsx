@@ -220,14 +220,14 @@ export default function LoadoutEditor({
 
           {/* engine switch + advanced */}
           <div className="row" style={{gap:8, marginBottom:10}}>
-            {(["LlamaCpp", "FreeToken"] as const).map((e) => (
+            {(["LlamaCpp", "UncensoredLlamaCpp", "FreeToken"] as const).map((e) => (
               <button
                 key={e}
                 className={p.engine === e ? "action" : "ghost"}
                 style={{fontSize:11, padding:"5px 10px"}}
                 onClick={() => set("engine", e)}
               >
-                {p.engine === e ? "● " : "○ "}{e === "LlamaCpp" ? "llama.cpp" : "freetoken"}
+                {p.engine === e ? "● " : "○ "}{e === "LlamaCpp" ? "llama.cpp" : e === "UncensoredLlamaCpp" ? "uncensored" : "freetoken"}
               </button>
             ))}
             <span className="dim" style={{fontSize:10, maxWidth:340}}>

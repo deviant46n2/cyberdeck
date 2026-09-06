@@ -96,7 +96,7 @@ pub fn detect_engine_version(engine: Engine, host: &str, port: u16) -> Option<St
     }
     // Strategy 3: run engine binary --version
     let bin_name = match engine {
-        Engine::LlamaCpp => "llama-server",
+        Engine::LlamaCpp | Engine::UncensoredLlamaCpp => "llama-server",
         Engine::FreeToken => "ft",
         Engine::Ollama => "ollama",
     };

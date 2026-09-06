@@ -24,7 +24,7 @@ pub(crate) fn generated_dir() -> PathBuf {
 /// Builds the `ExecStart` argument list for an engine from a profile.
 pub fn build_args(p: &Profile) -> Vec<String> {
     match p.engine {
-        Engine::LlamaCpp => {
+        Engine::LlamaCpp | Engine::UncensoredLlamaCpp => {
             let mut a = vec![
                 "-m".into(),
                 p.model.clone(),
@@ -143,7 +143,7 @@ pub fn render_unit(p: &Profile) -> String {
     s.push_str(&format!("ExecStart={exec}\n"));
     s.push_str("Restart=on-failure\n");
     s.push_str("RestartSec=5\n");
-    if p.engine == Engine::LlamaCpp {
+    if p.engine == Engine::LlamaCpp || p.engine == Engine::UncensoredLlamaCpp {
         s.push_str("Environment=LLAMACPP_API_KEY=llamacpp-local\n");
     }
     if p.engine == Engine::Ollama {

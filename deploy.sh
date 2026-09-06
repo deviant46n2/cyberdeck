@@ -15,6 +15,8 @@ mkdir -p "$INSTALL_DIR"
 cp target/release/cyberdeck "$INSTALL_DIR/cyberdeck.tmp"
 mv -f "$INSTALL_DIR/cyberdeck.tmp" "$INSTALL_DIR/cyberdeck"
 chmod +x "$INSTALL_DIR/cyberdeck"
+# Keep cyberdeck-stable in sync (the docked launcher)
+cp "$INSTALL_DIR/cyberdeck" "$INSTALL_DIR/cyberdeck-stable"
 
 # Install icon
 mkdir -p "$HOME/.local/share/icons"
@@ -26,7 +28,7 @@ cat > "$DESKTOP_DIR/cyberdeck.desktop" <<EOF
 [Desktop Entry]
 Name=Cyberdeck
 Comment=Local LLM fleet manager
-Exec=$INSTALL_DIR/cyberdeck
+Exec=env GDK_BACKEND=x11 $INSTALL_DIR/cyberdeck
 Icon=$HOME/.local/share/icons/cyberdeck.png
 Terminal=false
 Type=Application

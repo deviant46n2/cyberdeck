@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum Engine {
     LlamaCpp,
+    UncensoredLlamaCpp,
     FreeToken,
     Ollama,
 }
@@ -71,7 +72,17 @@ impl Engine {
                 display: "llama.cpp",
                 unit_name: "llama-server.service",
                 default_port: 18000,
-                test_port: 18999,
+                test_port: 18995,
+                model_source: ModelSource::LocalPath,
+                protocol: EngineProtocol::OpenAiChat,
+                is_system_service: false,
+            },
+            Engine::UncensoredLlamaCpp => &EngineDescriptor {
+                id: "uncensored",
+                display: "Uncensored",
+                unit_name: "llama-uncensored.service",
+                default_port: 18999,
+                test_port: 18996,
                 model_source: ModelSource::LocalPath,
                 protocol: EngineProtocol::OpenAiChat,
                 is_system_service: false,
@@ -99,8 +110,8 @@ impl Engine {
         }
     }
 
-    pub fn all() -> [Engine; 3] {
-        [Engine::LlamaCpp, Engine::FreeToken, Engine::Ollama]
+    pub fn all() -> [Engine; 4] {
+        [Engine::LlamaCpp, Engine::UncensoredLlamaCpp, Engine::FreeToken, Engine::Ollama]
     }
 
     /// The store id (`llamacpp` / `freetoken` / `ollama`).
@@ -138,6 +149,7 @@ impl Engine {
     pub fn parse(s: &str) -> Option<Engine> {
         match s.to_ascii_lowercase().as_str() {
             "llamacpp" | "llama" | "llama.cpp" => Some(Engine::LlamaCpp),
+            "uncensored" | "uncensoredllamacpp" | "uncensored-llamacpp" => Some(Engine::UncensoredLlamaCpp),
             "freetoken" | "ft" => Some(Engine::FreeToken),
             "ollama" => Some(Engine::Ollama),
             _ => None,
@@ -453,16 +465,16 @@ mod tests {
         // collides with any live slot.
         let live: Vec<u16> = Engine::all().iter().map(|e| e.default_port()).collect();
         let test: Vec<u16> = Engine::all().iter().map(|e| e.test_port()).collect();
-        assert_eq!(live.len(), 3);
-        assert_eq!(test.len(), 3);
+        assert_eq!(live.len(), 4);
+        assert_eq!(test.len(), 4);
         let mut ul = live.clone();
         ul.sort_unstable();
         ul.dedup();
-        assert_eq!(ul.len(), 3, "live ports must be unique");
+        assert_eq!(ul.len(), 4, "live ports must be unique");
         let mut ut = test.clone();
         ut.sort_unstable();
         ut.dedup();
-        assert_eq!(ut.len(), 3, "test ports must be unique");
+        assert_eq!(ut.len(), 4, "test ports must be unique");
         assert!(
             test.iter().all(|t| !live.contains(t)),
             "test slots must not collide with live slots"

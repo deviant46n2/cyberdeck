@@ -4,7 +4,6 @@ import * as api from "../api";
 import * as br from "../lib/br";
 import { latestBySlot, slotKey } from "../lib/portmap";
 import EngineBins from "./EngineBins";
-import PortMap from "./PortMap";
 import { useEngineList } from "../lib/engines";
 import TuiWindow from "../components/TuiWindow";
 
@@ -32,7 +31,6 @@ export default function Hud({
   const [loadout, setLoadout] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showBins, setShowBins] = useState(false);
-  const [showPorts, setShowPorts] = useState(true);
   const [ctx, setCtx] = useState(32768);
   const [bringupEngine, setBringupEngine] = useState<api.EngineId>("llamacpp");
   const localEngines = useEngineList("LocalPath");
@@ -282,9 +280,6 @@ export default function Hud({
         )}
         <button className="ghost" style={{fontSize:11, padding:"6px 10px"}} onClick={()=>setShowAdvanced((v)=>!v)}>
           {showAdvanced ? "− basic" : "+ controls"}
-        </button>
-        <button className="ghost" style={{fontSize:11, padding:"6px 10px"}} onClick={()=>setShowPorts((v)=>!v)}>
-          {showPorts ? "− ports" : "ports"}
         </button>
         <button className="action" style={{fontSize:11, padding:"6px 10px", fontWeight:"bold"}} onClick={()=>spawnTui()} title="spawn a real opencode TUI pane on the canvas">
           + TUI

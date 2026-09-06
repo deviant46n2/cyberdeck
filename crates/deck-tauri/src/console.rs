@@ -49,6 +49,7 @@ pub struct OpStarted {
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub enum Engine {
     LlamaCpp,
+    UncensoredLlamaCpp,
     FreeToken,
     Ollama,
 }
@@ -57,6 +58,7 @@ impl Engine {
     fn default_port(&self) -> u16 {
         match self {
             Engine::LlamaCpp => 18000,
+            Engine::UncensoredLlamaCpp => 18999,
             Engine::FreeToken => 1919,
             Engine::Ollama => 11434,
         }

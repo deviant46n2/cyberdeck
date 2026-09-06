@@ -446,7 +446,7 @@ mod tests {
     fn resolve_leaves_bare_names_and_existing_files() {
         let conn = fresh();
         set_engine_bin(&conn, "ollama", "/opt/ollama/bin/ollama").unwrap();
-        // Bare PATH-resolvable name stays put even when a config exists.
+        // Engine bin is always authoritative when configured — overrides bare names.
         let p = Profile {
             engine: Engine::Ollama,
             bin: "ollama".into(),
@@ -454,10 +454,11 @@ mod tests {
         };
         assert_eq!(
             resolve_engine_bin(&conn, p).unwrap().bin,
-            PathBuf::from("ollama")
+            PathBuf::from("/opt/ollama/bin/ollama")
         );
 
-        // An existing absolute path wins over configured config.
+        // Engine bin is always authoritative when configured — overrides even
+        // existing absolute paths (the user explicitly chose this binary).
         let temp = std::env::temp_dir().join("cyberdeck-resolve-test.bin");
         std::fs::write(&temp, b"#!").unwrap();
         set_engine_bin(&conn, "llamacpp", "/opt/llama/llama-server").unwrap();
@@ -466,7 +467,10 @@ mod tests {
             bin: temp.clone(),
             ..Default::default()
         };
-        assert_eq!(resolve_engine_bin(&conn, p).unwrap().bin, temp);
+        assert_eq!(
+            resolve_engine_bin(&conn, p).unwrap().bin,
+            PathBuf::from("/opt/llama/llama-server")
+        );
         let _ = std::fs::remove_file(&temp);
     }
 

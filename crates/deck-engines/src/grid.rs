@@ -22,7 +22,7 @@ use crate::matrix::MatrixCell;
 pub fn resolve_bins(explicit: &std::collections::HashMap<Engine, PathBuf>) -> std::collections::HashMap<Engine, PathBuf> {
     let mut bins = explicit.clone();
     if let Ok(conn) = deck_core::store::open(&deck_core::store::default_db_path()) {
-        for e in [Engine::LlamaCpp, Engine::FreeToken, Engine::Ollama] {
+        for e in [Engine::LlamaCpp, Engine::UncensoredLlamaCpp, Engine::FreeToken, Engine::Ollama] {
             if !bins.contains_key(&e)
                 && let Ok(Some(b)) = deck_core::store::get_engine_bin(&conn, e.store_id())
             {

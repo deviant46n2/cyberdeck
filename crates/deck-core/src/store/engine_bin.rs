@@ -54,16 +54,15 @@ fn bin_looks_resolvable(bin: &std::path::Path) -> bool {
     !s.contains(['/', '\\']) || bin.is_file()
 }
 
-/// Substitute the configured per-engine executable path into a profile when
-/// its resolved bin does not exist on disk. Leaves explicit, existing binaries
-/// (and bare PATH-resolvable names like `ollama`) untouched. This is the one
-/// piece of machine-specific config a profile should not carry.
+/// Substitute the configured per-engine executable path into a profile.
+/// When an engine_bin is configured, it is always used — the profile's default
+/// bin is just a placeholder. This is the one machine-specific fact a profile
+/// (or the CLI) should not be forced to carry.
 pub fn resolve_engine_bin(
     conn: &Connection,
     mut p: crate::profile::Profile,
 ) -> Result<crate::profile::Profile> {
-    if !bin_looks_resolvable(&p.bin)
-        && let Some(b) = get_engine_bin(conn, p.engine.store_id())?
+    if let Some(b) = get_engine_bin(conn, p.engine.store_id())?
         && b != p.bin.to_string_lossy()
     {
         p.bin = std::path::PathBuf::from(b);

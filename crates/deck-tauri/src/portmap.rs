@@ -134,3 +134,45 @@ pub fn ollama_stop() -> anyhow::Result<()> {
     deck_engines::stop_system("ollama.service")?;
     Ok(())
 }
+
+// ---- unmanaged llama-server processes (ad-hoc, not via systemd) ----
+
+/// Re-export the unmanaged process type for the Tauri command.
+pub type UnmanagedProcess = deck_engines::unmanaged::UnmanagedProcess;
+
+/// List all running llama-server processes NOT managed by systemd.
+pub fn unmanaged_engines() -> Vec<UnmanagedProcess> {
+    deck_engines::unmanaged::discover_unmanaged().unwrap_or_default()
+}
+
+/// Start (or restart) an unmanaged process via its systemd unit. Only works
+/// for processes that live inside a systemd user unit — truly ad-hoc
+/// processes cannot be started because we don't store their command line.
+pub fn unmanaged_start(pid: u32) -> anyhow::Result<()> {
+    deck_engines::unmanaged::start_unit(pid)
+}
+
+/// Kill an unmanaged llama-server process by PID (SIGTERM).
+pub fn unmanaged_stop(pid: u32) -> anyhow::Result<()> {
+    deck_engines::unmanaged::stop_pid(pid)
+}
+
+// ---- external systemd services (hand-rolled, not cyberdeck-managed) ----
+
+/// Re-export the external service type for the Tauri command.
+pub type ExternalService = deck_engines::external::ExternalService;
+
+/// List all external systemd user services running llama-server.
+pub fn external_services() -> Vec<ExternalService> {
+    deck_engines::external::discover_external().unwrap_or_default()
+}
+
+/// Start an external service by its systemd unit name.
+pub fn external_service_start(unit: &str) -> anyhow::Result<()> {
+    deck_engines::external::start_service(unit)
+}
+
+/// Stop an external service by its systemd unit name.
+pub fn external_service_stop(unit: &str) -> anyhow::Result<()> {
+    deck_engines::external::stop_service(unit)
+}

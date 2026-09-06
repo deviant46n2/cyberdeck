@@ -45,7 +45,7 @@ pub(crate) fn new(
 pub(crate) fn import(engine: String, script: PathBuf, name: String) -> Result<()> {
     let eng = parse_engine(&engine)?;
     let p = match eng {
-        deck_core::profile::Engine::LlamaCpp => {
+        deck_core::profile::Engine::LlamaCpp | deck_core::profile::Engine::UncensoredLlamaCpp => {
             deck_core::importer::import_llamacpp_script(&script, &name)?
         }
         deck_core::profile::Engine::FreeToken => {
