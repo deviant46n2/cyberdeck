@@ -80,19 +80,44 @@ pub fn render_profile_unit(p: Profile) -> String {
 /// engine's port so the rest of the stack follows the swap. Off by default:
 /// the Advisory contract preserves the alias+port so clients don't reconfigure.
 pub fn use_profile(name: &str, dry_run: bool, managed: bool) -> anyhow::Result<UseResult> {
+    use_profile_with_progress(name, dry_run, managed, &|_| {})
+}
+
+/// Like `use_profile`, but calls `progress` with step-by-step status strings
+/// so the UI can display real-time progress during the apply (unit install,
+/// service start, health check, ctx-ladder walk).
+pub fn use_profile_with_progress(
+    name: &str,
+    dry_run: bool,
+    managed: bool,
+    progress: &dyn Fn(&str),
+) -> anyhow::Result<UseResult> {
     let db = deck_core::store::default_db_path();
     let mut conn = deck_core::store::open(&db)?;
     deck_core::store::ensure_profile_schema(&conn)?;
     let p = deck_core::store::get_profile(&conn, name)?
         .ok_or_else(|| anyhow::anyhow!("no loadout named '{name}'"))?;
+    // The profile's stored bin is a placeholder — the per-engine configured
+    // bin is authoritative on this machine. Without this the LOAD path renders
+    // a unit pointing at a nonexistent binary (203/EXEC) and the health check
+    // can never pass, so the whole ctx ladder fails silently.
+    let p = deck_core::store::resolve_engine_bin(&conn, p)?;
     // Convergence: an applied loadout must have a vault row (a profile saved
     // while its file was remote picks the row up the moment it becomes local).
     deck_core::store::ensure_profile_model(&conn, &p)?;
     deck_core::store::set_active(&mut conn, name)?;
+    if !dry_run {
+        // Record the slot binding the Vault's loaded-attribution reads.
+        // None = track which profile is live without touching resident mode
+        // (bringup/CLI set Some(..) explicitly). Without this, STOP clears
+        // the binding and a UI LOAD never restores it: slot UP, model unmarked.
+        deck_core::store::set_resident(&conn, p.engine.store_id(), name, None)?;
+    }
+    progress(&format!("engine bin: {}", p.bin.display()));
     let unit = deck_engines::render_unit(&p);
     let mut rewired = Vec::new();
     if !dry_run {
-        deck_engines::apply(&p, false)?;
+        deck_engines::apply_with_progress(&p, false, progress)?;
         if managed {
             // per-slot: rewrite only this profile's engine provider block so a
             // managed bind never disturbs another resident's baseURL

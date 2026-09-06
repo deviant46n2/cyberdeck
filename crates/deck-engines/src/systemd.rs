@@ -95,7 +95,7 @@ pub fn install(p: &Profile, dry_run: bool) -> Result<Vec<PathBuf>> {
     let gen_path = gen_dir.join(unit_name);
     std::fs::write(&gen_path, &content)?;
 
-    if p.engine == Engine::LlamaCpp {
+    if p.engine == Engine::LlamaCpp || p.engine == Engine::UncensoredLlamaCpp {
         let dropin_dir = dir.join(format!("{}.d", unit_name.trim_end_matches(".service")));
         std::fs::create_dir_all(&dropin_dir)?;
         std::fs::write(
@@ -164,27 +164,40 @@ pub fn is_active(unit: &str, system: bool) -> bool {
 /// walks the ctx ladder (rewriting --ctx-size) and retries. Final fallback
 /// restores the previously-active unit from its .bak if present.
 pub fn apply(p: &Profile, dry_run: bool) -> Result<()> {
+    apply_with_progress(p, dry_run, &|_| {})
+}
+
+/// Like `apply`, but calls `progress` at each step with a human-readable status
+/// string so the UI can show what's happening during the potentially slow
+/// health_wait / ctx-ladder walk.
+pub fn apply_with_progress(p: &Profile, dry_run: bool, progress: &dyn Fn(&str)) -> Result<()> {
     let unit = p.engine.systemd_unit();
+    progress("installing unit file");
     install(p, dry_run)?;
     if dry_run {
         return Ok(());
     }
+    progress("starting service");
     start(unit)?;
+    progress("waiting for health check (60s timeout)");
     if health_wait(&p.host, p.port, Duration::from_secs(60)) {
+        progress("healthy");
         return Ok(());
     }
-    eprintln!("health check failed for '{}', walking ctx ladder", p.name);
-    for ctx in p.ctx_ladder.iter().copied() {
+    progress(&format!("health check failed for '{}', walking ctx ladder", p.name));
+    for (i, ctx) in p.ctx_ladder.iter().copied().enumerate() {
         let mut reduced = p.clone();
         reduced.ctx_size = ctx;
-        eprintln!("retry with ctx-size={ctx}");
+        progress(&format!("retry {}/{}: ctx={}", i + 1, p.ctx_ladder.len(), ctx));
         install(&reduced, false)?;
         start(unit)?;
+        progress(&format!("waiting for health at ctx={ctx} (60s timeout)"));
         if health_wait(&reduced.host, reduced.port, Duration::from_secs(60)) {
+            progress(&format!("healthy at ctx={ctx}"));
             return Ok(());
         }
     }
-    eprintln!("all ctx steps failed; attempting last-good restore");
+    progress("all ctx steps failed; attempting last-good restore");
     let dir = systemd_dir();
     if restore_last_good(&dir, unit).unwrap_or(false) {
         let _ = start(unit);

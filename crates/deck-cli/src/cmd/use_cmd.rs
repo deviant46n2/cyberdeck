@@ -8,6 +8,9 @@ pub(crate) fn run(name: String, dry_run: bool, managed: bool, resident: bool) ->
     let (_db, conn) = with_profiles_db()?;
     let p = deck_core::store::get_profile(&conn, &name)?
         .ok_or_else(|| anyhow::anyhow!("no loadout named '{name}'"))?;
+    // Same authoritative-bin rule as the Tauri LOAD path: the stored bin is a
+    // placeholder, the per-engine configured bin is what actually runs.
+    let p = deck_core::store::resolve_engine_bin(&conn, p)?;
     deck_core::store::set_active(&conn, &name)?;
     // Record what this slot serves, even in dry-run, so the PORT MAP reflects
     // reality. `resident` marks it as a coexisting resident rather than a swap.

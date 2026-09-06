@@ -20,6 +20,8 @@ mod health;
 mod inference;
 mod systemd;
 mod unit;
+pub mod unmanaged;
+pub mod external;
 
 pub mod status;
 
@@ -38,10 +40,20 @@ pub use health::{
 };
 pub use inference::run_prompt;
 pub use systemd::{
-    apply, backup_existing, backup_file, install, is_active, reload_daemon, restore_last_good,
-    start, start_system, stop, stop_system,
+    apply, apply_with_progress, backup_existing, backup_file, install, is_active, reload_daemon,
+    restore_last_good, start, start_system, stop, stop_system,
 };
 pub use unit::{build_args, render_unit};
+
+/// Unit names owned by cyberdeck — derived from the engine registry (the one
+/// truth) so a newly added engine is automatically excluded from external /
+/// unmanaged discovery instead of showing up twice in the UI.
+pub fn cyberdeck_units() -> Vec<&'static str> {
+    deck_core::profile::Engine::all()
+        .iter()
+        .map(|e| e.systemd_unit())
+        .collect()
+}
 pub use workflow::{AgenticRunner, EchoRunner, ExecReport, NodeOutcome, NodeResult, NodeRunner, StatelessRunner, execute, node_to_matrix_row};
 
 #[cfg(test)]
