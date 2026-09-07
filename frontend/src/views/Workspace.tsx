@@ -1,29 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import * as api from "../api";
-import * as sessionStore from "../lib/sessions";
-import { latestBySlot, slotKey } from "../lib/portmap";
 import TuiWindow from "../components/TuiWindow";
-import SessionPanel from "../components/SessionPanel";
-import LoadoutEditor, { defaultProfile } from "./LoadoutEditor";
 
-const ENGINE_NODES: { engine: string; host: string; port: number }[] = [
-  { engine: "LlamaCpp", host: "127.0.0.1", port: 18000 },
-  { engine: "FreeToken", host: "127.0.0.1", port: 1919 },
-  { engine: "Ollama", host: "127.0.0.1", port: 11434 },
-];
-
-// A model ref is local only when its prefix is a resident engine (llamacpp /
-// freetoken / ollama) or it's a bare GGUF path with no provider segment.
-// Everything with a known-cloud prefix (openrouter/groq/gemini/deepseek/…)
-// routes to an online provider.
 const LOCAL_PREFIXES = ["llamacpp/", "freetoken/", "ollama/"];
-function isLocalModel(ref: string): boolean {
-  const r = ref.toLowerCase();
-  if (!r.includes("/")) return true;
-  if (LOCAL_PREFIXES.some((p) => r.startsWith(p))) return true;
-  return false;
-}
 
 export default function Workspace({
   models,
@@ -35,32 +14,7 @@ export default function Workspace({
   profiles: api.ProfileRow[];
   onChanged: () => void;
 }) {
-  const [prompt, setPrompt] = useState("");
-  const [dir, setDir] = useState("/home/deviant/Projects/cyberdeck");
-  const [auto, setAuto] = useState(false);
-  const [loadout, setLoadout] = useState("");
-  const [harnessModel, setHarnessModel] = useState("");
-  const [customModel, setCustomModel] = useState("");
-  // Online fleet: cloud providers + their live /v1/models catalogs, so the
-  // model picker lists real free-tier models instead of demanding the user
-  // type model ids by heart.
-  const [fleet, setFleet] = useState<api.FleetView | null>(null);
-  const [catalog, setCatalog] = useState<Map<string, api.ProviderModel[]>>(new Map());
-  const [catalogLoading, setCatalogLoading] = useState(false);
-  const [cloudErr, setCloudErr] = useState("");
-  // Per-provider key status (masked + source) so the picker shows which
-  // providers have a stored key without ever rendering the raw secret.
-  const [keyStatus, setKeyStatus] = useState<Map<string, api.SecretView>>(new Map());
-  const [ctx, setCtx] = useState(32768);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [status, setStatus] = useState<api.EngineStatus[]>([]);
-  // Live opencode_run sessions — tracks running state + canvas card positions.
-  // Session history & persistence use sessionStore (DB-backed) instead.
-  const [liveSessions, setLiveSessions] = useState<{ id: string; prompt: string; log: string[]; running: boolean; model?: string }[]>([]);
   const [panes, setPanes] = useState<{ id: string; dir: string; pos: { x: number; y: number } }[]>([]);
-  const cardPos = useRef<Map<string, { x: number; y: number }>>(new Map());
-  const sessionCountRef = useRef(0);
-  // Canvas zoom + pan
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const zoomRef = useRef(1);
@@ -68,89 +22,134 @@ export default function Workspace({
   const spaceHeld = useRef(false);
   useEffect(() => { zoomRef.current = zoom; }, [zoom]);
   useEffect(() => { panRef.current = pan; }, [pan]);
-  const [residents, setResidents] = useState<api.PortMapSlot[]>([]);
-  const [benchBySlot, setBenchBySlot] = useState<Map<string, { tps: number; ctx: number; model: string; at: number }>>(() => new Map());
-  const sessionsRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-  const runningSessionIds = useRef<Set<string>>(new Set());
-  const active = profiles.find((p) => p.name === loadout) ?? null;
+  const canvasRef = useRef<HTMLDivElement>(null);
 
   const [selectedTui, setSelectedTui] = useState<string | null>(null);
-  const [selectedNode, setSelectedNode] = useState<string | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
-
-  // workflows (kept for bench + optional DAG, hidden by default for plain-terminal birds-eye)
-  const [workflows, setWorkflows] = useState<api.Workflow[]>([]);
-  const [selectedWf, setSelectedWf] = useState<string>("");
-  const [showWorkflows, setShowWorkflows] = useState(false);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [runner, setRunner] = useState<"stateless" | "agentic" | "echo">("echo");
-  const [wfDir, setWfDir] = useState("");
-  const [kickoffTask, setKickoffTask] = useState("");
-  const [wfMsg, setWfMsg] = useState("");
-  const [bench, setBench] = useState<api.RoleBenchRow[]>([]);
-  const [loopBench, setLoopBench] = useState<api.LoopBenchRow | null>(null);
-  const [editing, setEditing] = useState<api.Profile | null>(null);
-  const [modelPaths, setModelPaths] = useState<string[]>([]);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [harnessErr, setHarnessErr] = useState("");
-  const [pending, setPending] = useState(false);
-  const [tuiErr, setTuiErr] = useState("");
-  // Fullscreen canvas mode: collapses all chrome (header / left column /
-  // bottom bar / drawer) to floating overlays so the canvas is the whole view.
-  const [fullCanvas, setFullCanvas] = useState(false);
-  // SELECT tool: click-select 2+ terminals, then CONNECT TOGETHER → full-mesh
-  // loop module. Only active while the select tool is armed.
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  // Single spawn dialog: one spot to add a terminal with harness + local/cloud
-  // model + role configured up front.
-  const [spawnOpen, setSpawnOpen] = useState(false);
-  const [spawnHost, setSpawnHost] = useState<string>("local");
-  const [spawnModel, setSpawnModel] = useState<string>("");
-  const [spawnRole, setSpawnRole] = useState<string>("");
-  // TUI roles + loopable edges — plain terminals become role-bound loop nodes without app-side model wiring
   const [tuiRoles, setTuiRoles] = useState<Map<string, string>>(new Map());
-  const tuiRolesRef = useRef<Map<string, string>>(new Map());
-  useEffect(() => { tuiRolesRef.current = tuiRoles; }, [tuiRoles]);
   const [tuiEdges, setTuiEdges] = useState<api.WorkflowEdge[]>([]);
   const [connectingFrom, setConnectingFrom] = useState<string | null>(null);
-  const [humanGate, setHumanGate] = useState<{ code: string; from: string; to: string } | null>(null);
-  const [wfTuiMap, setWfTuiMap] = useState<Map<string, string>>(new Map());
-  // Session panel: the selected session for detail view.
-  const [selectedSession, setSelectedSession] = useState<string | null>(null);
-  const [sessionList, setSessionList] = useState<sessionStore.Session[]>([]);
+  const [spawnOpen, setSpawnOpen] = useState(false);
+  const [spawnHost, setSpawnHost] = useState("local");
+  const [spawnModel, setSpawnModel] = useState("");
+  const [spawnRole, setSpawnRole] = useState("");
+  const [tuiErr, setTuiErr] = useState("");
+  const [fleet, setFleet] = useState<api.FleetView | null>(null);
+  const [catalog, setCatalog] = useState<Map<string, api.ProviderModel[]>>(new Map());
+  const [catalogLoading, setCatalogLoading] = useState(false);
 
-  // Initialize the session store on mount.
+  // Canvas text labels
+  type CanvasLabel = { id: string; pos: { x: number; y: number }; text: string };
+  const [labels, setLabels] = useState<CanvasLabel[]>([]);
+  const [editingLabel, setEditingLabel] = useState<string | null>(null);
+
+  // Active tool: "select" | "text" | "delete"
+  const [tool, setTool] = useState<"select" | "text" | "delete">("select");
+
+  // Saved workspaces
+  type SavedWorkspace = {
+    id: string;
+    name: string;
+    panes: { id: string; dir: string; pos: { x: number; y: number } }[];
+    roles: [string, string][];
+    edges: api.WorkflowEdge[];
+    labels: { id: string; pos: { x: number; y: number }; text: string }[];
+    zoom: number;
+    pan: { x: number; y: number };
+    savedAt: number;
+  };
+  const [workspaces, setWorkspaces] = useState<SavedWorkspace[]>([]);
+  const [wsPanelOpen, setWsPanelOpen] = useState(false);
+  const [wsName, setWsName] = useState("");
+  const LS_KEY = "cyberdeck-workspaces";
+
+  // Load saved workspaces on mount
   useEffect(() => {
-    sessionStore.init();
-    void sessionStore.loadSessions();
-    const unsub = sessionStore.subscribe(() => {
-      setSessionList(sessionStore.getSnapshot());
-    });
-    return unsub;
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      if (raw) setWorkspaces(JSON.parse(raw));
+    } catch { /* ignore */ }
   }, []);
-  const wfTuiMapRef = useRef<Map<string, string>>(new Map());
-  useEffect(() => { wfTuiMapRef.current = wfTuiMap; }, [wfTuiMap]);
-  const [activeWfNode, setActiveWfNode] = useState<string | null>(null);
-  const [lastMessage, setLastMessage] = useState<string>("");
-  const nodeOutputsRef = useRef<Map<string, string>>(new Map());
-  useEffect(() => { const h = (e: KeyboardEvent) => { if (e.key === "Escape") setConnectingFrom(null); if (e.key === " ") { e.preventDefault(); spaceHeld.current = true; } }; const u = (e: KeyboardEvent) => { if (e.key === " ") spaceHeld.current = false; }; window.addEventListener("keydown", h); window.addEventListener("keyup", u); return () => { window.removeEventListener("keydown", h); window.removeEventListener("keyup", u); }; }, []);
 
-  // Wheel zoom — Ctrl+scroll zooms toward cursor
+  const persistWorkspaces = (ws: SavedWorkspace[]) => {
+    setWorkspaces(ws);
+    localStorage.setItem(LS_KEY, JSON.stringify(ws));
+  };
+
+  const saveWorkspace = () => {
+    const name = wsName.trim() || `workspace ${new Date().toLocaleString()}`;
+    const ws: SavedWorkspace = {
+      id: `ws-${Date.now().toString(36)}`,
+      name,
+      panes: panes.map((p) => ({ ...p })),
+      roles: [...tuiRoles.entries()],
+      edges: [...tuiEdges],
+      labels: labels.map((l) => ({ ...l })),
+      zoom,
+      pan: { ...pan },
+      savedAt: Date.now(),
+    };
+    persistWorkspaces([ws, ...workspaces]);
+    setWsName("");
+  };
+
+  const loadWorkspace = (ws: SavedWorkspace) => {
+    setPanes(ws.panes);
+    setTuiRoles(new Map(ws.roles));
+    setTuiEdges(ws.edges);
+    setLabels(ws.labels);
+    setZoom(ws.zoom);
+    setPan(ws.pan);
+    setSelectedTui(null);
+    setSelectMode(false);
+    setSelected(new Set());
+    setConnectingFrom(null);
+    setWsPanelOpen(false);
+  };
+
+  const deleteWorkspace = (id: string) => {
+    persistWorkspaces(workspaces.filter((w) => w.id !== id));
+  };
+
   useEffect(() => {
-    const el = sessionsRef.current;
+    api.agentsFleet().then(setFleet).catch(() => {});
+  }, []);
+
+  const loadCloudCatalog = useCallback(async (providerId: string) => {
+    if (catalog.has(providerId)) return;
+    setCatalogLoading(true);
+    try {
+      const ms = await api.agentsCatalog(providerId, null);
+      setCatalog((prev) => new Map(prev).set(providerId, ms));
+    } catch {
+      /* ignore */
+    } finally {
+      setCatalogLoading(false);
+    }
+  }, [catalog]);
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { setConnectingFrom(null); setCtxMenu(null); setTool("select"); setEditingLabel(null); }
+      if (e.key === " ") { e.preventDefault(); spaceHeld.current = true; }
+    };
+    const u = (e: KeyboardEvent) => { if (e.key === " ") spaceHeld.current = false; };
+    window.addEventListener("keydown", h);
+    window.addEventListener("keyup", u);
+    return () => { window.removeEventListener("keydown", h); window.removeEventListener("keyup", u); };
+  }, []);
+
+  useEffect(() => {
+    const el = canvasRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
-      // Ctrl+scroll or space-held = pan
       if (spaceHeld.current || e.ctrlKey || e.metaKey) {
         e.preventDefault();
-        const dx = e.deltaX || 0;
-        const dy = e.deltaY || 0;
-        setPan((p) => ({ x: p.x - dx, y: p.y - dy }));
+        setPan((p) => ({ x: p.x - (e.deltaX || 0), y: p.y - e.deltaY }));
         return;
       }
-      // Plain scroll = zoom toward cursor
       e.preventDefault();
       const rect = el.getBoundingClientRect();
       const mx = e.clientX - rect.left;
@@ -158,235 +157,24 @@ export default function Workspace({
       const oldZ = zoomRef.current;
       const factor = e.deltaY > 0 ? 0.9 : 1.1;
       const newZ = Math.min(3, Math.max(0.1, oldZ * factor));
-      // Adjust pan so the point under the cursor stays fixed
       const scale = newZ / oldZ;
-      const newPx = mx - (mx - panRef.current.x) * scale;
-      const newPy = my - (my - panRef.current.y) * scale;
       setZoom(newZ);
-      setPan({ x: newPx, y: newPy });
+      setPan({ x: mx - (mx - panRef.current.x) * scale, y: my - (my - panRef.current.y) * scale });
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
   }, []);
 
-  useEffect(() => { api.listModels().then((m) => setModelPaths(m.map((x) => x.path))).catch(() => {}); }, []);
-
-  // Load the cloud provider list (fleet) once so the model picker can offer
-  // live online models grouped by free provider.
-  useEffect(() => {
-    api.agentsFleet().then(setFleet).catch(() => setFleet(null));
-  }, []);
-
-  // Refresh which providers have a stored key (masked status only).
-  const refreshKeys = useCallback(async () => {
-    try {
-      const ids = await api.secretList();
-      const views = await Promise.all(ids.map((id) => api.secretCheck(id)));
-      setKeyStatus(new Map(views.map((v) => [v.provider, v])));
-    } catch {
-      setKeyStatus(new Map());
-    }
-  }, []);
-  useEffect(() => { void refreshKeys(); }, [refreshKeys]);
-
-  // Store / remove a provider's key via the OS keychain, then refresh status.
-  const setProviderKey = useCallback(async (providerId: string) => {
-    const key = window.prompt(`Paste the ${providerId} API key (stored in your OS keychain):`);
-    if (key == null) return; // cancelled
-    const trimmed = key.trim();
-    if (!trimmed) return;
-    try {
-      await api.secretSet(providerId, trimmed);
-      await refreshKeys();
-    } catch (e) { setCloudErr(`can't store ${providerId} key: ${String(e)}`); }
-  }, [refreshKeys]);
-  const unsetProviderKey = useCallback(async (providerId: string) => {
-    try {
-      await api.secretUnset(providerId);
-      await refreshKeys();
-    } catch (e) { setCloudErr(`can't remove ${providerId} key: ${String(e)}`); }
-  }, [refreshKeys]);
-
-  // Lazily fetch a provider's /v1/models catalog (cached) the first time the
-  // user opens that provider's group.
-  const loadCloudCatalog = useCallback(async (providerId: string) => {
-    if (catalog.has(providerId)) return;
-    setCatalogLoading(true);
-    setCloudErr("");
-    try {
-      const ms = await api.agentsCatalog(providerId, null);
-      setCatalog((prev) => new Map(prev).set(providerId, ms));
-    } catch (e) {
-      setCloudErr(`can't fetch ${providerId} models: ${String(e)}`);
-    } finally {
-      setCatalogLoading(false);
-    }
-  }, [catalog]);
-
-  const loadWorkflows = useCallback(async () => {
-    try {
-      const wfs = await api.workflowList();
-      setWorkflows(wfs);
-      if (!selectedWf && wfs.length > 0) setSelectedWf(wfs[0].id);
-      const h = await api.workflowHistory();
-      // history is WfRunRow, not needed for plain mode but keep
-      void h;
-    } catch (e) { setWfMsg(String(e)); }
-  }, [selectedWf]);
-
-  useEffect(() => { void api.workflowSeed().then(() => void loadWorkflows()).catch(() => {}); }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const refetchResidents = useCallback(async () => {
-    const [slots, hist] = await Promise.all([api.portMapStatus("127.0.0.1"), api.benchHistory()]);
-    setResidents(slots);
-    setBenchBySlot(latestBySlot(hist));
-  }, []);
-
-  useEffect(() => {
-    Promise.all(ENGINE_NODES.map((n) => api.engineStatus(n.engine, n.host, n.port).catch(() => null))).then((r) =>
-      setStatus(r.filter(Boolean) as api.EngineStatus[])
-    );
-    refetchResidents();
-    const t = window.setInterval(() => void refetchResidents(), 15000);
-    return () => window.clearInterval(t);
-  }, [refetchResidents]);
-
-  useEffect(() => {
-    const a = listen<{ id: string; prompt: string }>("opencode-started", (e) => {
-      runningSessionIds.current.add(e.payload.id);
-      setLiveSessions((s) => {
-        // Case 1: pending- prefixed optimistic entry (from createSession failure)
-        const pending = s.find((x) => x.id.startsWith("pending-") && x.running);
-        if (pending) {
-          const p = cardPos.current.get(pending.id);
-          if (p) cardPos.current.set(e.payload.id, p);
-          cardPos.current.delete(pending.id);
-          return s.map((x) => x.id === pending.id ? { ...x, id: e.payload.id, log: [...x.log, `[deck] session ${e.payload.id} started`] } : x);
-        }
-        // Case 2: real session ID entry (from createSession success) — already exists, don't duplicate
-        const existing = s.find((x) => x.id === e.payload.id);
-        if (existing) return s;
-        // Case 3: no matching entry at all — add fresh
-        sessionCountRef.current += 1;
-        return [...s, { id: e.payload.id, prompt: e.payload.prompt, log: [], running: true, model: "" }];
-      });
-    });
-    const b = listen<{ session: string; stream: string; text: string }>("opencode-output", (e) => {
-      setLiveSessions((s) => {
-        const target = s.find((x) => x.id === e.payload.session);
-        if (target) return s.map((x) => x.id === e.payload.session ? { ...x, log: [...x.log, e.payload.text] } : x);
-        const pending = s.find((x) => x.id.startsWith("pending-") && x.running);
-        if (pending) {
-          const p = cardPos.current.get(pending.id);
-          if (p) cardPos.current.set(e.payload.session, p);
-          cardPos.current.delete(pending.id);
-          return s.map((x) => x.id === pending.id ? { ...x, id: e.payload.session, log: [...x.log, e.payload.text] } : x);
-        }
-        return s;
-      });
-    });
-    const c = listen<{ session: string; code: number }>("opencode-done", (e) => {
-      runningSessionIds.current.delete(e.payload.session);
-      setLiveSessions((s) => s.map((x) => (x.id === e.payload.session ? { ...x, running: false } : x)));
-    });
-    return () => {
-      a.then((f) => f()); b.then((f) => f()); c.then((f) => f());
-      runningSessionIds.current.forEach((id) => void api.opencodeStop(id));
-    };
-  }, []);
-
-  useEffect(() => {
-    let un: UnlistenFn[] = [];
-    let mounted = true;
-    (async () => {
-      const ln = await listen<api.WfNodeEvt>("wf-node", (e) => {
-        nodeOutputsRef.current.set(e.payload.node_id, e.payload.text || e.payload.error || "");
-        setActiveWfNode(e.payload.node_id);
-        setLastMessage(e.payload.text || e.payload.error || "");
-        // mirror into the backing TUI so the canvas is actually connected — you see the TUIs activate one after another
-        const paneId = wfTuiMap.get(e.payload.node_id) || tuiRolesRef.current.get(e.payload.node_id) || e.payload.node_id;
-        const targetPane = panes.find((pp) => pp.id === paneId) || panes.find((pp) => pp.id === e.payload.node_id);
-        if (targetPane) {
-          const preview = (e.payload.text || e.payload.error || "").slice(0, 800);
-          void api.tuiWrite(targetPane.id, Array.from(`\r\n[wf] ${e.payload.node_id}: ${preview}\r\n`, (c) => c.charCodeAt(0))).catch(() => {});
-        }
-        // also keep the dedicated "last message" pane in sync
-        const msgPaneId = [...tuiRolesRef.current.entries()].find(([, r]) => r === "message")?.[0];
-        if (msgPaneId) {
-          const msgPane = panes.find((pp) => pp.id === msgPaneId);
-          if (msgPane) void api.tuiWrite(msgPane.id, Array.from(`\r\n[${e.payload.node_id}] ${ (e.payload.text || "").slice(0, 600)}\r\n`, (c) => c.charCodeAt(0))).catch(() => {});
-          setLastMessage(e.payload.text || e.payload.error || "");
-        }
-      });
-      const ld = await listen<api.WfDoneEvt>("wf-done", (e) => {
-        if (!mounted) return;
-        setBusy(null);
-        const isTuiLoop = e.payload.workflow_id?.startsWith("tui-loop-") || (e.payload as unknown as { run_id?: string }).run_id?.startsWith("tui-loop-");
-        const hasHuman = [...tuiRolesRef.current.values()].includes("human");
-        if (isTuiLoop && hasHuman) {
-          // checker → human: surface the reviewer's actual output text, not a boilerplate summary.
-          // Pick the last reviewer-ish node output (architecture-reviewer / reviewer), fallback to the last node.
-          const entries = [...nodeOutputsRef.current.entries()];
-          const reviewerEntry = entries.find(([id]) => id.toLowerCase().includes("review")) || entries[entries.length - 1];
-          const reviewerText = reviewerEntry ? reviewerEntry[1] : "";
-          const verdict = reviewerText.includes("APPROVED") ? "✓ APPROVED" : reviewerText.includes("CHANGES") ? "↺ CHANGES_REQUESTED" : "no verdict";
-          const code = reviewerText
-            ? `${reviewerText}\n\n— — —\nLoop: ${e.payload.nodes_ok} ok / ${e.payload.nodes_failed} failed · ${e.payload.status} · ${verdict} · iterations: ${e.payload.iterations ?? 1}`
-            : `Loop finished: ${e.payload.nodes_ok} ok / ${e.payload.nodes_failed} failed · ${e.payload.status} · iterations: ${e.payload.iterations ?? 1}\n(no reviewer text captured — check reviewer output contains APPROVED)`;
-          setHumanGate({ code, from: e.payload.workflow_id || "tui-loop", to: "human" });
-        }
-        setWfMsg(`${e.payload.status}: ${e.payload.nodes_ok} ok / ${e.payload.nodes_failed} failed`);
-        loadWorkflows();
-      });
-      un = [ln, ld];
-    })();
-    return () => { mounted = false; un.forEach((u) => u()); };
-  }, [loadWorkflows]);
-
-  useEffect(() => {
-    if (!selectedWf) { setBench([]); setLoopBench(null); return; }
-    api.workflowPerRoleBench(selectedWf).then(setBench).catch(() => setBench([]));
-    api.workflowLoopBench(selectedWf).then(setLoopBench).catch(() => setLoopBench(null));
-  }, [selectedWf]);
-
-  const runWorkflow = async () => {
-    if (!selectedWf) return;
-    nodeOutputsRef.current.clear();
-    setBusy("run"); setWfMsg("");
-    try { await api.workflowRun(selectedWf, runner, runner === "agentic" ? (wfDir || dir || "/home/deviant/Projects/cyberdeck") : (wfDir ? wfDir : null), null, kickoffTask.trim() || null); setWfMsg(`workflow '${selectedWf}' queued…`); } catch (e) { setWfMsg(String(e)); setBusy(null); }
-  };
-  const stopWorkflow = async () => {
-    try {
-      const hist = await api.workflowHistory();
-      const runRows = hist.filter((r) => r.workflow_id === selectedWf && r.status === "Running");
-      if (runRows.length === 0) { setWfMsg("no running run"); return; }
-      await api.workflowStop(runRows[runRows.length - 1].id); setWfMsg("requested stop…");
-    } catch (e) { setWfMsg(String(e)); }
-  };
-
-  const spawnTui = async () => {
+  const spawnTui = async (model: string, role: string) => {
     setTuiErr("");
     try {
-      const id = await api.tuiSpawn("/home/deviant/Projects/cyberdeck", 90, 28);
+      const dir = "/home/deviant/Projects/cyberdeck";
+      const id = await api.tuiSpawn(dir, 90, 28);
       const cascade = (panes.length % 5) * 32 + 8;
-      setPanes((p) => [...p, { id, dir: "/home/deviant/Projects/cyberdeck", pos: { x: cascade, y: cascade } }]);
-      setSelectedTui(id);
-    } catch (e) { setTuiErr(`tui spawn failed: ${String(e)}`); }
-  };
-
-  // Spawn a TUI from the spawn dialog, configuring its model (local or cloud,
-  // fed via /model so the interactive session resolves it) and optional role.
-  const spawnTuiConfigured = async (model: string, role: string) => {
-    setTuiErr("");
-    try {
-      const id = await api.tuiSpawn("/home/deviant/Projects/cyberdeck", 90, 28);
-      const cascade = (panes.length % 5) * 32 + 8;
-      setPanes((p) => [...p, { id, dir: "/home/deviant/Projects/cyberdeck", pos: { x: cascade, y: cascade } }]);
+      setPanes((p) => [...p, { id, dir, pos: { x: cascade, y: cascade } }]);
       setSelectedTui(id);
       if (role.trim()) setTuiRoles((m) => new Map(m).set(id, role.trim()));
       if (model) {
-        // Give the fresh TUI a moment, then set its model via /model so the
-        // interactive opencode session uses it (local GGUF or cloud provider).
         setTimeout(async () => {
           try { await api.tuiWrite(id, Array.from(`/model ${model}\r`, (c) => c.charCodeAt(0))); } catch { /* ignore */ }
         }, 1200);
@@ -395,7 +183,6 @@ export default function Workspace({
     } catch (e) { setTuiErr(`tui spawn failed: ${String(e)}`); }
   };
 
-  // SELECT tool: toggle a terminal's membership in the current selection.
   const toggleSelect = (id: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -404,14 +191,11 @@ export default function Workspace({
     });
   };
 
-  // CONNECT TOGETHER: wire every selected terminal to every other as a
-  // loopable full-mesh edge, replacing any prior edges between them.
   const connectTogether = () => {
     const ids = [...selected];
     if (ids.length < 2) return;
     const next = new Map<string, api.WorkflowEdge>();
-    // Keep existing edges to non-selected terminals untouched.
-    tuiEdges.forEach((e) => { const keep = !(selected.has(e.from) && selected.has(e.to)); if (keep) next.set(e.id, e); });
+    tuiEdges.forEach((e) => { if (!(selected.has(e.from) && selected.has(e.to))) next.set(e.id, e); });
     for (let i = 0; i < ids.length; i++) {
       for (let j = i + 1; j < ids.length; j++) {
         const id = `fc-${ids[i]}-${ids[j]}`;
@@ -421,187 +205,46 @@ export default function Workspace({
     setTuiEdges([...next.values()]);
   };
 
-  // Clear the current SELECT-tool selection and de-arm the tool.
   const clearSelection = () => { setSelected(new Set()); setSelectMode(false); };
 
-  const runAgent = async () => {
-    if (!prompt.trim()) return;
-    // If a TUI is selected, address that TUI directly — no need to click inside the xterm.
-    // This makes the loop addressable from the main bar (header task is for kickoff, bottom is for chat).
-    if (selectedTui) {
-      const target = panes.find((p) => p.id === selectedTui);
-      if (target) {
-        try { await api.tuiWrite(target.id, Array.from(prompt + "\r", (c) => c.charCodeAt(0))); setPrompt(""); setTimeout(() => inputRef.current?.focus(), 50); return; } catch (e) { setHarnessErr(String(e)); return; }
-      }
-    }
-    if (selectedNode && wf) {
-      const paneId = wfTuiMap.get(selectedNode);
-      const target = paneId ? panes.find((p) => p.id === paneId) : null;
-      if (target) {
-        try { await api.tuiWrite(target.id, Array.from(prompt + "\r", (c) => c.charCodeAt(0))); setPrompt(""); return; } catch (e) { setHarnessErr(String(e)); return; }
-      }
-    }
-    let chosen = (harnessModel === "__custom" ? customModel : harnessModel) || active?.model || "";
-    // A "__cloud_<provider>" value is a load-placeholder, not a model — treat as unset.
-    if (chosen.startsWith("__cloud_")) chosen = "";
-    const eng = chosen.split("/")[0]?.toLowerCase();
-    if (!chosen) {
-      const ftUp = status.find((s) => s.engine === "FreeToken")?.up;
-      const llUp = status.find((s) => s.engine === "LlamaCpp")?.up;
-      if (ftUp) chosen = "freetoken/qwen3.6-35b-a3b-nvfp4";
-      else if (llUp) chosen = "llamacpp/qwen3.8-27b";
-      else { setHarnessErr("No engine UP — spawn a terminal and pick a model inside opencode, or start one via loadout"); return; }
-    }
-    const snap = prompt;
-    setHarnessErr(""); setPending(true);
+  const selectedPane = selectedTui ? panes.find((x) => x.id === selectedTui) : null;
+  const selectedRole = selectedPane ? (tuiRoles.get(selectedPane.id) || "") : "";
+  const selectedEdges = selectedPane ? tuiEdges.filter((e) => e.from === selectedPane.id || e.to === selectedPane.id) : [];
 
-    // Create a tracked session in the DB.
-    let sessionId: string | null = null;
-    try {
-      sessionId = await sessionStore.createSession({
-        projectDir: dir,
-        agent: "opencode",
-        model: chosen,
-        task: snap,
-        autoMode: auto,
-        ctxSize: ctx,
-      });
-      setSelectedSession(sessionId);
-    } catch (e) {
-      console.error("[workspace] session create failed:", e);
-    }
+  // Convert screen coords to canvas coords
+  const screenToCanvas = useCallback((sx: number, sy: number) => {
+    const el = canvasRef.current;
+    if (!el) return { x: 0, y: 0 };
+    const rect = el.getBoundingClientRect();
+    return { x: (sx - rect.left - panRef.current.x) / zoomRef.current, y: (sy - rect.top - panRef.current.y) / zoomRef.current };
+  }, []);
 
-    const optimisticId = sessionId || `pending-${Date.now()}`;
-    sessionCountRef.current += 1;
-    const cascade = (sessionCountRef.current % 5) * 24;
-    if (!cardPos.current.has(optimisticId)) cardPos.current.set(optimisticId, { x: cascade, y: cascade });
-    setLiveSessions((s) => [...s, { id: optimisticId, prompt: snap.slice(0, 120), log: [`[deck] spawning opencode ${chosen ? `-m ${chosen}` : ""} --dir ${dir} …`], running: true, model: chosen }]);
-    const withTimeout = <T,>(p: Promise<T>, ms: number, msg: string) => Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new Error(msg)), ms))]);
-    try {
-      await withTimeout(api.opencodeRun({ prompt: snap, dir, auto, model: chosen, engine: eng, ctx, sessionId: sessionId ?? undefined }), 15000, `opencode harness timed out — is ${eng} UP?`);
-      setPrompt(""); setTimeout(() => inputRef.current?.focus(), 50);
-    } catch (e) {
-      const msg = String(e); setHarnessErr(msg);
-      setLiveSessions((s) => s.map((x) => x.id === optimisticId ? { ...x, log: [...x.log, `[harness error] ${msg}`], running: false } : x));
-    } finally { setPending(false); }
-  };
-  const onKey = (e: React.KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); runAgent(); } };
-  const edit = async (name: string) => { try { const full = await api.profileGet(name); if (full) { setEditing(full); setDrawerOpen(true); } } catch (e) { setWfMsg(String(e)); } };
-
-  const wf = workflows.find((w) => w.id === selectedWf);
-  const spawnedWfNodesRef = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    if (!wf) return;
-    const curIds = new Set(wf.nodes.map((n) => n.id));
-    setWfTuiMap((m) => {
-      const nn = new Map(m);
-      for (const k of [...nn.keys()]) if (!curIds.has(k)) nn.delete(k);
-      return nn;
-    });
-    wf.nodes.forEach((n) => {
-      if (spawnedWfNodesRef.current.has(n.id)) return;
-      spawnedWfNodesRef.current.add(n.id);
-      void (async () => {
-        try {
-          const paneId = await api.tuiSpawn("/home/deviant/Projects/cyberdeck", 90, 28);
-          setWfTuiMap((m) => { const nn = new Map(m); nn.set(n.id, paneId); return nn; });
-          setPanes((pp) => [...pp, { id: paneId, dir: "/home/deviant/Projects/cyberdeck", pos: n.pos }]);
-          setTuiRoles((mm) => { const nn2 = new Map(mm); nn2.set(paneId, n.role_id); return nn2; });
-        } catch (err) { setTuiErr(String(err)); spawnedWfNodesRef.current.delete(n.id); }
-      })();
-    });
-  }, [wf]);
+  const deleteLabel = (id: string) => setLabels((ls) => ls.filter((l) => l.id !== id));
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: fullCanvas ? "100vh" : "calc(100vh - 44px)", overflow: "hidden" }}>
-      {/* header — plain-terminal birds-eye; collapses in fullscreen canvas mode */}
-      {!fullCanvas && (
-      <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "8px 0 6px", flexWrap: "wrap", borderBottom: "1px solid var(--line)", marginBottom: 8 }}>
-        <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, color: "var(--muted)" }}>WORKSPACE</span>
-        <button className="action" style={{ fontSize: 11, padding: "6px 12px", fontWeight: 700 }} onClick={() => setSpawnOpen(true)} title="add a terminal with a configured local or cloud model + role">+ TERMINAL</button>
-        <button className="ghost" style={{ fontSize: 9, padding: "3px 6px", borderColor: selectMode ? "var(--magenta)" : undefined, color: selectMode ? "var(--magenta)" : undefined }} onClick={() => { if (selectMode) clearSelection(); else setSelectMode(true); }} title="select 2+ terminals, then CONNECT TOGETHER to wire a loop module">{selectMode ? "● SELECTING" : "◉ SELECT"}</button>
-        {selected.size >= 2 && selectMode && (
-          <button className="ghost" style={{ fontSize: 9, padding: "3px 6px", borderColor: "var(--pass)", color: "var(--pass)" }} onClick={() => { connectTogether(); clearSelection(); }} title="wire all selected terminals to each other (loopable full-mesh)">CONNECT TOGETHER ({selected.size})</button>
-        )}
-        <button className="ghost" style={{ fontSize: 9, padding: "3px 6px", borderColor: showWorkflows ? "var(--magenta)" : undefined, color: showWorkflows ? "var(--magenta)" : undefined }} onClick={() => setShowWorkflows((v) => !v)} title="show workflow DAG — off by default for birds-eye terminals">{showWorkflows ? "◇ WORKFLOWS ON" : "◇ WORKFLOWS OFF"}</button>
-        {wf && (
-          <div style={{ display: "flex", gap: 6, alignItems: "center", marginLeft: 8, flexWrap: "wrap" }}>
-            <select value={selectedWf} onChange={(e) => setSelectedWf(e.target.value)} style={{ background: "var(--panel-2)", color: "var(--text)", border: "1px solid var(--dim2)", borderRadius: 4, padding: "4px 8px", fontSize: 11, minWidth: 160 }}>
-              <option value="">workflow — none</option>
-              {workflows.map((w) => <option key={w.id} value={w.id}>{w.name} · {w.nodes.length}n</option>)}
-            </select>
-            <input value={kickoffTask} onChange={(e) => setKickoffTask(e.target.value)} placeholder="task — what should the loop build? (CrewAI inputs.task)" style={{ fontSize: 10, minWidth: 220, flex: "1 1 220px", background: "var(--panel-2)", color: "var(--text)", border: "1px solid var(--magenta)", borderRadius: 4, padding: "4px 8px" }} />
-            <select value={runner} onChange={(e) => setRunner(e.target.value as "stateless" | "agentic" | "echo")} style={{ fontSize: 10, background: "var(--panel-2)", color: "var(--text)", border: "1px solid var(--dim2)", borderRadius: 4, padding: "3px 6px" }}>
-              <option value="stateless">stateless</option><option value="agentic">agentic</option><option value="echo">echo (no-LLM demo)</option>
-            </select>
-            {runner === "agentic" && <input value={wfDir} placeholder="/path" onChange={(e) => setWfDir(e.target.value)} style={{ fontSize: 10, width: 120, background: "var(--panel-2)", color: "var(--text)", border: "1px solid var(--dim2)", borderRadius: 4, padding: "3px 6px" }} />}
-            <button className="ghost" style={{ color: "var(--pass)", borderColor: "var(--pass)", fontSize: 10 }} onClick={runWorkflow} disabled={busy === "run"}>{busy === "run" ? "RUNNING…" : "▶ RUN"}</button>
-            <button className="ghost" style={{ color: "var(--oom)", borderColor: "var(--oom)", fontSize: 10 }} onClick={stopWorkflow}>■ STOP</button>
-          </div>
-        )}
-        <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center", fontSize: 10, color: "var(--dim2)" }}>
-          <span>{panes.length} terminals</span>
-          {sessionStore.getSnapshot().filter((s) => s.status === "running").length > 0 && (
-            <span style={{ color: "var(--cyan)" }}>
-              · {sessionStore.getSnapshot().filter((s) => s.status === "running").length} active
-            </span>
-          )}
-          {sessionStore.getSnapshot().length > 0 && (
-            <button
-              className="ghost"
-              style={{ fontSize: 9, padding: "2px 6px", color: "var(--muted)" }}
-              onClick={() => {
-                // Toggle session history: select the most recent session or deselect.
-                const recent = sessionStore.getSnapshot()[0];
-                if (recent) setSelectedSession(selectedSession ? null : recent.id);
-              }}
-              title="show session history"
-            >
-              {sessionStore.getSnapshot().length} sessions
-            </button>
-          )}
-          {liveSessions.length > 0 && <span>· {liveSessions.length} active</span>}
-          <button className="ghost" style={{ fontSize: 10, padding: "2px 6px" }} onClick={() => setFullCanvas(true)} title="collapse all chrome — canvas only">⛶ fullscreen</button>
-        </div>
-      </div>
-      )}
-
-      {!fullCanvas && residents.some((r) => r.resident && r.profile) && (
-        <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "center", flexWrap: "wrap", paddingBottom: 6, fontSize: 10 }}>
-          {residents.filter((r) => r.resident && r.profile).map((r) => {
-            const b = benchBySlot.get(slotKey(r.engine, r.port));
-            return (
-              <span key={r.engine} className="mono" style={{ display: "flex", alignItems: "center", gap: 4, color: "var(--text)" }}>
-                <span style={{ width: 6, height: 6, borderRadius: "50%", background: r.state === "up" ? "var(--pass)" : r.state === "starting" ? "var(--warn)" : "var(--dim2)" }} />
-                <span>{r.profile}</span>
-                {b && <span style={{ color: "var(--cyan)" }}>{b.tps.toFixed(1)} tok/s</span>}
-              </span>
-            );
-          })}
-        </div>
-        )}
-
-      {/* canvas — left workflows list (hide in fullscreen) + birds-eye plain terminals */}
-      <div style={{ display: "flex", gap: 10, flex: 1, minHeight: 0, overflow: "hidden" }}>
-        {!fullCanvas && (
-        <div className="card" style={{ width: 200, flex: "none", display: "flex", flexDirection: "column", overflow: "hidden", fontSize: 11 }}>
-          <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-            <h3 style={{ fontSize: 11, letterSpacing: 0.6, color: "var(--muted)", margin: 0 }}>WORKFLOWS</h3>
-            <button className="ghost" style={{ fontSize: 9, padding: "2px 6px" }} onClick={() => { void api.workflowSeed().then(() => void loadWorkflows()); }}>RESEED</button>
-          </div>
-          <div style={{ overflow: "auto", flex: 1 }}>
-            {workflows.length === 0 ? <div className="dim" style={{ padding: 6 }}>no workflows — run CLI seed or + TERMINAL loop</div> : workflows.map((w) => (
-              <div key={w.id} onClick={() => setSelectedWf(w.id)} style={{ padding: "5px 6px", cursor: "pointer", borderRadius: 4, background: selectedWf === w.id ? "var(--panel-2)" : "transparent" }}>
-                <div style={{ color: "var(--cyan)", fontWeight: 600 }}>{w.name}</div>
-                <div className="dim" style={{ fontSize: 9 }}>{w.id} · {w.nodes.length}n {w.edges.length}e</div>
-              </div>
-            ))}
-          </div>
-          <div className="dim" style={{ fontSize: 9, borderTop: "1px solid var(--line)", paddingTop: 6, marginTop: 6 }}>human-loop is there — select it to load its terminals (plain TUIs) as the workflow</div>
-        </div>
-        )}
-        <div ref={sessionsRef} onClick={() => setCtxMenu(null)} onPointerDown={(e) => {
-          // Middle-click or space+drag: start panning
+    <div style={{ display: "flex", height: "100vh", overflow: "hidden" }}>
+      {/* canvas — fullscreen terminals */}
+      <div
+        ref={canvasRef}
+        onClick={(e) => {
+          setCtxMenu(null);
+          if (tool === "text") {
+            // Place a new label at click position
+            const pos = screenToCanvas(e.clientX, e.clientY);
+            const id = `label-${Date.now().toString(36)}`;
+            setLabels((ls) => [...ls, { id, pos, text: "label" }]);
+            setEditingLabel(id);
+            return;
+          }
+          if (tool === "delete") {
+            // Delete was handled by the element's own click; deselect here
+            setSelectedTui(null);
+            return;
+          }
+          // Default select: deselect if clicking empty canvas
+          if (!selectMode) setSelectedTui(null);
+        }}
+        onPointerDown={(e) => {
           if (e.button === 1 || (e.button === 0 && spaceHeld.current)) {
             e.preventDefault();
             const sx = e.clientX, sy = e.clientY;
@@ -611,13 +254,14 @@ export default function Workspace({
             window.addEventListener("pointermove", move);
             window.addEventListener("pointerup", up);
           }
-        }} style={{ flex: 1, overflow: "hidden", position: "relative", background: "var(--panel-2)", borderRadius: 6, minWidth: 320, cursor: "default" }}>
-          {/* zoom-transform wrapper — grid dots + all canvas content lives inside */}
-          <div style={{ position: "absolute", inset: 0, overflow: "hidden" }}>
-            {/* dot grid background — moves with pan, scales with zoom */}
-            <div style={{ position: "absolute", inset: 0, backgroundImage: "radial-gradient(circle, rgba(255,255,255,0.06) 1px, transparent 1px)", backgroundSize: `${24 * zoom}px ${24 * zoom}px`, backgroundPosition: `${pan.x % (24 * zoom)}px ${pan.y % (24 * zoom)}px`, pointerEvents: "none", zIndex: 0 }} />
-            <div style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: "0 0", position: "absolute", top: 0, left: 0, minWidth: "100%", minHeight: "100%" }}>
-            {/* loopable edges between plain terminals — birds-eye loop wiring */}
+        }}
+        style={{ flex: 1, overflow: "hidden", position: "relative", background: "var(--panel-2)", cursor: "default" }}
+      >
+        <div style={{ position: "absolute", inset: 0, overflow: "hidden" }}>
+          {/* dot grid */}
+          <div style={{ position: "absolute", inset: 0, backgroundImage: "radial-gradient(circle, rgba(255,255,255,0.06) 1px, transparent 1px)", backgroundSize: `${24 * zoom}px ${24 * zoom}px`, backgroundPosition: `${pan.x % (24 * zoom)}px ${pan.y % (24 * zoom)}px`, pointerEvents: "none", zIndex: 0 }} />
+          <div style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: "0 0", position: "absolute", top: 0, left: 0, minWidth: "100%", minHeight: "100%" }}>
+            {/* loopable edges */}
             <svg style={{ position: "absolute", left: 0, top: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
               {tuiEdges.map((e) => {
                 const a = panes.find((pp) => pp.id === e.from);
@@ -628,9 +272,18 @@ export default function Workspace({
                 return <g key={e.id}><path d={`M ${x1} ${y1} C ${x1} ${y1+40}, ${x2} ${y2-40}, ${x2} ${y2}`} fill="none" stroke={col} strokeWidth={e.loop_edge ? 2 : 1.2} strokeDasharray={e.loop_edge ? "6 4" : undefined} /><text x={(x1+x2)/2} y={(y1+y2)/2 - 6} textAnchor="middle" fontSize={9} fill={col}>{e.loop_edge ? "⟲ loop" : ""}</text></g>;
               })}
             </svg>
-            {/* plain TUI terminals — shown when no workflow selected; workflow loop uses TUIs when a workflow is selected */}
-            {!wf && panes.map((p) => (
+            {/* terminals */}
+            {panes.map((p) => (
               <TuiWindow key={p.id} pane={{ id: p.id, dir: p.dir }} pos={p.pos} selected={(selectedTui === p.id) || (selectMode && selected.has(p.id))} role={tuiRoles.get(p.id)} connecting={connectingFrom === p.id} onStartConnect={(id) => setConnectingFrom(id)} zoom={zoom} onSelect={(id) => {
+                if (tool === "delete") {
+                  void api.tuiStop(id);
+                  setPanes((arr) => arr.filter((x) => x.id !== id));
+                  setTuiRoles((m) => { const n = new Map(m); n.delete(id); return n; });
+                  setTuiEdges((ee) => ee.filter((e) => e.from !== id && e.to !== id));
+                  if (selectedTui === id) setSelectedTui(null);
+                  if (connectingFrom === id) setConnectingFrom(null);
+                  return;
+                }
                 if (selectMode) { toggleSelect(id); return; }
                 if (connectingFrom && connectingFrom !== id) {
                   const exists = tuiEdges.some((ee) => ee.from === connectingFrom && ee.to === id);
@@ -640,437 +293,285 @@ export default function Workspace({
                   }
                   setConnectingFrom(null);
                 }
-                setSelectedTui(id); setSelectedNode(null);
-              }} onContextMenu={(e, id) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, nodeId: id }); setSelectedTui(id); setSelectedNode(null); }} onPos={(pos) => setPanes((arr) => arr.map((x) => x.id === p.id ? { ...x, pos } : x))} onDismiss={(id) => {
-                void api.tuiStop(id); setPanes((arr) => arr.filter((x) => x.id !== id)); setTuiRoles((m) => { const n = new Map(m); n.delete(id); return n; }); setTuiEdges((ee) => ee.filter((e) => e.from !== id && e.to !== id)); if (selectedTui === id) setSelectedTui(null); if (connectingFrom === id) setConnectingFrom(null);
+                setSelectedTui(id);
+              }} onContextMenu={(e, id) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, nodeId: id }); setSelectedTui(id); }} onPos={(pos) => setPanes((arr) => arr.map((x) => x.id === p.id ? { ...x, pos } : x))} onDismiss={(id) => {
+                void api.tuiStop(id);
+                setPanes((arr) => arr.filter((x) => x.id !== id));
+                setTuiRoles((m) => { const n = new Map(m); n.delete(id); return n; });
+                setTuiEdges((ee) => ee.filter((e) => e.from !== id && e.to !== id));
+                if (selectedTui === id) setSelectedTui(null);
+                if (connectingFrom === id) setConnectingFrom(null);
               }} />
             ))}
-            {!wf && connectingFrom && <div style={{ position: "absolute", top: 8, left: "50%", transform: "translateX(-50%)", background: "var(--magenta)", color: "#000", fontSize: 10, padding: "4px 10px", borderRadius: 4, pointerEvents: "none" }}>connecting from {tuiRoles.get(connectingFrom) || connectingFrom.slice(0,8)} — click target terminal to wire{panes.length >= 2 ? " · Esc to cancel" : ""}</div>}
-            {!wf && panes.length === 0 && (
+            {/* text labels */}
+            {labels.map((l) => (
+              <div
+                key={l.id}
+                onPointerDown={(e) => {
+                  if (tool === "delete") { deleteLabel(l.id); e.stopPropagation(); return; }
+                  if (editingLabel) return;
+                  // Start drag
+                  e.stopPropagation();
+                  const startX = e.clientX, startY = e.clientY;
+                  const origPos = { ...l.pos };
+                  const move = (ev: PointerEvent) => {
+                    const dx = (ev.clientX - startX) / zoomRef.current;
+                    const dy = (ev.clientY - startY) / zoomRef.current;
+                    setLabels((ls) => ls.map((ll) => ll.id === l.id ? { ...ll, pos: { x: origPos.x + dx, y: origPos.y + dy } } : ll));
+                  };
+                  const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+                  window.addEventListener("pointermove", move);
+                  window.addEventListener("pointerup", up);
+                }}
+                onDoubleClick={(e) => { e.stopPropagation(); setEditingLabel(l.id); }}
+                style={{ position: "absolute", left: l.pos.x, top: l.pos.y, cursor: tool === "delete" ? "not-allowed" : "grab", userSelect: "none", zIndex: 5 }}
+              >
+                {editingLabel === l.id ? (
+                  <input
+                    autoFocus
+                    value={l.text}
+                    onChange={(e) => setLabels((ls) => ls.map((ll) => ll.id === l.id ? { ...ll, text: e.target.value } : ll))}
+                    onBlur={() => setEditingLabel(null)}
+                    onKeyDown={(e) => { if (e.key === "Enter") setEditingLabel(null); }}
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ background: "rgba(11,11,11,0.8)", border: "1px solid var(--cyan)", color: "var(--text)", padding: "4px 8px", fontSize: 12, fontFamily: "inherit", borderRadius: 4, outline: "none", minWidth: 60 }}
+                  />
+                ) : (
+                  <div style={{ background: "rgba(11,11,11,0.7)", border: "1px solid var(--dim2)", color: "var(--text)", padding: "4px 8px", fontSize: 12, borderRadius: 4, whiteSpace: "nowrap", backdropFilter: "blur(4px)" }}>
+                    {l.text || "empty"}
+                  </div>
+                )}
+              </div>
+            ))}
+            {/* empty state */}
+            {panes.length === 0 && (
               <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
                 <div className="dim" style={{ fontSize: 11, textAlign: "center" }}>
-                  birds-eye terminals — click <b>+ TERMINAL</b> to spawn plain opencode<br />
-                  normal accept/deny inside the terminal · right-click for extra controls<br />
-                  pick a cloud model inside opencode (<code>/model</code>) — no app support needed
+                  click <b>+ TERMINAL</b> to spawn an opencode session<br />
+                  pick a model inside the terminal via <code>/model</code><br />
+                  use the toolbar: select, text labels, delete, connect
                 </div>
               </div>
             )}
-            {wf && (
-              <svg style={{ position: "absolute", left: 0, top: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
-                {wf.edges.map((e) => {
-                  const a = wf.nodes.find((x) => x.id === e.from);
-                  const b = wf.nodes.find((x) => x.id === e.to);
-                  if (!a || !b) return null;
-                  const x1 = a.pos.x + 310, y1 = a.pos.y + 190, x2 = b.pos.x + 310, y2 = b.pos.y + 190;
-                  const col = e.loop_edge ? "var(--magenta)" : e.condition ? "var(--warn)" : "var(--dim2)";
-                  const label = e.loop_edge ? "⟲ loop" : e.condition ? `? ${e.condition}` : "";
-                  return <g key={e.id}><path d={`M ${x1} ${y1} C ${x1} ${y1+40}, ${x2} ${y2-40}, ${x2} ${y2}`} fill="none" stroke={col} strokeWidth={e.loop_edge ? 2 : 1.2} strokeDasharray={e.loop_edge ? "6 4" : undefined} /><text x={(x1+x2)/2} y={(y1+y2)/2 - 6} textAnchor="middle" fontSize={9} fill={col}>{label}</text></g>;
-                })}
-              </svg>
-            )}
-            {/* workflow nodes as large plain TUIs — auto-spawned, no button needed */}
-            {wf && wf.nodes.map((n) => {
-              const sel = selectedNode === n.id;
-              const paneId = wfTuiMap.get(n.id);
-              const backing = paneId ? panes.find((pp) => pp.id === paneId) : undefined;
-              if (backing) {
-                return (
-                  <TuiWindow key={n.id} pane={{ id: backing.id, dir: backing.dir }} pos={n.pos} selected={sel} role={n.role_id} connecting={connectingFrom === n.id} onStartConnect={(id) => setConnectingFrom(n.id)} zoom={zoom} onSelect={() => {
-                    if (connectingFrom && connectingFrom !== n.id) {
-                      const exists = wf.edges.some((ee) => ee.from === connectingFrom && ee.to === n.id);
-                      if (!exists) {
-                        const edge: api.WorkflowEdge = { id: `we-${Date.now().toString(36)}`, from: connectingFrom, to: n.id, from_port: "out", to_port: "in", condition: null, loop_edge: false };
-                        const upd = { ...wf, edges: [...wf.edges, edge] };
-                        void api.workflowSave(JSON.stringify(upd)).then(() => loadWorkflows());
-                      }
-                      setConnectingFrom(null);
-                    }
-                    setSelectedNode(n.id); setSelectedTui(null);
-                  }} onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, nodeId: n.id }); setSelectedNode(n.id); }} onPos={(pos) => {
-                    const upd = { ...wf, nodes: wf.nodes.map((x) => x.id === n.id ? { ...x, pos } : x) };
-                    void api.workflowSave(JSON.stringify(upd)).then(() => loadWorkflows());
-                    setPanes((arr) => arr.map((pp) => pp.id === paneId ? { ...pp, pos } : pp));
-                  }} onDismiss={() => {
-                    const upd = { ...wf, nodes: wf.nodes.filter((x) => x.id !== n.id), edges: wf.edges.filter((e) => e.from !== n.id && e.to !== n.id) };
-                    void api.workflowSave(JSON.stringify(upd)).then(() => loadWorkflows());
-                    if (paneId) { void api.tuiStop(paneId); setPanes((a) => a.filter((p) => p.id !== paneId)); setWfTuiMap((m) => { const nn = new Map(m); nn.delete(n.id); return nn; }); }
-                    spawnedWfNodesRef.current.delete(n.id);
-                  }} />
-                );
-              }
-              return (
-                <div key={n.id} onClick={() => { setSelectedNode(n.id); setSelectedTui(null); setCtxMenu(null); }} onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, nodeId: n.id }); setSelectedNode(n.id); }} style={{ position: "absolute", left: n.pos.x, top: n.pos.y, width: 620, height: 380, display: "flex", flexDirection: "column", background: "#0b0b0b", border: `1px solid ${sel ? "var(--magenta)" : "var(--line)"}`, boxShadow: sel ? "0 0 0 2px rgba(210,153,34,0.25)" : "none", overflow: "hidden", cursor: "grab" }}>
-                  <div style={{ height: 18, flex: "none", background: sel ? "rgba(210,153,34,0.18)" : "rgba(255,255,255,0.03)", display: "flex", alignItems: "center", gap: 6, padding: "0 6px", fontSize: 9, color: "var(--dim2)" }}>
-                    <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>◉ {n.role_id} — terminal not loaded</span>
-                    <span onPointerDown={(e) => { e.stopPropagation(); setConnectingFrom(n.id); }} title="wire to another workflow TUI" style={{ width: 10, height: 10, borderRadius: "50%", background: connectingFrom === n.id ? "var(--magenta)" : "var(--line)", border: "1px solid var(--line-bright)", cursor: "crosshair", flex: "none" }} />
-                  </div>
-                  <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "var(--dim2)", fontSize: 11, padding: 16, textAlign: "center", gap: 10 }}>
-                    <div>Stock opencode terminal for <b style={{ color: "var(--text)" }}>{n.role_id}</b> — not loaded.</div>
-                    <button className="action" style={{ fontSize: 11, padding: "6px 12px" }} onClick={async (e) => {
-                      e.stopPropagation();
-                      try {
-                        const paneId = await api.tuiSpawn("/home/deviant/Projects/cyberdeck", 90, 28);
-                        setWfTuiMap((m) => { const nn = new Map(m); nn.set(n.id, paneId); return nn; });
-                        setPanes((pp) => [...pp, { id: paneId, dir: "/home/deviant/Projects/cyberdeck", pos: n.pos }]);
-                        setTuiRoles((mm) => { const nn2 = new Map(mm); nn2.set(paneId, n.role_id); return nn2; });
-                        spawnedWfNodesRef.current.add(n.id);
-                      } catch (err) { setTuiErr(String(err)); }
-                    }}>LOAD TUI</button>
-                    <div style={{ fontSize: 9 }}>Pick cloud model inside via <code>/model</code> once loaded. Auto-load failed — click to retry.</div>
-                  </div>
-                  <div className="mono dim" style={{ fontSize: 9, padding: "4px 8px", borderTop: "1px solid var(--line)", background: "var(--panel-2)" }}>{n.binding.model_ref ? `${n.binding.model_ref} @ ${n.binding.engine || "auto"}` : "no model — picks inside TUI"}</div>
-                </div>
-              );
-            })}
-            </div>
+            {/* connecting indicator */}
+            {connectingFrom && <div style={{ position: "absolute", top: 8, left: "50%", transform: "translateX(-50%)", background: "var(--magenta)", color: "#000", fontSize: 10, padding: "4px 10px", borderRadius: 4, pointerEvents: "none" }}>connecting from {tuiRoles.get(connectingFrom) || connectingFrom.slice(0,8)} — click target terminal to wire · Esc to cancel</div>}
           </div>
-          {ctxMenu && (
-            <div style={{ position: "fixed", left: ctxMenu.x, top: ctxMenu.y, background: "var(--panel)", border: "1px solid var(--line-bright)", borderRadius: 6, boxShadow: "0 8px 24px rgba(0,0,0,0.5)", zIndex: 99, fontSize: 11, minWidth: 160 }} onClick={() => setCtxMenu(null)}>
-              {panes.find((p) => p.id === ctxMenu.nodeId) ? (
-                <>
-                  <div style={{ padding: "6px 10px", cursor: "pointer" }} onClick={() => { const id = ctxMenu.nodeId; setCtxMenu(null); void (async () => { const id2 = await api.tuiSpawn("/home/deviant/Projects/cyberdeck", 90, 28); const pp = panes.find((pp) => pp.id === id); const pos = pp ? { x: pp.pos.x + 24, y: pp.pos.y + 24 } : { x: 24, y: 24 }; setPanes((a) => [...a, { id: id2, dir: "/home/deviant/Projects/cyberdeck", pos }]); setSelectedTui(id2); })(); void id; }}>Duplicate terminal</div>
-                  <div style={{ padding: "6px 10px", cursor: "pointer", color: "var(--oom)" }} onClick={() => { const id = ctxMenu.nodeId; setCtxMenu(null); void api.tuiStop(id); setPanes((a) => a.filter((x) => x.id !== id)); if (selectedTui === id) setSelectedTui(null); }}>Close terminal</div>
-                  <div style={{ padding: "6px 10px", cursor: "pointer" }} onClick={() => { const id = ctxMenu.nodeId; setCtxMenu(null); setSelectedTui(id); setSelectedNode(null); }}>Show session panel</div>
-                </>
-              ) : (
-                <>
-                  <div style={{ padding: "6px 10px", cursor: "pointer" }} onClick={() => { setCtxMenu(null); const n = wf?.nodes.find((x) => x.id === ctxMenu.nodeId); if (n) { const copy = { ...n, id: `${n.id}-copy-${Date.now().toString(36)}`, role_id: `${n.role_id}_copy`, pos: { x: n.pos.x + 40, y: n.pos.y + 40 } }; const upd = { ...wf!, nodes: [...wf!.nodes, copy] }; void api.workflowSave(JSON.stringify(upd)).then(() => loadWorkflows()).then(() => setSelectedNode(copy.id)); } }}>Duplicate</div>
-                  <div style={{ padding: "6px 10px", cursor: "pointer", color: "var(--oom)" }} onClick={() => { const id = ctxMenu.nodeId; setCtxMenu(null); const upd = { ...wf!, nodes: wf!.nodes.filter((nn) => nn.id !== id), edges: wf!.edges.filter((e) => e.from !== id && e.to !== id) }; void api.workflowSave(JSON.stringify(upd)).then(() => { if (selectedNode === id) setSelectedNode(null); void loadWorkflows(); }); void id; }}>Delete</div>
-                </>
-              )}
+        </div>
+
+        {/* context menu */}
+        {ctxMenu && (
+          <div style={{ position: "fixed", left: ctxMenu.x, top: ctxMenu.y, background: "var(--panel)", border: "1px solid var(--line-bright)", borderRadius: 6, boxShadow: "0 8px 24px rgba(0,0,0,0.5)", zIndex: 99, fontSize: 11, minWidth: 160 }} onClick={() => setCtxMenu(null)}>
+            <div style={{ padding: "6px 10px", cursor: "pointer" }} onClick={() => { const id = ctxMenu.nodeId; setCtxMenu(null); void (async () => { const id2 = await api.tuiSpawn("/home/deviant/Projects/cyberdeck", 90, 28); const pp = panes.find((pp) => pp.id === id); const pos = pp ? { x: pp.pos.x + 24, y: pp.pos.y + 24 } : { x: 24, y: 24 }; setPanes((a) => [...a, { id: id2, dir: "/home/deviant/Projects/cyberdeck", pos }]); setSelectedTui(id2); })(); void id; }}>Duplicate terminal</div>
+            <div style={{ padding: "6px 10px", cursor: "pointer", color: "var(--oom)" }} onClick={() => { const id = ctxMenu.nodeId; setCtxMenu(null); void api.tuiStop(id); setPanes((a) => a.filter((x) => x.id !== id)); if (selectedTui === id) setSelectedTui(null); }}>Close terminal</div>
+            <div style={{ padding: "6px 10px", cursor: "pointer", borderTop: "1px solid var(--line)" }} onClick={() => { const id = ctxMenu.nodeId; setCtxMenu(null); setSelectedTui(id); }}>Select terminal</div>
+          </div>
+        )}
+
+        {/* workspace panel — collapsible left drawer */}
+        <div style={{ position: "fixed", top: 0, left: 0, bottom: 0, zIndex: 130, display: "flex", pointerEvents: "none" }}>
+          {/* toggle tab */}
+          <div
+            onClick={() => setWsPanelOpen((v) => !v)}
+            style={{ pointerEvents: "auto", width: 24, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(11,11,11,0.85)", border: "1px solid var(--line)", borderLeft: "none", borderRadius: "0 4px 4px 0", cursor: "pointer", fontSize: 10, color: "var(--muted)", writingMode: "vertical-lr", letterSpacing: 1, backdropFilter: "blur(4px)", userSelect: "none" }}
+            title={wsPanelOpen ? "collapse workspaces" : "saved workspaces"}
+          >
+            {wsPanelOpen ? "◁" : "▷"}
+          </div>
+          {/* panel */}
+          {wsPanelOpen && (
+            <div style={{ pointerEvents: "auto", width: 240, background: "var(--panel)", borderRight: "1px solid var(--line)", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "4px 0 24px rgba(0,0,0,0.3)" }}>
+              <div style={{ padding: "10px 10px 8px", borderBottom: "1px solid var(--line)" }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "var(--muted)", letterSpacing: 0.6, marginBottom: 8 }}>WORKSPACES</div>
+                <div style={{ display: "flex", gap: 4 }}>
+                  <input value={wsName} onChange={(e) => setWsName(e.target.value)} placeholder="name (optional)" onKeyDown={(e) => { if (e.key === "Enter") saveWorkspace(); }} style={{ flex: 1, background: "var(--panel-2)", border: "1px solid var(--line)", color: "var(--text)", padding: "4px 6px", fontSize: 10, borderRadius: 4 }} />
+                  <button className="action" style={{ fontSize: 9, padding: "4px 8px" }} onClick={saveWorkspace}>SAVE</button>
+                </div>
+              </div>
+              <div style={{ flex: 1, overflow: "auto", padding: 4 }}>
+                {workspaces.length === 0 ? (
+                  <div className="dim" style={{ fontSize: 10, padding: 12, textAlign: "center" }}>no saved workspaces yet</div>
+                ) : workspaces.map((ws) => (
+                  <div key={ws.id} style={{ padding: "6px 8px", borderRadius: 4, cursor: "pointer", border: "1px solid transparent", marginBottom: 2 }} onMouseEnter={(e) => { e.currentTarget.style.background = "var(--panel-2)"; e.currentTarget.style.borderColor = "var(--line)"; }} onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.borderColor = "transparent"; }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text)" }}>{ws.name}</span>
+                      <button className="ghost" style={{ fontSize: 8, padding: "1px 4px", color: "var(--oom)" }} onClick={(e) => { e.stopPropagation(); deleteWorkspace(ws.id); }} title="delete">✕</button>
+                    </div>
+                    <div className="dim" style={{ fontSize: 9, marginTop: 2 }}>
+                      {ws.panes.length} terminal{ws.panes.length !== 1 ? "s" : ""} · {ws.labels.length} label{ws.labels.length !== 1 ? "s" : ""} · {ws.edges.length} edge{ws.edges.length !== 1 ? "s" : ""}
+                    </div>
+                    <div className="dim" style={{ fontSize: 8, marginTop: 1 }}>{new Date(ws.savedAt).toLocaleString()}</div>
+                    <button className="ghost" style={{ fontSize: 9, padding: "2px 6px", marginTop: 4, width: "100%" }} onClick={(e) => { e.stopPropagation(); loadWorkspace(ws); }}>LOAD</button>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
-          {wfMsg && <div style={{ color: "var(--warn)", marginTop: 8, fontSize: 10 }}>{wfMsg}</div>}
-          {harnessErr && <div style={{ background: "rgba(248,81,73,0.1)", border: "1px solid rgba(248,81,73,0.3)", color: "var(--oom)", padding: "6px 10px", fontSize: 11, marginTop: 8 }}>harness error: {harnessErr}</div>}
-          {tuiErr && <div style={{ background: "rgba(248,81,73,0.1)", border: "1px solid rgba(248,81,73,0.3)", color: "var(--oom)", padding: "6px 10px", fontSize: 11, marginTop: 8 }}>{tuiErr}</div>}
-          {/* zoom slider — left edge */}
-          <div style={{ position: "absolute", top: "50%", left: 6, transform: "translateY(-50%)", zIndex: 110, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, background: "rgba(11,11,11,0.85)", border: "1px solid var(--line)", borderRadius: 6, padding: "8px 4px", backdropFilter: "blur(4px)" }}>
-            <button className="ghost" style={{ fontSize: 11, padding: "2px 5px", lineHeight: 1, color: "var(--text)" }} onClick={() => setZoom((z) => Math.min(3, z * 1.25))} title="zoom in">+</button>
-            <input type="range" min={10} max={300} value={Math.round(zoom * 100)} onChange={(e) => setZoom(Number(e.target.value) / 100)} style={{ writingMode: "vertical-lr", direction: "rtl", width: 20, height: 120, accentColor: "var(--cyan)", cursor: "pointer" }} title={`${Math.round(zoom * 100)}%`} />
-            <button className="ghost" style={{ fontSize: 11, padding: "2px 5px", lineHeight: 1, color: "var(--text)" }} onClick={() => setZoom((z) => Math.max(0.1, z / 1.25))} title="zoom out">−</button>
-            <span className="mono" style={{ fontSize: 8, color: "var(--dim2)", marginTop: 2 }}>{Math.round(zoom * 100)}%</span>
-            <button className="ghost" style={{ fontSize: 8, padding: "2px 3px", color: "var(--dim2)", marginTop: 2 }} onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }} title="reset zoom and pan">FIT</button>
+        </div>
+
+        {/* error toast */}
+        {tuiErr && (
+          <div style={{ position: "absolute", bottom: 48, left: "50%", transform: "translateX(-50%)", background: "rgba(248,81,73,0.1)", border: "1px solid rgba(248,81,73,0.3)", color: "var(--oom)", padding: "6px 10px", fontSize: 11, borderRadius: 4, zIndex: 110 }}>{tuiErr}</div>
+        )}
+
+        {/* zoom — + line dot - */}
+        <div style={{ position: "absolute", top: "50%", left: 6, transform: "translateY(-50%)", zIndex: 110, display: "flex", flexDirection: "column", alignItems: "center", gap: 2, background: "rgba(11,11,11,0.85)", border: "1px solid var(--line)", borderRadius: 6, padding: "6px 4px", backdropFilter: "blur(4px)" }}>
+          <button className="ghost" style={{ fontSize: 11, padding: "0", lineHeight: 1, color: "var(--text)", width: 16, height: 16 }} onClick={() => setZoom((z) => Math.min(3, z * 1.25))} title="zoom in">+</button>
+          <div style={{ position: "relative", width: 2, height: 60, background: "var(--line)", borderRadius: 1, cursor: "pointer" }} onClick={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            const pct = 1 - (e.clientY - rect.top) / rect.height;
+            const z = 0.1 + pct * 2.9;
+            setZoom(Math.min(3, Math.max(0.1, z)));
+          }}>
+            <div style={{ position: "absolute", left: -3, width: 8, height: 8, borderRadius: "50%", background: "var(--cyan)", top: `${(1 - (zoom - 0.1) / 2.9) * 100}%`, transform: "translateY(-50%)", cursor: "grab" }} onPointerDown={(e) => {
+              e.preventDefault();
+              const line = e.currentTarget.parentElement!;
+              const move = (ev: PointerEvent) => {
+                const rect = line.getBoundingClientRect();
+                const pct = 1 - Math.min(1, Math.max(0, (ev.clientY - rect.top) / rect.height));
+                setZoom(Math.min(3, Math.max(0.1, 0.1 + pct * 2.9)));
+              };
+              const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+              window.addEventListener("pointermove", move);
+              window.addEventListener("pointerup", up);
+            }} />
           </div>
-          {/* minimap — bottom right */}
-          <div style={{ position: "absolute", bottom: 8, right: 8, width: 180, height: 120, zIndex: 110, background: "rgba(11,11,11,0.85)", border: "1px solid var(--line)", borderRadius: 6, overflow: "hidden", backdropFilter: "blur(4px)", cursor: "pointer" }} onPointerDown={(e) => {
-            // Click on minimap: jump to that position
-            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-            const mx = e.clientX - rect.left;
-            const my = e.clientY - rect.top;
-            // Compute the bounding box of all panes
+          <button className="ghost" style={{ fontSize: 11, padding: "0", lineHeight: 1, color: "var(--text)", width: 16, height: 16 }} onClick={() => setZoom((z) => Math.max(0.1, z / 1.25))} title="zoom out">−</button>
+          <span className="mono" style={{ fontSize: 7, color: "var(--dim2)", marginTop: 1 }}>{Math.round(zoom * 100)}%</span>
+        </div>
+
+        {/* minimap */}
+        <div style={{ position: "absolute", bottom: 8, right: 8, width: 180, height: 120, zIndex: 110, background: "rgba(11,11,11,0.85)", border: "1px solid var(--line)", borderRadius: 6, overflow: "hidden", backdropFilter: "blur(4px)", cursor: "pointer" }} onPointerDown={(e) => {
+          const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+          const mx = e.clientX - rect.left;
+          const my = e.clientY - rect.top;
+          const allPos = panes.map((p) => ({ x: p.pos.x, y: p.pos.y, w: 780, h: 480 }));
+          if (allPos.length === 0) return;
+          const minX = Math.min(...allPos.map((a) => a.x)) - 50;
+          const minY = Math.min(...allPos.map((a) => a.y)) - 50;
+          const maxX = Math.max(...allPos.map((a) => a.x + a.w)) + 50;
+          const maxY = Math.max(...allPos.map((a) => a.y + a.h)) + 50;
+          const cw = maxX - minX || 1;
+          const ch = maxY - minY || 1;
+          const s = Math.min(180 / cw, 120 / ch);
+          const canvasX = mx / s + minX;
+          const canvasY = my / s + minY;
+          const viewEl = canvasRef.current;
+          if (viewEl) {
+            const vw = viewEl.clientWidth;
+            const vh = viewEl.clientHeight;
+            setPan({ x: vw / 2 - canvasX * zoomRef.current, y: vh / 2 - canvasY * zoomRef.current });
+          }
+        }}>
+          {(() => {
+            if (panes.length === 0) return <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, color: "var(--dim2)" }}>no terminals</div>;
             const allPos = panes.map((p) => ({ x: p.pos.x, y: p.pos.y, w: 780, h: 480 }));
-            if (allPos.length === 0) return;
             const minX = Math.min(...allPos.map((a) => a.x)) - 50;
             const minY = Math.min(...allPos.map((a) => a.y)) - 50;
             const maxX = Math.max(...allPos.map((a) => a.x + a.w)) + 50;
             const maxY = Math.max(...allPos.map((a) => a.y + a.h)) + 50;
             const cw = maxX - minX || 1;
             const ch = maxY - minY || 1;
-            const sx = 180 / cw;
-            const sy = 120 / ch;
-            const s = Math.min(sx, sy);
-            const canvasX = mx / s + minX;
-            const canvasY = my / s + minY;
-            // Center viewport on that point
-            const viewEl = sessionsRef.current;
-            if (viewEl) {
-              const vw = viewEl.clientWidth;
-              const vh = viewEl.clientHeight;
-              setPan({ x: vw / 2 - canvasX * zoomRef.current, y: vh / 2 - canvasY * zoomRef.current });
-            }
-          }}>
-            {(() => {
-              if (panes.length === 0) return <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, color: "var(--dim2)" }}>no terminals</div>;
-              const allPos = panes.map((p) => ({ x: p.pos.x, y: p.pos.y, w: 780, h: 480 }));
-              const minX = Math.min(...allPos.map((a) => a.x)) - 50;
-              const minY = Math.min(...allPos.map((a) => a.y)) - 50;
-              const maxX = Math.max(...allPos.map((a) => a.x + a.w)) + 50;
-              const maxY = Math.max(...allPos.map((a) => a.y + a.h)) + 50;
-              const cw = maxX - minX || 1;
-              const ch = maxY - minY || 1;
-              const s = Math.min(180 / cw, 120 / ch);
-              // Viewport rect in canvas coords
-              const viewEl = sessionsRef.current;
-              const vw = viewEl ? viewEl.clientWidth : 800;
-              const vh = viewEl ? viewEl.clientHeight : 600;
-              const vLeft = (-panRef.current.x / zoomRef.current);
-              const vTop = (-panRef.current.y / zoomRef.current);
-              const vW = vw / zoomRef.current;
-              const vH = vh / zoomRef.current;
-              return (
-                <svg width={180} height={120} style={{ position: "absolute", inset: 0 }}>
-                  {/* terminals */}
-                  {allPos.map((a, i) => (
-                    <rect key={i} x={(a.x - minX) * s} y={(a.y - minY) * s} width={a.w * s} height={a.h * s} rx={2} fill={selected.has(panes[i]?.id) ? "rgba(210,153,34,0.5)" : "rgba(0,255,170,0.25)"} stroke={selected.has(panes[i]?.id) ? "var(--magenta)" : "rgba(0,255,170,0.4)"} strokeWidth={0.5} />
-                  ))}
-                  {/* viewport rect */}
-                  <rect x={(vLeft - minX) * s} y={(vTop - minY) * s} width={vW * s} height={vH * s} fill="none" stroke="rgba(255,255,255,0.5)" strokeWidth={1} strokeDasharray="3 2" rx={1} />
-                </svg>
-              );
-            })()}
-          </div>
+            const s = Math.min(180 / cw, 120 / ch);
+            const viewEl = canvasRef.current;
+            const vw = viewEl ? viewEl.clientWidth : 800;
+            const vh = viewEl ? viewEl.clientHeight : 600;
+            const vLeft = -panRef.current.x / zoomRef.current;
+            const vTop = -panRef.current.y / zoomRef.current;
+            const vW = vw / zoomRef.current;
+            const vH = vh / zoomRef.current;
+            return (
+              <svg width={180} height={120} style={{ position: "absolute", inset: 0 }}>
+                {allPos.map((a, i) => (
+                  <rect key={i} x={(a.x - minX) * s} y={(a.y - minY) * s} width={a.w * s} height={a.h * s} rx={2} fill={selected.has(panes[i]?.id) ? "rgba(210,153,34,0.5)" : "rgba(0,255,170,0.25)"} stroke={selected.has(panes[i]?.id) ? "var(--magenta)" : "rgba(0,255,170,0.4)"} strokeWidth={0.5} />
+                ))}
+                <rect x={(vLeft - minX) * s} y={(vTop - minY) * s} width={vW * s} height={vH * s} fill="none" stroke="rgba(255,255,255,0.5)" strokeWidth={1} strokeDasharray="3 2" rx={1} />
+              </svg>
+            );
+          })()}
         </div>
-
-        {/* right drawer: Session panel OR TUI session panel OR loadout editor OR node inspector — hidden in fullscreen */}
-        {!fullCanvas && ((drawerOpen && editing) ? (
-          <div style={{ width: 380, flex: "none", overflow: "hidden", display: "flex", flexDirection: "column", borderLeft: "1px solid var(--line)", background: "var(--bg)" }}>
-            <div className="row" style={{ justifyContent: "space-between", alignItems: "center", padding: "6px 8px", borderBottom: "1px solid var(--line)" }}>
-              <span style={{ fontSize: 11, fontWeight: 700, color: "var(--muted)" }}>LOADOUT — {editing.name || "new"}</span>
-              <button className="ghost" style={{ fontSize: 10, padding: "2px 6px" }} onClick={() => { setDrawerOpen(false); setEditing(null); }}>✕ close</button>
-            </div>
-            <div style={{ flex: 1, overflow: "auto" }}><LoadoutEditor initial={editing} modelPaths={modelPaths} onClose={() => { setDrawerOpen(false); setEditing(null); }} onSaved={() => { setDrawerOpen(false); setEditing(null); onChanged(); }} /></div>
-          </div>
-        ) : selectedSession ? (
-          <div style={{ width: 440, flex: "none", overflow: "hidden", display: "flex", flexDirection: "column", borderLeft: "1px solid var(--line)", background: "var(--bg)" }}>
-            <SessionPanel
-              sessionId={selectedSession}
-              onDismiss={() => setSelectedSession(null)}
-              onContinue={(sid) => {
-                const s = sessionStore.find(sid);
-                if (s) {
-                  setPrompt(s.task);
-                  setSelectedSession(null);
-                  setTimeout(() => inputRef.current?.focus(), 50);
-                }
-              }}
-            />
-          </div>
-        ) : selectedTui ? (
-          (() => {
-            const p = panes.find((x) => x.id === selectedTui);
-            if (!p) return null;
-            const role = tuiRoles.get(p.id) || "";
-            const edges = tuiEdges.filter((e) => e.from === p.id || e.to === p.id);
-            return (
-              <div style={{ width: 360, flex: "none", overflow: "auto", display: "flex", flexDirection: "column", borderLeft: "1px solid var(--line)", background: "var(--bg)", padding: 10, gap: 10 }}>
-                <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: "var(--muted)" }}>TERMINAL — {p.id.slice(0, 8)}</span>
-                  <button className="ghost" style={{ fontSize: 10, padding: "2px 6px" }} onClick={() => setSelectedTui(null)}>✕</button>
-                </div>
-                <label style={{ fontSize: 11, color: "var(--muted)" }}>role — click badge or type to assign (for loops)
-                  <input list={`roles-${p.id}`} value={role} onChange={(e) => setTuiRoles((m) => { const n = new Map(m); const v = e.target.value.trim(); if (v) n.set(p.id, v); else n.delete(p.id); return n; })} placeholder="primary-developer — or type custom" style={{ width: "100%", background: "var(--panel)", border: "1px solid var(--line)", color: "var(--text)", padding: "4px 6px", fontSize: 11, marginTop: 4 }} />
-                  <datalist id={`roles-${p.id}`}><option value="primary-developer" /><option value="architecture-reviewer" /><option value="human" /></datalist>
-                </label>
-                {role === "human" && <div className="dim" style={{ fontSize: 9, color: "var(--magenta)" }}>human gate — this terminal pauses for your approval after the loop is satisfied</div>}
-                <div className="mono dim" style={{ fontSize: 10 }}>dir: {p.dir}</div>
-                <div className="mono dim" style={{ fontSize: 10 }}>model: inside terminal via <code>/model</code> — cloud without app support</div>
-                <div style={{ borderTop: "1px solid var(--line)", paddingTop: 8 }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)", marginBottom: 4 }}>CONNECTIONS — {edges.length ? `${edges.length} edge${edges.length>1?"s":""}` : "no connections"} {panes.length > 1 && <span className="dim">· click ● on another terminal to connect (loopable)</span>}</div>
-                  {edges.length === 0 ? <div className="dim" style={{ fontSize: 10 }}>give this terminal a role, then click its ● handle and pick a target terminal to wire. Use <code>loop</code> for developer→reviewer→developer cycle, and a final edge to a <code>human</code> terminal for approval.</div> : edges.map((e) => {
-                    const other = e.from === p.id ? e.to : e.from;
-                    const dir = e.from === p.id ? "→" : "←";
-                    const otherRole = tuiRoles.get(other) || other.slice(0,8);
-                    return (
-                      <div key={e.id} className="row" style={{ gap: 6, alignItems: "center", padding: "4px 0", borderBottom: "1px solid var(--line)", flexWrap: "wrap" }}>
-                        <span className="mono" style={{ fontSize: 10 }}>{dir} {otherRole}</span>
-                        <input placeholder="condition e.g. contains:APPROVED" value={e.condition || ""} onChange={(ev) => setTuiEdges((ee) => ee.map((x) => x.id === e.id ? { ...x, condition: ev.target.value || null } : x))} style={{ flex: 1, minWidth: 120, background: "var(--panel-2)", border: "1px solid var(--line)", color: "var(--text)", padding: "2px 4px", fontSize: 9 }} title="contains:APPROVED / not_contains:CHANGES_REQUESTED / always" />
-                        <label className="row" style={{ gap: 4, fontSize: 10 }}><input type="checkbox" checked={!!e.loop_edge} onChange={(ev) => setTuiEdges((ee) => ee.map((x) => x.id === e.id ? { ...x, loop_edge: ev.target.checked } : x))} /> loop</label>
-                        <button className="ghost" style={{ fontSize: 9, padding: "2px 4px", color: "var(--oom)" }} onClick={() => setTuiEdges((ee) => ee.filter((x) => x.id !== e.id))}>✕</button>
-                      </div>
-                    );
-                  })}
-                </div>
-                <div className="row" style={{ gap: 6 }}>
-                  <button className="ghost" style={{ fontSize: 11, flex: 1 }} onClick={() => setConnectingFrom(p.id)} title="wire this terminal to another — loopable edge">CONNECT</button>
-                  <button className="ghost" style={{ fontSize: 11, flex: 1 }} disabled={tuiEdges.length === 0} onClick={async () => {
-                    nodeOutputsRef.current.clear();
-                    const nodes: api.WorkflowNode[] = panes.filter((pp) => tuiRoles.get(pp.id)).map((pp) => ({ id: pp.id, role_id: tuiRoles.get(pp.id)!, binding: { role_id: tuiRoles.get(pp.id)!, model_ref: "", engine: null, overrides_json: "{}", active: true }, kind: (tuiRoles.get(pp.id) === "human" ? "Human" : "Agentic") as api.NodeKind, pos: pp.pos, exec: { timeout_s: 300, max_tokens: 4096, max_retries: 1 } }));
-                    if (nodes.length < 2) { setWfMsg("need at least 2 terminals with roles to run a loop"); return; }
-                    const taskVal = kickoffTask.trim() || prompt.trim() || "";
-                    const wfDoc: api.Workflow = { id: `tui-loop-${Date.now().toString(36)}`, name: `TUI Loop ${new Date().toLocaleTimeString()}`, description: "loop from plain terminals — roles + edges", version: 1, nodes, edges: tuiEdges.filter((e) => nodes.some((n) => n.id === e.from) && nodes.some((n) => n.id === e.to)), exec_settings: { max_parallel: 1, global_retries: 0, budget_tokens: 0, budget_wall_s: 0, max_iterations: 6 }, template: false, inputs: taskVal ? { task: taskVal } : {} };
-                    try { await api.workflowSave(JSON.stringify(wfDoc)); await api.workflowRun(wfDoc.id, "agentic", dir || "/home/deviant/Projects/cyberdeck", null, taskVal || null); setWfMsg(`TUI loop '${wfDoc.id}' queued — ${nodes.length}n ${wfDoc.edges.length}e${taskVal ? ` — task: ${taskVal.slice(0,40)}` : ""}`); } catch (err) { setWfMsg(String(err)); }
-                  }}>▶ RUN LOOP</button>
-                </div>
-                {(() => {
-                  const hasHuman = [...tuiRoles.values()].includes("human");
-                  const hasLoop = tuiEdges.some((e) => e.loop_edge);
-                  if (!hasHuman || !hasLoop) return <div className="dim" style={{ fontSize: 9, borderTop: "1px solid var(--line)", paddingTop: 6 }}>Tip: assign one terminal <code>human</code>, wire <code>developer → reviewer (loop)</code> with condition <code>contains:CHANGES</code> and <code>reviewer → human</code> with <code>contains:APPROVED</code> — loop runs until reviewer is satisfied, then pauses for your approval.</div>;
-                  return null;
-                })()}
-                <div className="dim" style={{ fontSize: 10, borderTop: "1px solid var(--line)", paddingTop: 8 }}>Each TUI runs stock opencode — accept/deny inside the terminal. Roles + loop edges are extra when clicked. Cloud model via <code>/model</code> in the TUI, no app wiring needed.</div>
-                <div className="row" style={{ gap: 6 }}>
-                  <button className="ghost" style={{ fontSize: 11, color: "var(--oom)", flex: 1 }} onClick={() => { void api.tuiStop(p.id); setPanes((a) => a.filter((x) => x.id !== p.id)); setSelectedTui(null); }}>CLOSE TERMINAL</button>
-                  <button className="ghost" style={{ fontSize: 11, flex: 1 }} onClick={() => setSelectedTui(null)}>DISMISS</button>
-                </div>
-              </div>
-            );
-          })()
-        ) : selectedNode && wf ? (
-          (() => {
-            const n = wf.nodes.find((x) => x.id === selectedNode);
-            if (!n) return null;
-            return (
-              <div style={{ width: 360, flex: "none", overflow: "auto", display: "flex", flexDirection: "column", borderLeft: "1px solid var(--line)", background: "var(--bg)", padding: 10, gap: 10 }}>
-                <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: "var(--muted)" }}>NODE — {n.id}</span>
-                  <button className="ghost" style={{ fontSize: 10, padding: "2px 6px" }} onClick={() => setSelectedNode(null)}>✕</button>
-                </div>
-                <div className="mono" style={{ fontSize: 11, color: "var(--cyan)" }}>{n.role_id}</div>
-                <div className="mono dim" style={{ fontSize: 10 }}>{n.binding.model_ref || "(no model)"} {n.binding.engine ? `@ ${n.binding.engine}` : ""}</div>
-                <div className="row" style={{ gap: 6, marginTop: 4 }}>
-                  <button className="action" style={{ fontSize: 11, flex: 1 }} onClick={async () => { await api.workflowSave(JSON.stringify(wf)); setWfMsg(`saved ${wf.id}`); await loadWorkflows(); }}>SAVE</button>
-                  <button className="ghost" style={{ fontSize: 11, color: "var(--oom)" }} onClick={async () => { const upd = { ...wf, nodes: wf.nodes.filter((nn) => nn.id !== n.id), edges: wf.edges.filter((e) => e.from !== n.id && e.to !== n.id) }; await api.workflowSave(JSON.stringify(upd)); setSelectedNode(null); await loadWorkflows(); }}>DELETE</button>
-                </div>
-              </div>
-            );
-          })()
-        ) : null)}
       </div>
 
-      {/* footer benches hidden in plain-terminal mode, shown when workflows on */}
-      {showWorkflows && (
-        <div className="card" style={{ marginTop: 8, fontSize: 11 }}>
-          <h3 style={{ fontSize: 11, letterSpacing: 0.6, color: "var(--muted)", margin: 0, marginBottom: 6 }}>WHOLE-LOOP BENCH <span className="dim">· loop tok/s</span></h3>
-          {loopBench ? <div className="row" style={{ gap: 12 }}><span className="mono">runs <b>{loopBench.runs}</b></span><span className="mono" style={{ color: "var(--pass)" }}>best {loopBench.best_tps.toFixed(1)}</span><span className="mono dim">avg {loopBench.avg_tps.toFixed(1)}</span></div> : <div className="dim">no loop runs yet</div>}
-        </div>
-      )}
-      {showWorkflows && (
-        <div className="card" style={{ marginTop: 8, fontSize: 11 }}>
-          <h3 style={{ fontSize: 11, letterSpacing: 0.6, color: "var(--muted)", margin: 0, marginBottom: 6 }}>PER-ROLE BENCH</h3>
-          {bench.length === 0 ? <div className="dim">no per-role bench yet</div> : <table><thead><tr><th>ROLE</th><th>MODEL</th><th>BEST</th><th>AVG</th></tr></thead><tbody>{bench.map((b) => <tr key={`${b.role_id}:${b.model}:${b.engine}`}><td className="mono" style={{ color: "var(--cyan)" }}>{b.role_id}</td><td className="mono">{b.model}</td><td className="mono" style={{ color: "var(--pass)" }}>{b.best_tps.toFixed(1)}</td><td className="mono dim">{b.avg_tps.toFixed(1)}</td></tr>)}</tbody></table>}
-        </div>
-      )}
-
-      {/* session history — recent sessions with status + quick actions */}
-      {!fullCanvas && sessionList.length > 0 && (
-        <div style={{ marginTop: 6, fontSize: 10, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-          <span style={{ color: "var(--muted)", fontWeight: 700, letterSpacing: 0.5, fontSize: 9 }}>SESSIONS</span>
-          {sessionList.slice(0, 8).map((s) => {
-            const statusColor = s.status === "complete" ? "var(--pass)" : s.status === "running" ? "var(--cyan)" : s.status === "error" ? "var(--oom)" : s.status === "stopped" ? "var(--warn)" : "var(--dim2)";
-            return (
-              <button
-                key={s.id}
-                className="ghost"
-                style={{
-                  fontSize: 9,
-                  padding: "2px 6px",
-                  borderColor: selectedSession === s.id ? statusColor : undefined,
-                  color: statusColor,
-                  maxWidth: 180,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-                onClick={() => setSelectedSession(selectedSession === s.id ? null : s.id)}
-                title={`${s.task || "no task"} — ${s.model || "no model"} — ${s.status}`}
-              >
-                <span style={{ width: 5, height: 5, borderRadius: "50%", background: statusColor, display: "inline-block", marginRight: 4, verticalAlign: "middle" }} />
-                {s.task ? s.task.slice(0, 24) : s.id.slice(0, 12)}
-              </button>
-            );
-          })}
-          {sessionList.length > 8 && <span className="dim" style={{ fontSize: 9 }}>+{sessionList.length - 8} more</span>}
-        </div>
-      )}
-
-      {/* bottom bar — single loadout/model picker like agentic apps; also spawns via + TERMINAL above (hidden in fullscreen) */}
-      {!fullCanvas && (
-      <div style={{ padding: "8px 0 6px", position: "sticky", bottom: 0, background: "linear-gradient(180deg, transparent, var(--bg) 18%)" }}>
-        <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
-          <select value={loadout} onChange={(e) => setLoadout(e.target.value)} style={{ background: "var(--panel)", border: "1px solid var(--line)", color: "var(--text)", padding: "6px 10px", fontSize: 11, minWidth: 150 }}>
-            <option value="">loadout — none</option>
-            {profiles.map((p) => <option key={p.name} value={p.name}>{p.name} · {p.engine}</option>)}
-          </select>
-          <button className="ghost" style={{ fontSize: 9, padding: "4px 6px" }} onClick={() => { if (loadout) void edit(loadout); else { setEditing(defaultProfile()); setDrawerOpen(true); } }}>{loadout ? "⚙" : "+ loadout"}</button>
-          <select value={harnessModel} onChange={(e) => { setHarnessModel(e.target.value); if (e.target.value.startsWith("__cloud_")) { void loadCloudCatalog(e.target.value.slice("__cloud_".length)); setCustomModel(""); } else if (e.target.value) setCustomModel(""); }} style={{ background: "var(--panel)", border: "1px solid var(--line)", color: "var(--text)", padding: "6px 10px", fontSize: 11, minWidth: 200 }}>
-            <option value="">model — {active ? "loadout default" : "auto (pick inside TUI)"}</option>
-            <optgroup label="LOCAL (resident engines)">
-              {models.map((m) => <option key={m.path} value={m.path}>{m.name} {isLocalModel(m.path) ? "🔵" : "🟣"}</option>)}
-            </optgroup>
-            {(fleet?.providers ?? []).map((p) => {
-              const hasKey = keyStatus.get(p.id) && (keyStatus.get(p.id)!.from_keychain || keyStatus.get(p.id)!.from_env);
+      {/* right drawer — terminal inspector */}
+      {selectedPane && (
+        <div style={{ width: 360, flex: "none", overflow: "auto", display: "flex", flexDirection: "column", borderLeft: "1px solid var(--line)", background: "var(--bg)", padding: 10, gap: 10 }}>
+          <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "var(--muted)" }}>TERMINAL — {selectedPane.id.slice(0, 8)}</span>
+            <button className="ghost" style={{ fontSize: 10, padding: "2px 6px" }} onClick={() => setSelectedTui(null)}>✕</button>
+          </div>
+          <label style={{ fontSize: 11, color: "var(--muted)" }}>
+            role — click badge or type to assign (for loops)
+            <input list={`roles-drawer-${selectedPane.id}`} value={selectedRole} onChange={(e) => setTuiRoles((m) => { const n = new Map(m); const v = e.target.value.trim(); if (v) n.set(selectedPane.id, v); else n.delete(selectedPane.id); return n; })} placeholder="primary-developer — or type custom" style={{ width: "100%", background: "var(--panel)", border: "1px solid var(--line)", color: "var(--text)", padding: "4px 6px", fontSize: 11, marginTop: 4 }} />
+            <datalist id={`roles-drawer-${selectedPane.id}`}><option value="primary-developer" /><option value="architecture-reviewer" /><option value="human" /></datalist>
+          </label>
+          {selectedRole === "human" && <div className="dim" style={{ fontSize: 9, color: "var(--magenta)" }}>human gate — this terminal pauses for your approval after the loop is satisfied</div>}
+          <div className="mono dim" style={{ fontSize: 10 }}>dir: {selectedPane.dir}</div>
+          <div className="mono dim" style={{ fontSize: 10 }}>model: inside terminal via <code>/model</code></div>
+          <div style={{ borderTop: "1px solid var(--line)", paddingTop: 8 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)", marginBottom: 4 }}>CONNECTIONS — {selectedEdges.length ? `${selectedEdges.length} edge${selectedEdges.length>1?"s":""}` : "no connections"} {panes.length > 1 && <span className="dim">· click ● on another terminal to connect (loopable)</span>}</div>
+            {selectedEdges.length === 0 ? <div className="dim" style={{ fontSize: 10 }}>give this terminal a role, then click its ● handle and pick a target terminal to wire. Use <code>loop</code> for developer→reviewer→developer cycle, and a final edge to a <code>human</code> terminal for approval.</div> : selectedEdges.map((e) => {
+              const other = e.from === selectedPane.id ? e.to : e.from;
+              const dir = e.from === selectedPane.id ? "→" : "←";
+              const otherRole = tuiRoles.get(other) || other.slice(0,8);
               return (
-              <optgroup key={p.id} label={`${p.display.toUpperCase()} · ${p.quota_label}`}>
-                {catalog.has(p.id) ? catalog.get(p.id)!.map((m) => (
-                  <option key={m.id} value={`${p.id}/${m.id}`}>{m.name ?? m.id}{m.free ? " · free" : ""} {m.context ? ` · ${(m.context / 1000).toFixed(0)}k` : ""} 🟣</option>
-                )) : (
-                  <option value={`__cloud_${p.id}`}>{catalogLoading ? "loading…" : `⬇ load ${p.id} models`}{p.free_note ? ` — ${p.free_note}` : ""}{hasKey ? "" : " · no key"}</option>
-                )}
-              </optgroup>
-              );
-            })}
-            <option value="__custom">— custom (provider/model) —</option>
-          </select>
-          {harnessModel === "__custom" && <input value={customModel} onChange={(e) => setCustomModel(e.target.value)} placeholder="openrouter/anthropic/claude-sonnet-4" style={{ background: "var(--panel)", border: "1px solid var(--magenta)", color: "var(--text)", padding: "6px 10px", fontSize: 11, minWidth: 200 }} />}
-          {cloudErr && <span className="mono" style={{ fontSize: 9, color: "var(--error, #ff5f56)" }}>{cloudErr}</span>}
-          <span className="mono dim" style={{ fontSize: 10 }}>ctx {ctx.toLocaleString()}</span>
-          <button className="ghost" style={{ fontSize: 9, padding: "4px 8px" }} onClick={() => setShowAdvanced((v) => !v)}>{showAdvanced ? "hide" : "+ controls"}</button>
-          <span className="dim" style={{ fontSize: 10, marginLeft: "auto" }}>pick a model above, or /model inside a TUI — cloud models load from provider catalogs</span>
-        </div>
-        {showAdvanced && (
-          <div style={{ display: "flex", gap: 12, alignItems: "center", padding: "6px 10px", marginBottom: 6, background: "var(--panel)", border: "1px solid var(--line)", fontSize: 11 }}>
-            <label className="row" style={{ gap: 6 }}><input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> auto-approve</label>
-            <label className="row" style={{ gap: 6 }}>dir <input value={dir} onChange={(e) => setDir(e.target.value)} style={{ width: 180, background: "var(--bg)", border: "1px solid var(--line)", color: "var(--text)", padding: "2px 6px", fontSize: 11 }} /></label>
-            <span className="dim" style={{ marginLeft: "auto" }}>cloud provider keys</span>
-            {(fleet?.providers ?? []).map((p) => {
-              const st = keyStatus.get(p.id);
-              const has = st && (st.from_keychain || st.from_env);
-              return (
-                <button key={p.id} className="ghost" title={`${p.id}: ${has ? (st?.from_env ? "env var set" : `stored (${st?.masked})`) : "no key"}`} style={{ fontSize: 9, padding: "3px 6px", borderColor: has ? "var(--pass, #3fb950)" : undefined }} onClick={() => { if (has) { if (confirm(`Remove ${p.id} key from keychain? Env override stays.`)) void unsetProviderKey(p.id); } else void setProviderKey(p.id); }}>
-                  {p.id} {has ? "●" : "○"}
-                </button>
+                <div key={e.id} className="row" style={{ gap: 6, alignItems: "center", padding: "4px 0", borderBottom: "1px solid var(--line)", flexWrap: "wrap" }}>
+                  <span className="mono" style={{ fontSize: 10 }}>{dir} {otherRole}</span>
+                  <input placeholder="condition e.g. contains:APPROVED" value={e.condition || ""} onChange={(ev) => setTuiEdges((ee) => ee.map((x) => x.id === e.id ? { ...x, condition: ev.target.value || null } : x))} style={{ flex: 1, minWidth: 120, background: "var(--panel-2)", border: "1px solid var(--line)", color: "var(--text)", padding: "2px 4px", fontSize: 9 }} title="contains:APPROVED / not_contains:CHANGES_REQUESTED / always" />
+                  <label className="row" style={{ gap: 4, fontSize: 10 }}><input type="checkbox" checked={!!e.loop_edge} onChange={(ev) => setTuiEdges((ee) => ee.map((x) => x.id === e.id ? { ...x, loop_edge: ev.target.checked } : x))} /> loop</label>
+                  <button className="ghost" style={{ fontSize: 9, padding: "2px 4px", color: "var(--oom)" }} onClick={() => setTuiEdges((ee) => ee.filter((x) => x.id !== e.id))}>✕</button>
+                </div>
               );
             })}
           </div>
-        )}
-        <div style={{ display: "flex", alignItems: "flex-end", gap: 8, background: "var(--panel-2)", border: "1px solid var(--line-bright)", padding: "8px 10px", boxShadow: "0 6px 24px rgba(0,0,0,0.4)" }}>
-          <textarea ref={inputRef} value={prompt} onChange={(e) => setPrompt(e.target.value)} onKeyDown={onKey} placeholder="Message the deck… (also spawns via + TERMINAL for plug-and-play TUI)" rows={1} style={{ flex: 1, background: "transparent", border: "none", color: "var(--text)", fontFamily: "inherit", fontSize: 14, resize: "none", outline: "none", minHeight: 24 }} />
-          <button className="action" onClick={runAgent} disabled={!prompt.trim() || pending} style={{ padding: "8px 14px", minWidth: 54 }}>↑</button>
-        </div>
-      </div>
-      )}
-      {humanGate && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200 }} onClick={() => setHumanGate(null)}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--panel)", border: "1px solid var(--line-bright)", width: 560, maxHeight: "80vh", overflow: "auto", padding: 16, boxShadow: "0 20px 60px rgba(0,0,0,0.6)" }}>
-            <h3 style={{ margin: 0, marginBottom: 8, fontSize: 13, color: "var(--text)" }}>Human approval — code loop finished</h3>
-            <div className="dim" style={{ fontSize: 11, marginBottom: 8 }}>Developer → Reviewer loop ran until reviewer was satisfied (condition <code>contains:APPROVED</code>). Now presenting to you for approval. This is the human-in-the-loop gate.</div>
-            <pre style={{ background: "var(--panel-2)", border: "1px solid var(--line)", padding: 10, fontSize: 11, whiteSpace: "pre-wrap", maxHeight: 320, overflow: "auto" }}>{humanGate.code}</pre>
-            <div className="row" style={{ gap: 8, marginTop: 12 }}>
-              <button className="action" style={{ flex: 1 }} onClick={() => setHumanGate(null)}>✓ APPROVE & PRESENT</button>
-              <button className="ghost" style={{ flex: 1, color: "var(--warn)", borderColor: "var(--warn)" }} onClick={() => {
-                setHumanGate(null);
-                // request changes → re-queue the same TUI loop (reviewer will loop back to developer)
-                const t = tuiEdges.find((e) => e.loop_edge);
-                if (t) setWfMsg("requested changes — re-running loop (reviewer will loop back to developer)");
-                // re-run last TUI loop if exists
-                const lastLoop = workflows.find((w) => w.id.startsWith("tui-loop-"));
-                if (lastLoop) void api.workflowRun(lastLoop.id, "agentic", null);
-              }}>↺ REQUEST CHANGES (loop back)</button>
-            </div>
-            <div className="dim" style={{ fontSize: 10, marginTop: 8, textAlign: "center" }}>Wire: <code>developer → reviewer (loop, condition contains:CHANGES)</code> + <code>reviewer → human (condition contains:APPROVED)</code> — human gate pauses here.</div>
+          <div className="row" style={{ gap: 6 }}>
+            <button className="ghost" style={{ fontSize: 11, flex: 1 }} onClick={() => setConnectingFrom(selectedPane.id)} title="wire this terminal to another — loopable edge">CONNECT</button>
+          </div>
+          {(() => {
+            const hasHuman = [...tuiRoles.values()].includes("human");
+            const hasLoop = tuiEdges.some((e) => e.loop_edge);
+            if (!hasHuman || !hasLoop) return <div className="dim" style={{ fontSize: 9, borderTop: "1px solid var(--line)", paddingTop: 6 }}>Tip: assign one terminal <code>human</code>, wire <code>developer → reviewer (loop)</code> with condition <code>contains:CHANGES</code> and <code>reviewer → human</code> with <code>contains:APPROVED</code> — loop runs until reviewer is satisfied, then pauses for your approval.</div>;
+            return null;
+          })()}
+          <div className="dim" style={{ fontSize: 10, borderTop: "1px solid var(--line)", paddingTop: 8 }}>Each TUI runs stock opencode — accept/deny inside the terminal. Roles + loop edges are extra when clicked. Cloud model via <code>/model</code> in the TUI.</div>
+          <div className="row" style={{ gap: 6 }}>
+            <button className="ghost" style={{ fontSize: 11, color: "var(--oom)", flex: 1 }} onClick={() => { void api.tuiStop(selectedPane.id); setPanes((a) => a.filter((x) => x.id !== selectedPane.id)); setTuiRoles((m) => { const n = new Map(m); n.delete(selectedPane.id); return n; }); setTuiEdges((ee) => ee.filter((e) => e.from !== selectedPane.id && e.to !== selectedPane.id)); setSelectedTui(null); }}>CLOSE TERMINAL</button>
+            <button className="ghost" style={{ fontSize: 11, flex: 1 }} onClick={() => setSelectedTui(null)}>DISMISS</button>
           </div>
         </div>
       )}
 
-      {/* fullscreen canvas mode — floating toolbar (canvas fills the viewport) */}
-      {fullCanvas && (
-        <div style={{ position: "fixed", top: 10, left: 10, zIndex: 120, display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start" }}>
-          <div style={{ display: "flex", gap: 6, alignItems: "center", background: "var(--panel)", border: "1px solid var(--line-bright)", boxShadow: "0 6px 24px rgba(0,0,0,0.4)", padding: "6px 8px", borderRadius: 6 }}>
-            <span className="mono" style={{ fontSize: 10, color: "var(--muted)" }}>{panes.length} TUI</span>
-            <button className="action" style={{ fontSize: 10, padding: "4px 8px", fontWeight: 700 }} onClick={() => setSpawnOpen(true)}>+ TERMINAL</button>
-            <button className="ghost" style={{ fontSize: 10, padding: "4px 8px", borderColor: selectMode ? "var(--magenta)" : undefined, color: selectMode ? "var(--magenta)" : undefined }} onClick={() => { if (selectMode) clearSelection(); else setSelectMode(true); }}>{selectMode ? "● SELECTING" : "◉ SELECT"}</button>
-            {selected.size >= 2 && selectMode && (
-              <button className="ghost" style={{ fontSize: 10, padding: "4px 8px", borderColor: "var(--pass)", color: "var(--pass)" }} onClick={() => { connectTogether(); clearSelection(); }}>CONNECT TOGETHER ({selected.size})</button>
-            )}
-            <button className="ghost" style={{ fontSize: 10, padding: "4px 8px" }} onClick={() => setFullCanvas(false)} title="restore chrome">⛶ exit fullscreen</button>
-          </div>
-          {tuiErr && <div className="mono" style={{ fontSize: 9, color: "var(--error, #ff5f56)" }}>{tuiErr}</div>}
-          {/* floating loop-module card for the current SELECT-tool selection */}
-          {selectMode && (
-            <div style={{ background: "var(--panel)", border: "1px solid var(--magenta)", boxShadow: "0 6px 24px rgba(0,0,0,0.4)", padding: 8, borderRadius: 6, fontSize: 10, maxWidth: 260 }}>
-              <div style={{ fontWeight: 700, color: "var(--magenta)", marginBottom: 6 }}>LOOP MODULE{selected.size >= 2 ? ` — ${selected.size} selected` : " — pick terminals"}</div>
-              <div className="dim" style={{ marginBottom: 6 }}>click terminals to select; CONNECT TOGETHER wires them as a loopable full-mesh (loop_edge).</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                {[...selected].slice(0, 6).map((id) => <span key={id} className="mono" style={{ fontSize: 9, color: "var(--cyan)" }}>· {tuiRoles.get(id) || id.slice(0, 8)}</span>)}
-                {selected.size > 6 && <span className="dim" style={{ fontSize: 9 }}>+{selected.size - 6} more…</span>}
-              </div>
-              {selected.size >= 2 && <button className="action" style={{ fontSize: 10, marginTop: 8, width: "100%" }} onClick={() => { connectTogether(); clearSelection(); }}>CONNECT TOGETHER</button>}
-            </div>
+      {/* floating toolbar */}
+      <div style={{ position: "fixed", top: 10, left: "50%", transform: "translateX(-50%)", zIndex: 120, display: "flex", flexDirection: "column", gap: 6, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 2, alignItems: "center", background: "var(--panel)", border: "1px solid var(--line-bright)", boxShadow: "0 6px 24px rgba(0,0,0,0.4)", padding: "4px 6px", borderRadius: 6 }}>
+          <span className="mono" style={{ fontSize: 9, color: "var(--muted)", marginRight: 4 }}>{panes.length} TUI</span>
+          <button className="action" style={{ fontSize: 10, padding: "4px 8px", fontWeight: 700 }} onClick={() => setSpawnOpen(true)} title="spawn a new terminal">+ TERMINAL</button>
+          <div style={{ width: 1, height: 16, background: "var(--line)", margin: "0 2px" }} />
+          <button className="ghost" style={{ fontSize: 10, padding: "4px 8px", background: tool === "select" ? "rgba(255,255,255,0.06)" : undefined, borderColor: tool === "select" ? "var(--cyan)" : undefined, color: tool === "select" ? "var(--cyan)" : undefined }} onClick={() => { setTool("select"); setSelectMode(false); clearSelection(); }} title="select & move — click terminals to select, drag to reposition">↖ Select</button>
+          <button className="ghost" style={{ fontSize: 10, padding: "4px 8px", background: tool === "text" ? "rgba(255,255,255,0.06)" : undefined, borderColor: tool === "text" ? "var(--cyan)" : undefined, color: tool === "text" ? "var(--cyan)" : undefined }} onClick={() => { setTool("text"); setSelectMode(false); clearSelection(); }} title="text label — click canvas to place, double-click to edit">T Text</button>
+          <button className="ghost" style={{ fontSize: 10, padding: "4px 8px", background: tool === "delete" ? "rgba(255,255,255,0.06)" : undefined, borderColor: tool === "delete" ? "var(--oom)" : undefined, color: tool === "delete" ? "var(--oom)" : undefined }} onClick={() => { setTool("delete"); setSelectMode(false); clearSelection(); }} title="delete — click any terminal or label to remove it">✕ Delete</button>
+          <div style={{ width: 1, height: 16, background: "var(--line)", margin: "0 2px" }} />
+          <button className="ghost" style={{ fontSize: 10, padding: "4px 8px", borderColor: selectMode ? "var(--magenta)" : undefined, color: selectMode ? "var(--magenta)" : undefined }} onClick={() => { if (selectMode) { setTool("select"); clearSelection(); } else { setTool("select"); setSelectMode(true); } }} title="multi-select — click 2+ terminals, then CONNECT TOGETHER">{selectMode ? "● SELECTING" : "◉ Multi"}</button>
+          {selected.size >= 2 && selectMode && (
+            <button className="ghost" style={{ fontSize: 10, padding: "4px 8px", borderColor: "var(--pass)", color: "var(--pass)" }} onClick={() => { connectTogether(); clearSelection(); }}>CONNECT ({selected.size})</button>
           )}
         </div>
-      )}
+        {/* tool hint */}
+        {tool === "text" && <div style={{ background: "var(--panel)", border: "1px solid var(--line-bright)", boxShadow: "0 6px 24px rgba(0,0,0,0.4)", padding: "4px 8px", borderRadius: 6, fontSize: 9, color: "var(--dim2)" }}>click canvas to place label · double-click to edit · Esc to cancel</div>}
+        {tool === "delete" && <div style={{ background: "var(--panel)", border: "1px solid rgba(248,81,73,0.4)", boxShadow: "0 6px 24px rgba(0,0,0,0.4)", padding: "4px 8px", borderRadius: 6, fontSize: 9, color: "var(--oom)" }}>click any terminal or label to delete · Esc to cancel</div>}
+        {/* loop module card for multi-select */}
+        {selectMode && selected.size > 0 && (
+          <div style={{ background: "var(--panel)", border: "1px solid var(--magenta)", boxShadow: "0 6px 24px rgba(0,0,0,0.4)", padding: 8, borderRadius: 6, fontSize: 10, maxWidth: 260 }}>
+            <div style={{ fontWeight: 700, color: "var(--magenta)", marginBottom: 4 }}>LOOP MODULE{selected.size >= 2 ? ` — ${selected.size} selected` : " — pick terminals"}</div>
+            <div className="dim" style={{ marginBottom: 4 }}>click terminals to select; CONNECT TOGETHER wires a loopable full-mesh.</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              {[...selected].slice(0, 6).map((id) => <span key={id} className="mono" style={{ fontSize: 9, color: "var(--cyan)" }}>· {tuiRoles.get(id) || id.slice(0, 8)}</span>)}
+              {selected.size > 6 && <span className="dim" style={{ fontSize: 9 }}>+{selected.size - 6} more…</span>}
+            </div>
+            {selected.size >= 2 && <button className="action" style={{ fontSize: 10, marginTop: 6, width: "100%" }} onClick={() => { connectTogether(); clearSelection(); }}>CONNECT TOGETHER</button>}
+          </div>
+        )}
+      </div>
 
-      {/* single spawn dialog — harness + host/model + role configured up front */}
+      {/* spawn dialog */}
       {spawnOpen && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 150, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setSpawnOpen(false)}>
           <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--panel)", border: "1px solid var(--line-bright)", width: 480, maxWidth: "92vw", padding: 16, borderRadius: 8, boxShadow: "0 20px 60px rgba(0,0,0,0.6)" }}>
@@ -1095,9 +596,9 @@ export default function Workspace({
               <label style={{ display: "flex", flexDirection: "column", gap: 4, color: "var(--muted)" }}>
                 model
                 <select value={spawnModel} onChange={(e) => { const v = e.target.value; if (v.startsWith("__cloud_")) { void loadCloudCatalog(v.slice("__cloud_".length)); return; } setSpawnModel(v); }} style={{ background: "var(--panel-2)", border: "1px solid var(--line)", color: "var(--text)", padding: "6px 10px", fontSize: 11 }}>
-                  <option value="">model — auto (pick inside TUI)</option>
+                  <option value="">auto (pick inside TUI via /model)</option>
                   {spawnHost === "local" ? (
-                    <optgroup label="LOCAL (resident engines)">
+                    <optgroup label="LOCAL">
                       {models.map((m) => <option key={m.path} value={m.path}>{m.name} 🔵</option>)}
                     </optgroup>
                   ) : (
@@ -1119,7 +620,7 @@ export default function Workspace({
               </label>
               {spawnModel && <div className="mono dim" style={{ fontSize: 10 }}>will /model: <span style={{ color: "var(--cyan)" }}>{spawnModel}</span></div>}
               <div className="row" style={{ gap: 8, marginTop: 4 }}>
-                <button className="action" style={{ flex: 1 }} onClick={() => spawnTuiConfigured(spawnModel, spawnRole)}>SPAWN</button>
+                <button className="action" style={{ flex: 1 }} onClick={() => spawnTui(spawnModel, spawnRole)}>SPAWN</button>
                 <button className="ghost" style={{ flex: 1 }} onClick={() => { setSpawnOpen(false); setSpawnHost("local"); setSpawnModel(""); setSpawnRole(""); }}>CANCEL</button>
               </div>
             </div>
