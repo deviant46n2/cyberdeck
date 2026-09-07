@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import * as api from "../api";
 import * as dls from "../lib/dl";
 import { shardSet } from "../lib/shards";
@@ -37,6 +37,9 @@ export default function Feeds() {
   const [lastSeen, setLastSeen] = useState<number>(0);
   const [dlBusy, setDlBusy] = useState<string | null>(null);
   const [dlMsg, setDlMsg] = useState<string>("");
+  const [sortCol, setSortCol] = useState<"score" | "fits" | "disk" | "ctx" | "src" | "repo">("score");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [autoPolling, setAutoPolling] = useState(true);
 
   /** Queue the quant this row scored: the best *model* GGUF that fits this
    * box (artifacts like mmproj/imatrix excluded), shard-set aware — the same
@@ -82,6 +85,21 @@ export default function Feeds() {
 
   const newCount = ranked?.filter((r) => isNewSince(r.release.fetched_at, lastSeen)).length ?? 0;
 
+  const sorted = useMemo(() => {
+    if (!ranked) return null;
+    const dir = sortDir === "desc" ? -1 : 1;
+    return [...ranked].sort((a, b) => {
+      switch (sortCol) {
+        case "score": return dir * (b.score.total - a.score.total);
+        case "fits": return dir * ((a.score.fits ? 1 : 0) - (b.score.fits ? 1 : 0));
+        case "disk": return dir * ((b.score.disk_gb ?? -1) - (a.score.disk_gb ?? -1));
+        case "ctx": return dir * ((b.score.max_ctx ?? 0) - (a.score.max_ctx ?? 0));
+        case "src": return dir * a.release.source.localeCompare(b.release.source);
+        case "repo": return dir * a.release.repo.localeCompare(b.release.repo);
+      }
+    });
+  }, [ranked, sortCol, sortDir]);
+
   const load = useCallback(async (wl: string, lim: number) => {
     setStatus("ranking…");
     try {
@@ -99,7 +117,16 @@ export default function Feeds() {
 
   useEffect(() => {
     api.settingsGet(LAST_SEEN_KEY).then((raw) => setLastSeen(parseLastSeen(raw))).catch(() => {});
-    load(workload, limit);
+    const boot = async () => {
+      try {
+        await api.feedsPoll([]);
+      } catch {
+        // poll failure is non-fatal; rank whatever is in the catalog
+      }
+      await load(workload, limit);
+      setAutoPolling(false);
+    };
+    void boot();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -121,6 +148,26 @@ export default function Feeds() {
     setWorkload(wl);
     load(wl, limit);
   };
+
+  const toggleSort = (col: typeof sortCol) => {
+    if (sortCol === col) {
+      setSortDir((d) => (d === "desc" ? "asc" : "desc"));
+    } else {
+      setSortCol(col);
+      setSortDir("desc");
+    }
+  };
+
+  const SortableTh = ({ col, children }: { col: typeof sortCol; children: ReactNode }) => (
+    <th
+      onClick={() => toggleSort(col)}
+      style={{ cursor: "pointer", userSelect: "none" }}
+      title={`sort by ${children?.toString()?.toLowerCase()}`}
+    >
+      {children}
+      {sortCol === col ? (sortDir === "desc" ? " ▾" : " ▴") : ""}
+    </th>
+  );
 
   const markSeen = async () => {
     const now = Math.floor(Date.now() / 1000);
@@ -198,30 +245,44 @@ export default function Feeds() {
         )}
       </div>
 
-      {ranked && (
+      {(autoPolling || sorted) && (
         <div className="card">
           <table>
             <thead>
               <tr>
                 <th>NEW</th>
                 <th>#</th>
-                <th>SCORE</th>
-                <th>FITS</th>
-                <th>DISK</th>
-                <th>MAX CTX</th>
-                <th>SRC</th>
-                <th>REPO / REV</th>
+                <SortableTh col="score">SCORE</SortableTh>
+                <SortableTh col="fits">FITS</SortableTh>
+                <SortableTh col="disk">DISK</SortableTh>
+                <SortableTh col="ctx">MAX CTX</SortableTh>
+                <SortableTh col="src">SRC</SortableTh>
+                <SortableTh col="repo">REPO / REV</SortableTh>
                 <th>WHY</th>
                 <th>DL</th>
               </tr>
             </thead>
             <tbody>
-              {ranked.length === 0 && (
+              {autoPolling && !sorted && Array.from({ length: 5 }).map((_, i) => (
+                <tr key={`skel-${i}`} style={{ opacity: 0.3 }}>
+                  <td />
+                  <td className="mono dim">{i + 1}</td>
+                  <td className="mono">-.--</td>
+                  <td className="mono">…</td>
+                  <td className="mono dim">-G</td>
+                  <td className="mono dim">-</td>
+                  <td className="mono dim">-</td>
+                  <td className="mono dim">─────────────</td>
+                  <td className="dim">-</td>
+                  <td />
+                </tr>
+              ))}
+              {sorted && sorted.length === 0 && (
                 <tr>
                   <td colSpan={10} className="dim">rank the catalog by polling first</td>
                 </tr>
               )}
-              {ranked.map((r, i) => {
+              {sorted && sorted.map((r, i) => {
                 const isNew = isNewSince(r.release.fetched_at, lastSeen);
                 return (
                   <tr key={`${r.release.source}:${r.release.repo}@${r.release.rev}`}>
