@@ -199,6 +199,7 @@ mod tests {
             path: PathBuf::from("/models/q.gguf"),
             format: ModelFormat::Gguf,
             name: "qwen".into(),
+            basename: None,
             arch: Some("qwen3".into()),
             quant: Some("Q4_K_M".into()),
             params: None,

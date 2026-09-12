@@ -62,7 +62,7 @@ pub fn models_dir() -> PathBuf {
 /// stay idempotent and ADD-only, so an older binary opening a newer DB still
 /// works (unknown tables/columns are simply unused) and a newer binary is the
 /// only one that advances the version.
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 5;
 
 /// Non-destructive forward migration. `ensure_schema_version` stamps the
 /// version at `SCHEMA_VERSION`; no steps are wired yet because every current
@@ -134,6 +134,9 @@ pub fn ensure_models_table(conn: &Connection) -> Result<()> {
             scanned_at INTEGER
         );",
     )?;
+    // Family signal for variant grouping (v5). Old rows stay NULL until the
+    // next scan re-reads their headers — they group exactly as before.
+    ensure_column(conn, "models", "basename", "TEXT")?;
     Ok(())
 }
 
@@ -180,13 +183,13 @@ pub fn upsert_many(conn: &mut Connection, models: &[ModelMeta]) -> Result<usize>
     for m in models {
         tx.execute(
             "INSERT INTO models
-                (path, format, name, arch, quant, params, n_layers, n_embd,
+                (path, format, name, basename, arch, quant, params, n_layers, n_embd,
                  ctx_train, vocab, weight_size, footprint, scanned_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)
-             ON CONFLICT(path) DO UPDATE SET
-                format=?2, name=?3, arch=?4, quant=?5, params=?6, n_layers=?7,
-                n_embd=?8, ctx_train=?9, vocab=?10, weight_size=?11,
-                footprint=?12, scanned_at=?13",
+              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)
+              ON CONFLICT(path) DO UPDATE SET
+                 format=?2, name=?3, basename=?4, arch=?5, quant=?6, params=?7, n_layers=?8,
+                 n_embd=?9, ctx_train=?10, vocab=?11, weight_size=?12,
+                 footprint=?13, scanned_at=?14",
             rusqlite::params![
                 m.path.display().to_string(),
                 match m.format {
@@ -194,6 +197,7 @@ pub fn upsert_many(conn: &mut Connection, models: &[ModelMeta]) -> Result<usize>
                     ModelFormat::SafetensorsDir => "safetensors-dir",
                 },
                 m.name,
+                m.basename,
                 m.arch,
                 m.quant,
                 m.params,
@@ -213,7 +217,7 @@ pub fn upsert_many(conn: &mut Connection, models: &[ModelMeta]) -> Result<usize>
 
 pub fn list(conn: &Connection) -> Result<Vec<ModelMeta>> {
     let mut stmt = conn.prepare(
-        "SELECT path, format, name, arch, quant, params, n_layers, n_embd,
+        "SELECT path, format, name, basename, arch, quant, params, n_layers, n_embd,
                 ctx_train, vocab, weight_size, footprint FROM models",
     )?;
     let rows = stmt.query_map([], |r| {
@@ -223,19 +227,20 @@ pub fn list(conn: &Connection) -> Result<Vec<ModelMeta>> {
             r.get::<_, Option<String>>(2)?,
             r.get::<_, Option<String>>(3)?,
             r.get::<_, Option<String>>(4)?,
-            r.get::<_, Option<i64>>(5)?,
+            r.get::<_, Option<String>>(5)?,
             r.get::<_, Option<i64>>(6)?,
             r.get::<_, Option<i64>>(7)?,
             r.get::<_, Option<i64>>(8)?,
             r.get::<_, Option<i64>>(9)?,
-            r.get::<_, i64>(10)?,
+            r.get::<_, Option<i64>>(10)?,
             r.get::<_, i64>(11)?,
+            r.get::<_, i64>(12)?,
         ))
     })?;
 
     let mut out = Vec::new();
     for row in rows {
-        let (path, format, name, arch, quant, params, nl, ne, ctx, vocab, ws, fp) = row?;
+        let (path, format, name, basename, arch, quant, params, nl, ne, ctx, vocab, ws, fp) = row?;
         out.push(ModelMeta {
             path: PathBuf::from(path),
             format: if format == "gguf" {
@@ -244,6 +249,7 @@ pub fn list(conn: &Connection) -> Result<Vec<ModelMeta>> {
                 ModelFormat::SafetensorsDir
             },
             name: name.unwrap_or_default(),
+            basename,
             arch,
             quant,
             params: params.map(|v| v as u64),

@@ -23,6 +23,11 @@ pub struct ModelRow {
     pub ctx_train: u64,
     pub footprint_gib: f64,
     pub path: String,
+    /// Publisher-declared model family (`general.basename`), if any.
+    pub basename: Option<String>,
+    /// Vault grouping key: one listing per family, every variant inside.
+    /// Without a basename this is the size-bucketed identity — today's rows.
+    pub group_key: String,
 }
 
 #[derive(Serialize)]
@@ -84,6 +89,7 @@ pub fn scan() -> anyhow::Result<ScanResult> {
                             path: std::path::PathBuf::from(o.path.clone()),
                             format: deck_core::model::ModelFormat::Gguf,
                             name: o.name.clone(),
+                            basename: None,
                             arch: None,
                             quant: None,
                             params: None,
@@ -126,13 +132,18 @@ pub fn scan() -> anyhow::Result<ScanResult> {
         .collect();
     let models = models
         .into_iter()
-        .map(|m| ModelRow {
-            name: m.name,
-            quant: m.quant,
-            arch: m.arch,
-            ctx_train: m.ctx_train.unwrap_or(0),
-            footprint_gib: gib(m.footprint),
-            path: m.path.display().to_string(),
+        .map(|m| {
+            let group_key = m.group_key();
+            ModelRow {
+                name: m.name,
+                quant: m.quant,
+                arch: m.arch,
+                ctx_train: m.ctx_train.unwrap_or(0),
+                footprint_gib: gib(m.footprint),
+                path: m.path.display().to_string(),
+                basename: m.basename,
+                group_key,
+            }
         })
         .collect();
     Ok(ScanResult {
@@ -161,13 +172,18 @@ pub fn list_models() -> anyhow::Result<Vec<ModelRow>> {
     let conn = deck_core::store::open(&db)?;
     Ok(deck_core::store::list(&conn)?
         .into_iter()
-        .map(|m| ModelRow {
-            name: m.name,
-            quant: m.quant,
-            arch: m.arch,
-            ctx_train: m.ctx_train.unwrap_or(0),
-            footprint_gib: gib(m.footprint),
-            path: m.path.display().to_string(),
+        .map(|m| {
+            let group_key = m.group_key();
+            ModelRow {
+                name: m.name,
+                quant: m.quant,
+                arch: m.arch,
+                ctx_train: m.ctx_train.unwrap_or(0),
+                footprint_gib: gib(m.footprint),
+                path: m.path.display().to_string(),
+                basename: m.basename,
+                group_key,
+            }
         })
         .collect())
 }

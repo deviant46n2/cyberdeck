@@ -36,6 +36,7 @@ pub(crate) fn run() -> Result<()> {
                         path: std::path::PathBuf::from(o.path.clone()),
                         format: deck_core::model::ModelFormat::Gguf,
                         name: o.name.clone(),
+                        basename: None,
                         arch: None,
                         quant: None,
                         params: None,

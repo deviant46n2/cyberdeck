@@ -228,6 +228,7 @@ mod tests {
             path: PathBuf::from(path),
             format: ModelFormat::Gguf,
             name: path.rsplit('/').next().unwrap_or(path).to_string(),
+            basename: None,
             arch: Some(arch.into()),
             quant: Some("Q4_K_M".into()),
             params: None,

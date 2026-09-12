@@ -174,6 +174,7 @@ pub fn browse_fit_remote(
         path: PathBuf::from(format!("{repo_id}/{rfilename}")),
         format: deck_core::model::ModelFormat::Gguf,
         name: gguf_meta.name().unwrap_or(rfilename).to_string(),
+        basename: gguf_meta.basename().map(str::to_string),
         arch: gguf_meta.arch().map(str::to_string),
         quant: gguf_meta.quant_name(),
         params: gguf_meta.params().map(|v| v as u64),

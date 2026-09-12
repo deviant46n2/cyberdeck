@@ -156,6 +156,12 @@ impl GgufMeta {
         self.kv.get("general.name").and_then(Value::as_str)
     }
 
+    /// Publisher-declared model family (`general.basename`), quant-free by
+    /// spec — the key that groups quants of one model into one listing.
+    pub fn basename(&self) -> Option<&str> {
+        self.kv.get("general.basename").and_then(Value::as_str)
+    }
+
     pub fn quant_name(&self) -> Option<String> {
         let code = self.kv.get("general.file_type")?.as_int()?;
         Some(file_type_name(code.clamp(0, u31_max()) as u32))
@@ -230,6 +236,7 @@ impl GgufMeta {
             path: path.as_ref().to_path_buf(),
             format: ModelFormat::Gguf,
             name: self.name().unwrap_or("unknown").to_string(),
+            basename: self.basename().map(str::to_string),
             arch: self.arch().map(str::to_string),
             quant: self.quant_name(),
             params: self.params(),

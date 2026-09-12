@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { listen } from "@tauri-apps/api/event";
 import * as api from "../api";
@@ -362,6 +362,59 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
     }
     return byPath;
   }, [profiles]);
+
+  interface VariantGroup {
+    key: string;
+    members: api.ModelRow[];
+    display: string;
+    totalGib: number;
+  }
+
+  // One listing per model family (group_key); every variant inside stays
+  // individually actionable. Families without a declared basename fall back
+  // to size-bucketed keys, i.e. today's one-row-per-file.
+  const groups = useMemo<VariantGroup[]>(() => {
+    const order: string[] = [];
+    const byKey = new Map<string, api.ModelRow[]>();
+    for (const m of models) {
+      const arr = byKey.get(m.group_key);
+      if (arr) arr.push(m);
+      else {
+        byKey.set(m.group_key, [m]);
+        order.push(m.group_key);
+      }
+    }
+    return order.map((key) => {
+      const members = [...(byKey.get(key) ?? [])].sort((a, b) => b.footprint_gib - a.footprint_gib);
+      const first = members[0];
+      return {
+        key,
+        members,
+        display: first?.basename ?? first?.name ?? key,
+        totalGib: members.reduce((s, m) => s + m.footprint_gib, 0),
+      };
+    });
+  }, [models]);
+
+  // group_key → selected variant path. Default: live variant, else largest.
+  const [variantSel, setVariantSel] = useState<Record<string, string>>({});
+
+  const groupOfPath = useMemo(() => {
+    const map = new Map<string, VariantGroup>();
+    for (const g of groups) for (const m of g.members) map.set(m.path, g);
+    return map;
+  }, [groups]);
+
+  const displayModels = useMemo<api.ModelRow[]>(() => groups.map((g) => {
+    if (g.members.length === 1) return g.members[0] as api.ModelRow;
+    const stored = variantSel[g.key];
+    const fromStored = stored ? g.members.find((x) => x.path === stored) : undefined;
+    return (
+      fromStored ??
+      g.members.find((x) => loadedPaths.has(x.path)) ??
+      (g.members[0] as api.ModelRow)
+    );
+  }), [groups, variantSel, loadedPaths]);
 
   useEffect(() => {
     let alive = true;
@@ -773,22 +826,47 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
             </tr>
           </thead>
           <tbody>
-            {models.length === 0 ? (
+            {groups.length === 0 ? (
               <tr>
                 <td colSpan={9} className="dim">
                   no models indexed — run a SCAN from HUD
                 </td>
               </tr>
             ) : (
-              models
+              displayModels
                 .filter((m) => flash !== m.path)
                 .map((m) => {
                   const dup = dupIds.has(m.path);
                   const isDeleting = deleting.has(m.path);
                   const isLoaded = loadedPaths.has(m.path);
+                  const g = groupOfPath.get(m.path);
+                  const multi = !!g && g.members.length > 1;
                   return (
+                    <Fragment key={m.path}>
+                    {multi && g && (
+                      <tr>
+                        <td colSpan={9} style={{ background: "rgba(91,139,245,0.06)", fontSize: 10, padding: "5px 10px" }}>
+                          <b>{g.display}</b>
+                          <span className="dim"> · {g.members.length} variants · {g.totalGib.toFixed(1)} GiB total</span>
+                          {g.members.some((x) => loadedPaths.has(x.path)) && (
+                            <span className="badge" style={{ marginLeft: 6, background: "var(--pass)", color: "#000", fontSize: 8, padding: "2px 5px" }}>● LIVE</span>
+                          )}
+                          <select
+                            value={m.path}
+                            onChange={(e) => setVariantSel((s) => ({ ...s, [g.key]: e.target.value }))}
+                            style={{ marginLeft: 10, fontSize: 10, background: "var(--bg)", color: "var(--text)", border: "1px solid var(--line)", borderRadius: 4, padding: "2px 6px" }}
+                            title="pick the variant every action below operates on"
+                          >
+                            {g.members.map((v) => (
+                              <option key={v.path} value={v.path}>
+                                {v.quant ?? v.name} · {v.footprint_gib.toFixed(1)} GiB{loadedPaths.has(v.path) ? " ●" : ""}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                      </tr>
+                    )}
                     <tr
-                      key={m.path}
                       style={{
                         ...(dup ? { background: "rgba(248,81,73,0.06)" } : undefined),
                         ...(isLoaded ? { background: "rgba(63,185,80,0.1)", boxShadow: "inset 3px 0 0 var(--pass)" } : undefined),
@@ -873,7 +951,8 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
                         </button>
                       </div>
                     </td>
-                  </tr>
+                    </tr>
+                    </Fragment>
                 );
               })
             )}

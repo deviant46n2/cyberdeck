@@ -53,6 +53,7 @@ mod tests {
             path: PathBuf::from(format!("/x/{identity}/{footprint}")),
             format: ModelFormat::Gguf,
             name: identity.into(),
+            basename: None,
             arch: Some(identity.into()),
             quant: Some("Q4_0".into()),
             params: None,

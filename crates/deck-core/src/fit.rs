@@ -183,6 +183,7 @@ mod tests {
             path: PathBuf::from("/models/test.gguf"),
             format: crate::model::ModelFormat::Gguf,
             name: "test".into(),
+            basename: None,
             arch: Some("qwen3".into()),
             quant: Some("Q4_K_M".into()),
             params: None,

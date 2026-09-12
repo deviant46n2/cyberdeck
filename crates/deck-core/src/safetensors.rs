@@ -155,6 +155,9 @@ impl SafetensorsModel {
             path: self.dir.clone(),
             format: ModelFormat::SafetensorsDir,
             name,
+            // No family signal in safetensors metadata — stays ungrouped,
+            // exactly today's rows.
+            basename: None,
             arch,
             quant: self.quant(),
             params: None,

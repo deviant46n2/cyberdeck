@@ -601,6 +601,7 @@ mod tests {
             path: PathBuf::from(format!("/models/{name}.gguf")),
             format: ModelFormat::Gguf,
             name: name.into(),
+            basename: None,
             arch: Some(arch.into()),
             quant: Some("Q4_K_M".into()),
             params: Some(8 * 1_000_000_000),

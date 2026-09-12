@@ -7,6 +7,10 @@ export interface ModelRow {
   ctx_train: number;
   footprint_gib: number;
   path: string;
+  /** Publisher-declared model family, if the format carries one. */
+  basename: string | null;
+  /** Vault grouping key: one listing per family, every variant inside. */
+  group_key: string;
 }
 
 export interface DupRow {
