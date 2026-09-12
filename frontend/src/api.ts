@@ -11,6 +11,10 @@ export interface ModelRow {
   basename: string | null;
   /** Vault grouping key: one listing per family, every variant inside. */
   group_key: string;
+  /** Uncensored fine-tune detected by name. */
+  uncensored: boolean;
+  /** Variant publisher, when the basename declares one — never guessed. */
+  modifier: string | null;
 }
 
 export interface DupRow {

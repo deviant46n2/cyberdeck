@@ -73,6 +73,60 @@ impl ModelMeta {
             None => self.identity(),
         }
     }
+
+    /// Whether this variant is an uncensored fine-tune, by name. Matches
+    /// "abliterated"/"uncensored" families case-insensitively.
+    pub fn is_uncensored(&self) -> bool {
+        let hay = format!(
+            "{} {}",
+            self.name,
+            self.basename.as_deref().unwrap_or("")
+        )
+        .to_lowercase();
+        hay.contains("abliterat") || hay.contains("uncensor")
+    }
+
+    /// Who published this variant, when the basename says so ("Huihui-Qwen3.8"
+    /// → "Huihui"). Rule: tokens preceding a brand-glued major version are the
+    /// publisher ("huihui" before "qwen3"); a bare major ("llama-3.1") means
+    /// the preceding token is the brand, so no publisher is claimed. Returns
+    /// None rather than guessing — an unknown "who" stays blank, never wrong.
+    pub fn publisher(&self) -> Option<String> {
+        let base = self.basename.as_deref()?.to_lowercase();
+        let version = version_token(&base)?;
+        let major = version.split('.').next().unwrap_or("");
+        // Byte index where the major version starts.
+        let start = base.find(major)?;
+        // The token holding that index must glue letters to the major
+        // ("qwen3"); a bare number ("3") means brand, not publisher.
+        let tok_start = base[..start].rfind(|c: char| !c.is_ascii_alphanumeric()).map(|i| i + 1).unwrap_or(0);
+        let token = &base[tok_start..start + major.len()];
+        let alpha_prefix: String = token.chars().take_while(|c| c.is_ascii_alphabetic()).collect();
+        if alpha_prefix.is_empty() {
+            return None;
+        }
+        let raw = &base[..tok_start];
+        let pubs: Vec<&str> = raw
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .filter(|t| t.len() >= 2)
+            .collect();
+        if pubs.is_empty() {
+            return None;
+        }
+        // Title-case the publisher for display ("huihui" → "Huihui").
+        let mut out = String::new();
+        for (i, t) in pubs.iter().enumerate() {
+            if i > 0 {
+                out.push(' ');
+            }
+            let mut chars = t.chars();
+            if let Some(first) = chars.next() {
+                out.extend(first.to_uppercase());
+                out.push_str(chars.as_str());
+            }
+        }
+        Some(out)
+    }
 }
 
 /// First `major.minor` token in a family name ("huihui-qwen3.8" → "3.8").
@@ -157,6 +211,46 @@ mod tests {
         assert_eq!(base.group_key(), abit.group_key());
         assert_eq!(base.group_key(), huihui.group_key());
         assert_ne!(base.group_key(), q36.group_key());
+    }
+
+    fn tagged(name: &str, basename: Option<&str>, path: &str) -> ModelMeta {
+        ModelMeta {
+            path: std::path::PathBuf::from(path),
+            format: ModelFormat::Gguf,
+            name: name.into(),
+            basename: basename.map(str::to_string),
+            arch: Some("qwen35".into()),
+            quant: Some("Q4_K_M".into()),
+            params: None,
+            n_layers: None,
+            n_embd: None,
+            n_head: None,
+            n_head_kv: None,
+            ctx_train: None,
+            vocab: None,
+            weight_size: 0,
+            footprint: 0,
+        }
+    }
+
+    #[test]
+    fn variant_tags_name_the_uncensoring_and_the_publisher() {
+        let huihui = tagged(
+            "Huihui Qwen3.8 27B Abliterated",
+            Some("Huihui-Qwen3.8"),
+            "/m/h.gguf",
+        );
+        assert!(huihui.is_uncensored());
+        assert_eq!(huihui.publisher().as_deref(), Some("Huihui"));
+
+        let base = tagged("Qwen3.8-27B", Some("Qwen3.8-27B"), "/m/b.gguf");
+        assert!(!base.is_uncensored());
+        assert_eq!(base.publisher(), None);
+
+        // Bare major ("llama-3.1") means brand, not publisher — claim nothing.
+        let llama = tagged("Llama-3.1-8B", Some("Llama-3.1"), "/m/l.gguf");
+        assert_eq!(llama.publisher(), None);
+        assert!(!llama.is_uncensored());
     }
 
     #[test]

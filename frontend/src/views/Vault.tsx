@@ -23,6 +23,34 @@ function shortLabel(id: string): string {
   return id;
 }
 
+/** "Qwen3.8-27B" → "Qwen 3.8 27B": separators to spaces, space before a
+ * digit run that follows letters. Pure display sugar, never a key. */
+function prettyFamily(raw: string): string {
+  return raw
+    .replace(/[-_]+/g, " ")
+    .replace(/([A-Za-z])(\d)/g, "$1 $2")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Family display name: shortest member name carrying a size token
+ * ("Qwen3.8-27B" beats "Huihui-Qwen3.8"), else the shortest name. Shows the
+ * family, not the largest variant. */
+function familyDisplay(members: api.ModelRow[]): string {
+  const names = members.map((m) => m.basename ?? m.name);
+  const sized = (n: string) => /\d+\s*[BM]\b/i.test(n.replace(/[-_]/g, " "));
+  const byLen = [...names].sort((a, b) => a.length - b.length);
+  return prettyFamily(byLen.find(sized) ?? byLen[0] ?? "");
+}
+
+/** One variant's specific label: quant, uncensored status, publisher. */
+function variantLabel(v: api.ModelRow): string {
+  const parts = [v.quant ?? v.name];
+  if (v.uncensored) parts.push("uncensored");
+  if (v.modifier) parts.push(v.modifier);
+  return parts.join(" · ");
+}
+
 // ---- Dropdown hook: portal-based menus that escape table overflow ----
 // Strategy:
 //   1. Menu renders via createPortal to document.body — no ancestor can clip it.
@@ -386,11 +414,10 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
     }
     return order.map((key) => {
       const members = [...(byKey.get(key) ?? [])].sort((a, b) => b.footprint_gib - a.footprint_gib);
-      const first = members[0];
       return {
         key,
         members,
-        display: first?.basename ?? first?.name ?? key,
+        display: familyDisplay(members),
         totalGib: members.reduce((s, m) => s + m.footprint_gib, 0),
       };
     });
@@ -859,7 +886,7 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
                           >
                             {g.members.map((v) => (
                               <option key={v.path} value={v.path}>
-                                {v.quant ?? v.name} · {v.footprint_gib.toFixed(1)} GiB{loadedPaths.has(v.path) ? " ●" : ""}
+                                {variantLabel(v)} · {v.footprint_gib.toFixed(1)} GiB{loadedPaths.has(v.path) ? " ●" : ""}
                               </option>
                             ))}
                           </select>

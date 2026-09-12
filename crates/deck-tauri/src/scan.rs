@@ -25,6 +25,11 @@ pub struct ModelRow {
     pub path: String,
     /// Publisher-declared model family (`general.basename`), if any.
     pub basename: Option<String>,
+    /// Uncensored fine-tune detected by name (abliterated/uncensored family).
+    pub uncensored: bool,
+    /// Who published this variant, when the basename says so ("Huihui").
+    /// None means unknown — never guessed.
+    pub modifier: Option<String>,
     /// Vault grouping key: one listing per family, every variant inside.
     /// Without a basename this is the size-bucketed identity — today's rows.
     pub group_key: String,
@@ -134,6 +139,8 @@ pub fn scan() -> anyhow::Result<ScanResult> {
         .into_iter()
         .map(|m| {
             let group_key = m.group_key();
+            let uncensored = m.is_uncensored();
+            let modifier = m.publisher();
             ModelRow {
                 name: m.name,
                 quant: m.quant,
@@ -143,6 +150,8 @@ pub fn scan() -> anyhow::Result<ScanResult> {
                 path: m.path.display().to_string(),
                 basename: m.basename,
                 group_key,
+                uncensored,
+                modifier,
             }
         })
         .collect();
@@ -174,6 +183,8 @@ pub fn list_models() -> anyhow::Result<Vec<ModelRow>> {
         .into_iter()
         .map(|m| {
             let group_key = m.group_key();
+            let uncensored = m.is_uncensored();
+            let modifier = m.publisher();
             ModelRow {
                 name: m.name,
                 quant: m.quant,
@@ -183,6 +194,8 @@ pub fn list_models() -> anyhow::Result<Vec<ModelRow>> {
                 path: m.path.display().to_string(),
                 basename: m.basename,
                 group_key,
+                uncensored,
+                modifier,
             }
         })
         .collect())
