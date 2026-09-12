@@ -156,6 +156,50 @@ pub(crate) fn runtimes(json: bool, probe: bool) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn runtimes_updates() -> Result<()> {
+    use deck_engines::install::{is_newer, latest_matching_tag};
+    let manifests = deck_core::runtime::all_manifests();
+    let db = deck_core::store::default_db_path();
+    let conn = deck_core::store::open(&db)?;
+    let mut checked = 0;
+    for m in &manifests {
+        let (repo, pattern) = match &m.install {
+            Some(deck_core::runtime::InstallRecipe::GithubRelease {
+                repo,
+                asset_pattern,
+                ..
+            }) => (repo, asset_pattern),
+            _ => continue,
+        };
+        checked += 1;
+        let installed = deck_core::store::installed_version(&conn, &m.id)
+            .ok()
+            .flatten();
+        let installed = match installed {
+            Some(v) => v,
+            None => {
+                println!(
+                    "{}: no recorded install — `deck install {}` to baseline",
+                    m.id, m.id
+                );
+                continue;
+            }
+        };
+        match latest_matching_tag(repo, pattern) {
+            Ok(latest) if is_newer(&latest, &installed) => println!(
+                "{}: update available {} → {} (`deck install {}`)",
+                m.id, installed, latest, m.id
+            ),
+            Ok(_) => println!("{}: current ({})", m.id, installed),
+            Err(e) => println!("{}: check failed: {e}", m.id),
+        }
+    }
+    if checked == 0 {
+        println!("no runtimes with github-release recipes");
+    }
+    Ok(())
+}
+
 pub(crate) fn make_it_work(model: PathBuf, json: bool) -> Result<()> {
     let meta = if model.is_dir() {
         deck_core::safetensors::open_dir(&model)?

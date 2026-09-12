@@ -606,6 +606,11 @@ fn runtime_probe_version(id: String) -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
+fn runtime_check_updates() -> Vec<deck_tauri::RuntimeUpdate> {
+    deck_tauri::runtime_check_updates()
+}
+
+#[tauri::command]
 async fn runtime_install(
     id: String,
     tag: Option<String>,
@@ -853,6 +858,7 @@ fn main() {
             storage_reconcile,
             runtime_list,
             runtime_probe_version,
+            runtime_check_updates,
             runtime_install,
             fit_candidates,
             discover,

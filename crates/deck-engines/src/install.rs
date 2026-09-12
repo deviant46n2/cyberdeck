@@ -100,6 +100,34 @@ fn github_token() -> Option<String> {
         .filter(|s| !s.trim().is_empty())
 }
 
+/// Newest tag carrying an asset that matches the recipe pattern. Read-only
+/// (no download) so update checks stay cheap. Skips empty releases exactly
+/// like the installer does — the answer is always something installable.
+pub fn latest_matching_tag(repo: &str, pattern: &str) -> Result<String> {
+    fetch_releases(repo)?
+        .iter()
+        .filter(|r| pick_asset(&r.assets, pattern).is_some())
+        .map(|r| r.tag_name.clone())
+        .next()
+        .ok_or_else(|| {
+            anyhow::anyhow!("no release of {repo} (last 10) matches '{pattern}'")
+        })
+}
+
+/// True when `latest` is newer than `current`. Numeric `bNNNN` tags compare by
+/// number; anything else counts as newer only when the strings differ, so an
+/// unknown scheme degrades to "changed", never to a false "current".
+pub fn is_newer(latest: &str, current: &str) -> bool {
+    match (parse_btag(latest), parse_btag(current)) {
+        (Some(l), Some(c)) => l > c,
+        _ => latest != current,
+    }
+}
+
+fn parse_btag(tag: &str) -> Option<u64> {
+    tag.strip_prefix('b')?.parse().ok()
+}
+
 /// Newest-first release list for a repo (same API + auth as the feeds poll).
 fn fetch_releases(repo: &str) -> Result<Vec<GhRelease>> {
     let url = format!("https://api.github.com/repos/{repo}/releases?per_page=10");
@@ -305,6 +333,17 @@ mod tests {
         assert_eq!(unpack_mode(None, "a.tgz"), Unpack::TarGz);
         assert_eq!(unpack_mode(None, "llama-server"), Unpack::None);
         assert_eq!(unpack_mode(Some("none"), "a.zip"), Unpack::None);
+    }
+
+    #[test]
+    fn newer_compares_btags_numerically_and_falls_back_to_change() {
+        assert!(is_newer("b10931", "b10930"));
+        assert!(!is_newer("b10930", "b10930"));
+        assert!(!is_newer("b10929", "b10930"));
+        assert!(is_newer("v2", "v1"));
+        assert!(!is_newer("v1", "v1"));
+        // Mixed schemes: any difference means changed.
+        assert!(is_newer("b10930", "v1"));
     }
 
     #[test]

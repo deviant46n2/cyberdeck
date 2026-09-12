@@ -29,11 +29,21 @@ pub(crate) fn run(runtime: &str, tag: Option<&str>, dry_run: bool) -> Result<()>
                 println!("[install] --dry-run: nothing downloaded, nothing registered");
                 return Ok(());
             }
-            let dest = deck_core::runtime::runtime_install_dir(runtime);
-            let bin = execute(&plan, &dest, &|s| println!("[install] {s}"))?;
             let db = deck_core::store::default_db_path();
             let conn = deck_core::store::open(&db)?;
-            deck_core::store::set_engine_bin(&conn, runtime, &bin.display().to_string())?;
+            if let Ok(Some(cur)) = deck_core::store::installed_version(&conn, runtime)
+                && cur == plan.version
+            {
+                println!("[install] already at {cur} — re-installing");
+            }
+            let dest = deck_core::runtime::runtime_install_dir(runtime);
+            let bin = execute(&plan, &dest, &|s| println!("[install] {s}"))?;
+            deck_core::store::record_runtime_install(
+                &conn,
+                runtime,
+                &bin.display().to_string(),
+                &plan.version,
+            )?;
             println!("[install] registered {runtime} → {}", bin.display());
             Ok(())
         }

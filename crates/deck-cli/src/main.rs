@@ -244,6 +244,9 @@ enum Commands {
         json: bool,
         #[arg(long)]
         probe: bool,
+        /// Check github-recipe backends for newer releases vs recorded installs
+        #[arg(long)]
+        updates: bool,
     },
     /// "Make it work" dry-run: rank compatible runtimes for a local model
     /// with max viable context + VRAM explanation. Launches nothing.
@@ -880,7 +883,13 @@ fn main() -> Result<()> {
         Commands::Forget { path } => cmd::lifecycle::forget(&path),
         Commands::RemoveFiles { paths } => cmd::lifecycle::remove_files(&paths),
         Commands::Storage { json } => cmd::lifecycle::storage(json),
-        Commands::Runtimes { json, probe } => cmd::lifecycle::runtimes(json, probe),
+        Commands::Runtimes { json, probe, updates } => {
+            if updates {
+                cmd::lifecycle::runtimes_updates()
+            } else {
+                cmd::lifecycle::runtimes(json, probe)
+            }
+        }
         Commands::MakeItWork { model, json } => cmd::lifecycle::make_it_work(model, json),
         Commands::Discover { model, runtimes, variants, ctx, runs, max_tokens, json } => {
             cmd::discover::run(model, runtimes, variants, ctx, runs, max_tokens, json)

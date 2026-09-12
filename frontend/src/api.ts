@@ -551,6 +551,18 @@ export interface InstallReport {
 export const runtimeInstall = (p: { id: string; tag?: string; dryRun?: boolean }) =>
   invoke<InstallReport>("runtime_install", p);
 
+export interface RuntimeUpdate {
+  id: string;
+  installed_version: string | null;
+  latest: string | null;
+  update_available: boolean;
+  note: string;
+}
+
+/** Newer upstream releases vs recorded installs (network, on demand). */
+export const runtimeCheckUpdates = () =>
+  invoke<RuntimeUpdate[]>("runtime_check_updates");
+
 export interface TestedEvidence {
   tps: number;
   kind: string;

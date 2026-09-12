@@ -78,7 +78,7 @@
       },
       {
         "path": "crates/deck-engines/src/install.rs",
-        "lines": 349,
+        "lines": 388,
         "kind": "accepted",
         "reason": "Runtime installation is one concern end to end: recipe resolution (manual/url/github-release), asset picking, curl fetch, sha verify, unpack, chmod, and the plan/execute types they share must change together. Over the soft heuristic with tests, not a seam. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
       },

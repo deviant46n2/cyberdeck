@@ -323,7 +323,12 @@ pub fn runtime_install(
             let bin = execute(&plan, &dest, &|s| eprintln!("[install] {s}"))?;
             let db = deck_core::store::default_db_path();
             let conn = deck_core::store::open(&db)?;
-            deck_core::store::set_engine_bin(&conn, id, &bin.display().to_string())?;
+            deck_core::store::record_runtime_install(
+                &conn,
+                id,
+                &bin.display().to_string(),
+                &plan.version,
+            )?;
             Ok(InstallReport {
                 runtime: id.into(),
                 manual: false,
@@ -334,6 +339,61 @@ pub fn runtime_install(
             })
         }
     }
+}
+
+#[derive(Serialize)]
+pub struct RuntimeUpdate {
+    pub id: String,
+    pub installed_version: Option<String>,
+    pub latest: Option<String>,
+    pub update_available: bool,
+    pub note: String,
+}
+
+/// Check github-recipe backends for newer releases vs recorded installs.
+/// Hits the network once per recipe — call on demand, never on a timer.
+pub fn runtime_check_updates() -> Vec<RuntimeUpdate> {
+    use deck_engines::install::{is_newer, latest_matching_tag};
+    let db = deck_core::store::default_db_path();
+    let conn = deck_core::store::open(&db).ok();
+    let mut out = Vec::new();
+    for m in deck_core::runtime::all_manifests() {
+        let (repo, pattern) = match &m.install {
+            Some(deck_core::runtime::InstallRecipe::GithubRelease {
+                repo,
+                asset_pattern,
+                ..
+            }) => (repo, asset_pattern),
+            _ => continue,
+        };
+        let installed = conn
+            .as_ref()
+            .and_then(|c| deck_core::store::installed_version(c, &m.id).ok().flatten());
+        let (latest, update_available, note) = match latest_matching_tag(repo, pattern) {
+            Ok(tag) => match &installed {
+                Some(cur) if is_newer(&tag, cur) => (
+                    Some(tag.clone()),
+                    true,
+                    format!("update available {cur} → {tag}"),
+                ),
+                Some(cur) => (Some(tag), false, format!("current ({cur})")),
+                None => (
+                    Some(tag.clone()),
+                    false,
+                    format!("no recorded install — newest matching is {tag}"),
+                ),
+            },
+            Err(e) => (None, false, format!("check failed: {e}")),
+        };
+        out.push(RuntimeUpdate {
+            id: m.id.clone(),
+            installed_version: installed,
+            latest,
+            update_available,
+            note,
+        });
+    }
+    out
 }
 
 #[cfg(test)]

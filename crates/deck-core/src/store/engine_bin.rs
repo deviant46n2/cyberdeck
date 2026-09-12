@@ -17,7 +17,36 @@ pub fn ensure_engine_bin_schema(conn: &Connection) -> Result<()> {
             bin TEXT NOT NULL
         )",
     )?;
+    // Installed release tag, so update checks know what is running without
+    // re-probing the binary. NULL for hand-registered bins and old rows.
+    crate::store::ensure_column(conn, "engine_bin", "version", "TEXT")?;
     Ok(())
+}
+
+/// Record a completed recipe install: binary path plus the upstream version it
+/// came from. Plain `set_engine_bin` (hand-registered paths) leaves version
+/// NULL — unknown, not stale.
+pub fn record_runtime_install(
+    conn: &Connection,
+    engine_id: &str,
+    bin: &str,
+    version: &str,
+) -> Result<()> {
+    ensure_engine_bin_schema(conn)?;
+    conn.execute(
+        "INSERT INTO engine_bin (engine_id, bin, version) VALUES (?1,?2,?3)
+         ON CONFLICT(engine_id) DO UPDATE SET bin = excluded.bin, version = excluded.version",
+        rusqlite::params![engine_id, bin, version],
+    )?;
+    Ok(())
+}
+
+/// Installed version tag for a runtime, if a recipe install recorded one.
+pub fn installed_version(conn: &Connection, engine_id: &str) -> Result<Option<String>> {
+    ensure_engine_bin_schema(conn)?;
+    let mut stmt = conn.prepare("SELECT version FROM engine_bin WHERE engine_id = ?1")?;
+    let mut rows = stmt.query_map([engine_id], |r| r.get::<_, Option<String>>(0))?;
+    Ok(rows.next().transpose()?.flatten())
 }
 
 pub fn get_engine_bin(conn: &Connection, store_id: &str) -> Result<Option<String>> {
@@ -70,4 +99,26 @@ pub fn resolve_engine_bin(
         p.bin = std::path::PathBuf::from(b);
     }
     Ok(p)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn install_record_roundtrips_version_and_hand_bins_stay_unknown() {
+        let conn = Connection::open_in_memory().unwrap();
+        assert!(installed_version(&conn, "llamacpp").unwrap().is_none());
+        record_runtime_install(&conn, "llamacpp", "/x/llama-server", "b10930").unwrap();
+        assert_eq!(
+            installed_version(&conn, "llamacpp").unwrap().as_deref(),
+            Some("b10930")
+        );
+        // Re-install moves the version forward.
+        record_runtime_install(&conn, "llamacpp", "/x/llama-server", "b10931").unwrap();
+        assert_eq!(
+            installed_version(&conn, "llamacpp").unwrap().as_deref(),
+            Some("b10931")
+        );
+    }
 }
