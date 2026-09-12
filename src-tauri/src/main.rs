@@ -606,6 +606,18 @@ fn runtime_probe_version(id: String) -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
+async fn runtime_install(
+    id: String,
+    tag: Option<String>,
+    dry_run: bool,
+) -> Result<deck_tauri::InstallReport, String> {
+    blocking(move || {
+        deck_tauri::runtime_install(&id, tag.as_deref(), dry_run).map_err(|e| e.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
 fn fit_candidates(model_path: String) -> Result<Vec<deck_core::fitplan::FitCandidate>, String> {
     deck_tauri::fit_candidates(&model_path).map_err(|e| e.to_string())
 }
@@ -841,6 +853,7 @@ fn main() {
             storage_reconcile,
             runtime_list,
             runtime_probe_version,
+            runtime_install,
             fit_candidates,
             discover,
             hot_swap,

@@ -269,6 +269,73 @@ pub fn discover(
     ))
 }
 
+#[derive(Serialize)]
+pub struct InstallReport {
+    pub runtime: String,
+    /// True when the recipe is manual guidance (nothing downloaded).
+    pub manual: bool,
+    pub url: Option<String>,
+    pub version: Option<String>,
+    pub bin: Option<String>,
+    pub summary: String,
+}
+
+/// Install a runtime backend from its manifest recipe, or return manual
+/// guidance. Long-running (downloads) — callers run this off the UI thread.
+pub fn runtime_install(
+    id: &str,
+    tag: Option<&str>,
+    dry_run: bool,
+) -> anyhow::Result<InstallReport> {
+    use deck_engines::install::{Resolved, execute, resolve_recipe};
+    let m = deck_core::runtime::all_manifests()
+        .into_iter()
+        .find(|x| x.id == id)
+        .ok_or_else(|| anyhow::anyhow!("unknown runtime '{id}'"))?;
+    match resolve_recipe(&m, tag)? {
+        Resolved::Manual { url, instructions } => Ok(InstallReport {
+            runtime: id.into(),
+            manual: true,
+            url: Some(url.clone()),
+            version: None,
+            bin: None,
+            summary: if instructions.is_empty() {
+                format!("manual install: {url}")
+            } else {
+                format!("manual install: {url} — {instructions}")
+            },
+        }),
+        Resolved::Download(plan) => {
+            if dry_run {
+                return Ok(InstallReport {
+                    runtime: id.into(),
+                    manual: false,
+                    url: Some(plan.url.clone()),
+                    version: Some(plan.version.clone()),
+                    bin: None,
+                    summary: format!(
+                        "dry-run: would fetch {} → {}",
+                        plan.url, plan.bin_path
+                    ),
+                });
+            }
+            let dest = deck_core::runtime::runtime_install_dir(id);
+            let bin = execute(&plan, &dest, &|s| eprintln!("[install] {s}"))?;
+            let db = deck_core::store::default_db_path();
+            let conn = deck_core::store::open(&db)?;
+            deck_core::store::set_engine_bin(&conn, id, &bin.display().to_string())?;
+            Ok(InstallReport {
+                runtime: id.into(),
+                manual: false,
+                url: Some(plan.url),
+                version: Some(plan.version),
+                bin: Some(bin.display().to_string()),
+                summary: format!("installed {id} → {}", bin.display()),
+            })
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

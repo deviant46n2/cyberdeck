@@ -279,6 +279,18 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Install a runtime backend from its manifest recipe (download + unpack +
+    /// register the binary), or print manual guidance for pip/system backends.
+    Install {
+        /// Runtime id (builtin or custom manifest)
+        runtime: String,
+        /// Pinned release tag (github-release recipes; default = newest)
+        #[arg(long)]
+        tag: Option<String>,
+        /// Resolve and show the plan without downloading anything
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Transactionally move a running model to another runtime/config:
     /// verify the replacement on its test port, then commit, with rollback.
     Swap {
@@ -873,6 +885,7 @@ fn main() -> Result<()> {
         Commands::Discover { model, runtimes, variants, ctx, runs, max_tokens, json } => {
             cmd::discover::run(model, runtimes, variants, ctx, runs, max_tokens, json)
         }
+        Commands::Install { runtime, tag, dry_run } => cmd::install::run(&runtime, tag.as_deref(), dry_run),
         Commands::Swap { model, to, ctx, fast, dry_run } => cmd::swap::run(model, to, ctx, fast, dry_run),
         Commands::Promote => cmd::promote::run(),
         Commands::Dirs { action } => match action {

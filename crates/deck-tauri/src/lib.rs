@@ -131,8 +131,9 @@ pub use scan::{
     index_downloaded, list_models, list_scan_dirs, remove_scan_dir, scan,
 };
 pub use lifecycle::{
-    RemovalReport, RuntimeRow, StorageReport, discover, fit_candidates, forget_model,
-    remove_model_files, runtime_list, runtime_probe_version, storage_reconcile,
+    InstallReport, RemovalReport, RuntimeRow, StorageReport, discover, fit_candidates,
+    forget_model, remove_model_files, runtime_install, runtime_list, runtime_probe_version,
+    storage_reconcile,
 };
 pub use deck_engines::discover::DiscoveryReport;
 pub use swap::{HotSwapReport, hot_swap};

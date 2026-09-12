@@ -77,6 +77,12 @@
         "reason": "Single measurement-path module: measure_generation_tps() used by bench record + bringup + CLI deck bench record; parse_tps() hardened for llama.cpp + FreeToken counter names. One cohesive health/throughput concern. AGENTS.md COHESION > ARBITRARY LINE COUNT"
       },
       {
+        "path": "crates/deck-engines/src/install.rs",
+        "lines": 349,
+        "kind": "accepted",
+        "reason": "Runtime installation is one concern end to end: recipe resolution (manual/url/github-release), asset picking, curl fetch, sha verify, unpack, chmod, and the plan/execute types they share must change together. Over the soft heuristic with tests, not a seam. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
+      },
+      {
         "path": "crates/deck-engines/src/discover.rs",
         "lines": 408,
         "kind": "accepted",

@@ -9,7 +9,9 @@
 use std::collections::BTreeMap;
 
 use crate::profile::{Engine, EngineProtocol, ModelSource};
-use crate::runtime::{ModelSourceSer, ProtocolSer, RuntimeManifest, RuntimeRow, RuntimeStatus};
+use crate::runtime::{
+    InstallRecipe, ModelSourceSer, ProtocolSer, RuntimeManifest, RuntimeRow, RuntimeStatus,
+};
 
 fn builtin_status(engine: Engine) -> RuntimeStatus {
     match engine {
@@ -42,6 +44,29 @@ pub fn builtin_manifests() -> Vec<RuntimeManifest> {
                 Engine::FreeToken => vec!["ft".to_string()],
                 Engine::Ollama => vec!["ollama".to_string()],
             };
+            // Best-effort install recipes. Upstream publishes no Linux CUDA
+            // build, so NVIDIA Linux takes Vulkan (the GPU path); plain
+            // `ubuntu-x64` is the CPU fallback if Vulkan misbehaves. The
+            // executor verifies the layout (missing bin = loud failure, never
+            // a silent half-install). pip/system backends stay manual.
+            let install = match e {
+                Engine::LlamaCpp | Engine::UncensoredLlamaCpp => Some(InstallRecipe::GithubRelease {
+                    repo: "ggml-org/llama.cpp".into(),
+                    asset_pattern: "ubuntu-vulkan-x64".into(),
+                    unpack: Some("tar.gz".into()),
+                    bin_path: "llama-{tag}/llama-server".into(),
+                    tag: None,
+                    sha256: None,
+                }),
+                Engine::FreeToken => Some(InstallRecipe::Manual {
+                    url: "https://github.com/FuelLabs/FreeToken".into(),
+                    instructions: "install per the upstream README (pip/venv), then point cyberdeck at it: `deck engines bin freetoken <path-to-ft>`".into(),
+                }),
+                Engine::Ollama => Some(InstallRecipe::Manual {
+                    url: "https://ollama.com/download".into(),
+                    instructions: "install the system package and start the daemon; cyberdeck talks to the running service and never launches it".into(),
+                }),
+            };
             RuntimeManifest {
                 id: d.id.to_string(),
                 display: d.display.to_string(),
@@ -66,9 +91,19 @@ pub fn builtin_manifests() -> Vec<RuntimeManifest> {
                 configuration: vec![],
                 argv_template: vec![],
                 env: BTreeMap::new(),
+                install,
             }
         })
         .collect()
+}
+
+/// Directory holding installed runtime trees (`backends/<id>/...`) — a sibling
+/// of the manifests dir, so installs never mix with `*.json` manifests.
+pub fn runtime_install_dir(id: &str) -> std::path::PathBuf {
+    custom_runtimes_dir()
+        .parent()
+        .map(|p| p.join("backends").join(id))
+        .unwrap_or_else(|| std::path::PathBuf::from(id))
 }
 
 /// Directory holding custom backend manifests (`*.json`).

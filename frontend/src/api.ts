@@ -538,6 +538,19 @@ export const runtimeList = () => invoke<RuntimeRow[]>("runtime_list");
 export const runtimeProbeVersion = (id: string) =>
   invoke<string | null>("runtime_probe_version", { id });
 
+export interface InstallReport {
+  runtime: string;
+  manual: boolean;
+  url: string | null;
+  version: string | null;
+  bin: string | null;
+  summary: string;
+}
+
+/** Install a backend from its manifest recipe (or return manual guidance). */
+export const runtimeInstall = (p: { id: string; tag?: string; dryRun?: boolean }) =>
+  invoke<InstallReport>("runtime_install", p);
+
 export interface TestedEvidence {
   tps: number;
   kind: string;

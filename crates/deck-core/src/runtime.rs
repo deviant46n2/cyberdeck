@@ -54,6 +54,44 @@ pub struct ConfigParam {
 /// of `configuration`. Each maps to a value the core resolves at launch.
 pub const TEMPLATE_BUILTINS: &[&str] = &["model", "host", "port", "ctx", "alias"];
 
+/// How to install this backend. `manual` prints guidance (pip packages, system
+/// daemons); `url` downloads one artifact and unpacks it; `github-release`
+/// resolves the newest matching release asset, then behaves like `url`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum InstallRecipe {
+    Manual {
+        url: String,
+        #[serde(default)]
+        instructions: String,
+    },
+    Url {
+        url: String,
+        #[serde(default)]
+        filename: Option<String>,
+        /// "zip" | "tar.gz" | "tgz" | "none". Default: guess from the filename.
+        #[serde(default)]
+        unpack: Option<String>,
+        /// Executable inside the archive (or the file itself when "none").
+        bin_path: String,
+        #[serde(default)]
+        sha256: Option<String>,
+    },
+    GithubRelease {
+        repo: String,
+        /// Matched against release asset names, e.g. "ubuntu-x64".
+        asset_pattern: String,
+        #[serde(default)]
+        unpack: Option<String>,
+        bin_path: String,
+        /// Pinned tag; default = newest release.
+        #[serde(default)]
+        tag: Option<String>,
+        #[serde(default)]
+        sha256: Option<String>,
+    },
+}
+
 /// Declarative description of one backend. Builtins are generated from
 /// `Engine::descriptor()`; customs parse from JSON (unknown fields ignored).
 /// Empty `formats`/`architectures` = accepts anything.
@@ -99,6 +137,10 @@ pub struct RuntimeManifest {
     /// Environment variables (values may use the same placeholders).
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    /// How to install this backend. None = already vendored / out of scope
+    /// (the registry still lists it; availability reports it missing).
+    #[serde(default)]
+    pub install: Option<InstallRecipe>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -334,7 +376,7 @@ impl From<&RuntimeManifest> for RuntimeRow {
 /// single import path for both schema and discovery.
 pub use crate::runtime_registry::{
     all_manifests, builtin_manifests, custom_runtimes_dir, list_runtimes,
-    load_custom_manifests, parse_manifest_file,
+    load_custom_manifests, parse_manifest_file, runtime_install_dir,
 };
 
 // ---------------------------------------------------------- availability

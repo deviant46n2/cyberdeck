@@ -25,6 +25,7 @@ pub mod external;
 
 pub mod availability;
 pub mod discover;
+pub mod install;
 pub mod status;
 pub mod swap;
 

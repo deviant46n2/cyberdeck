@@ -264,6 +264,16 @@ instead of failing on a missing executable. `<bin> --version` stays strictly
 opt-in (`deck runtimes --probe`, `runtime_probe_version`), because a manifest
 pointing at a daemon would otherwise start serving.
 
+Install closes the loop: `deck install <runtime>` (and the app's
+`runtime_install`) executes the manifest's `install` recipe — `manual` prints
+guidance for pip/system backends, `url`/`github-release` downloads one
+artifact with system curl, verifies an optional sha256, unpacks, chmods, and
+records the binary in `engine_bin`. The resolver skips empty releases for the
+newest *matching* asset, `bin_path` supports `{tag}` for version-embedded
+trees, and a missing binary after unpack is a loud failure that registers
+nothing. Proven against the real llama.cpp GitHub releases (which publish no
+Linux CUDA build — NVIDIA Linux takes Vulkan, the CPU zip is the fallback).
+
 Build as: `deck bringup --model <path> --engine freetoken [--dedicated-port]`
 CLI first (headless-tested like everything else), then a HUD/Chat **"LOAD"
 button** that calls it.
