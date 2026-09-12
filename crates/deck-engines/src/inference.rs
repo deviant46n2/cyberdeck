@@ -81,7 +81,19 @@ pub fn run_prompt(
     prompt: &str,
     max_tokens: u32,
 ) -> GenSample {
-    match engine.protocol() {
+    run_prompt_protocol(engine.protocol(), host, port, model_id, prompt, max_tokens)
+}
+
+/// Same samplers for non-`Engine` backends via the manifest's declared protocol.
+pub fn run_prompt_protocol(
+    protocol: EngineProtocol,
+    host: &str,
+    port: u16,
+    model_id: &str,
+    prompt: &str,
+    max_tokens: u32,
+) -> GenSample {
+    match protocol {
         EngineProtocol::OpenAiChat => run_openai_chat(host, port, model_id, prompt, max_tokens),
         EngineProtocol::OllamaChat => run_ollama_chat(host, port, model_id, prompt, max_tokens),
     }

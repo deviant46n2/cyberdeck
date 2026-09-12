@@ -155,10 +155,74 @@ pub fn fit_candidates(model_path: &str) -> anyhow::Result<Vec<deck_core::fitplan
         deck_core::gguf::GgufMeta::read(p)?.to_meta(p)
     };
     let vram = deck_core::fit::hw_vram().unwrap_or(12 * 1024);
-    Ok(deck_core::fitplan::candidates_for(
+    let mut cands = deck_core::fitplan::candidates_for(
         &meta,
         &deck_core::runtime::all_manifests(),
         vram,
+    );
+    // Empirical beats estimated: attach the freshest successful measurement
+    // per (artifact, runtime) so the UI can show TESTED instead of a guess.
+    if let Ok(conn) = deck_core::store::open(&deck_core::store::default_db_path()) {
+        for c in &mut cands {
+            c.tested = deck_core::store::latest_tested(&conn, model_path, &c.runtime_id)
+                .ok()
+                .flatten();
+        }
+    }
+    Ok(cands)
+}
+
+/// Measure candidate configs for one model and persist the trials, so fit
+/// candidates can render TESTED. Long-running (one model load per trial) —
+/// callers run this off the UI thread.
+pub fn discover(
+    model_path: &str,
+    runtimes: Option<Vec<String>>,
+    variants: u32,
+    ctx: Option<u32>,
+    runs: u32,
+    max_tokens: u32,
+) -> anyhow::Result<deck_engines::discover::DiscoveryReport> {
+    if !std::path::Path::new(model_path).exists() {
+        anyhow::bail!("model not found on disk: {model_path}");
+    }
+    let (mut plans, skipped) = deck_engines::discover::plan_trials(
+        std::path::Path::new(model_path),
+        runtimes.as_deref(),
+        variants,
+        ctx,
+    )
+    .map_err(anyhow::Error::msg)?;
+    if plans.is_empty() {
+        anyhow::bail!("nothing measurable — every candidate was skipped");
+    }
+    let db = deck_core::store::default_db_path();
+    let conn = deck_core::store::open(&db)?;
+    deck_engines::discover::apply_engine_bins(&mut plans, &|p| {
+        deck_core::store::get_engine_bin(&conn, &p.runtime_key())
+            .ok()
+            .flatten()
+            .map(std::path::PathBuf::from)
+    });
+    let mut all_rows = Vec::new();
+    let mut results = Vec::new();
+    for plan in &plans {
+        let res = deck_engines::discover::run_trial(
+            plan,
+            max_tokens,
+            runs,
+            std::time::Duration::from_secs(180),
+            None,
+        );
+        all_rows.extend(res.rows.iter().cloned());
+        results.push(res);
+    }
+    let ids = deck_core::store::persist_matrix_batch(&conn, &all_rows)?;
+    Ok(deck_engines::discover::summarize(
+        model_path,
+        &results,
+        &skipped,
+        &ids,
     ))
 }
 

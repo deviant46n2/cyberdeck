@@ -153,6 +153,53 @@ pub fn insert_matrix_run(conn: &Connection, row: &MatrixRow) -> Result<i64> {
     Ok(conn.last_insert_rowid())
 }
 
+/// Freshest empirical success for one (artifact, runtime) — what the fit UI
+/// renders as TESTED instead of estimated. Exact model-path hits rank first;
+/// filename-only legacy rows (which predate full-path recording) still count.
+pub fn latest_tested(
+    conn: &Connection,
+    model_path: &str,
+    runtime_id: &str,
+) -> Result<Option<crate::fitplan::TestedEvidence>> {
+    ensure_matrix_schema(conn)?;
+    let base = model_path.rsplit('/').next().unwrap_or(model_path);
+    let like = format!("%/{base}");
+    let mut stmt = conn.prepare(
+        "SELECT tok_s, tok_s_kind, prompt_tps, ctx, at FROM matrix_runs
+         WHERE engine = ?1 AND verdict = 'RUNNING' AND tok_s IS NOT NULL
+           AND (model = ?2 OR model LIKE ?3 OR model = ?4)
+         ORDER BY (model = ?2) DESC, at DESC, id DESC
+         LIMIT 1",
+    )?;
+    let mut rows = stmt.query_map(
+        rusqlite::params![runtime_id, model_path, like, base],
+        |r| {
+            Ok(crate::fitplan::TestedEvidence {
+                tps: r.get(0)?,
+                kind: r.get::<_, Option<String>>(1)?.unwrap_or_else(|| "wall".into()),
+                prompt_tps: r.get(2)?,
+                ctx: r.get::<_, i64>(3)? as u32,
+                at: r.get(4)?,
+            })
+        },
+    )?;
+    Ok(rows.next().transpose()?)
+}
+
+/// Persist a batch of trials with one shared hardware-profile capture, so a
+/// discovery run's rows join to the machine they were measured on.
+pub fn persist_matrix_batch(conn: &Connection, rows: &[MatrixRow]) -> Result<Vec<i64>> {
+    ensure_matrix_schema(conn)?;
+    let hw = crate::store::capture_hardware_profile(conn).ok();
+    let mut ids = Vec::new();
+    for r in rows {
+        let mut r2 = r.clone();
+        r2.hardware_profile_id = hw;
+        ids.push(insert_matrix_run(conn, &r2)?);
+    }
+    Ok(ids)
+}
+
 /// Aggregate per-role bench for the given role ids (Phase 8e). Only rows with a
 /// measurable `tok_s` count (stateless engine runs); returns best/avg/last per
 /// role+model, ordered role then best tok/s desc, so "which model best at which
@@ -408,4 +455,72 @@ pub fn recent_bench(conn: &Connection, n: usize) -> Result<Vec<BenchRow>> {
         out.push(r?);
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(model: &str, engine: &str, verdict: &str, tps: Option<f64>, ctx: u32, at: i64) -> MatrixRow {
+        MatrixRow {
+            engine: engine.into(),
+            model: model.into(),
+            ctx,
+            task: "discovery-probe".into(),
+            run: 0,
+            verdict: verdict.into(),
+            summary: String::new(),
+            gen_tokens: None,
+            prompt_tokens: None,
+            tok_s: tps,
+            tok_s_kind: "wall".into(),
+            wall_ms: 0,
+            output: String::new(),
+            at,
+            workload_id: None,
+            hardware_profile_id: None,
+            engine_version: None,
+            prompt_tps: None,
+            ttft_ms: None,
+            peak_vram_mb: None,
+            model_rev: None,
+            sampling_json: None,
+            role_id: None,
+            workflow_id: None,
+        }
+    }
+
+    fn mem() -> Connection {
+        Connection::open_in_memory().unwrap()
+    }
+
+    #[test]
+    fn latest_tested_prefers_exact_path_over_legacy_filename() {
+        let conn = mem();
+        insert_matrix_run(&conn, &row("q3.gguf", "llamacpp", "RUNNING", Some(10.0), 16384, 100)).unwrap();
+        insert_matrix_run(&conn, &row("/m/q3.gguf", "llamacpp", "RUNNING", Some(80.0), 49152, 200)).unwrap();
+        let got = latest_tested(&conn, "/m/q3.gguf", "llamacpp").unwrap().unwrap();
+        assert_eq!(got.tps, 80.0);
+        assert_eq!(got.ctx, 49152);
+    }
+
+    #[test]
+    fn latest_tested_matches_legacy_filename_and_ignores_failures() {
+        let conn = mem();
+        insert_matrix_run(&conn, &row("q3.gguf", "llamacpp", "ERROR", Some(5.0), 16384, 100)).unwrap();
+        insert_matrix_run(&conn, &row("q3.gguf", "llamacpp", "RUNNING", None, 16384, 101)).unwrap();
+        assert!(latest_tested(&conn, "/gone/q3.gguf", "llamacpp").unwrap().is_none());
+        insert_matrix_run(&conn, &row("q3.gguf", "llamacpp", "RUNNING", Some(33.0), 16384, 102)).unwrap();
+        let got = latest_tested(&conn, "/gone/q3.gguf", "llamacpp").unwrap().unwrap();
+        assert_eq!(got.tps, 33.0);
+        // Wrong runtime never joins.
+        assert!(latest_tested(&conn, "/gone/q3.gguf", "freetoken").unwrap().is_none());
+    }
+
+    #[test]
+    fn persist_matrix_batch_links_hardware_profile() {
+        let conn = mem();
+        let ids = persist_matrix_batch(&conn, &[row("/m/q.gguf", "llamacpp", "RUNNING", Some(1.0), 2048, 1)]).unwrap();
+        assert_eq!(ids.len(), 1);
+    }
 }

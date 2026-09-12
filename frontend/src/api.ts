@@ -572,6 +572,38 @@ export const hotSwap = (p: {
   dryRun?: boolean;
 }) => invoke<HotSwapReport>("hot_swap", p);
 
+/** One measured trial: TESTED tok/s (or the boot failure that ruled it out). */
+export interface DiscoveryTrial {
+  runtime_id: string;
+  display: string;
+  ctx: number;
+  boot_verdict: string;
+  tps: number | null;
+  kind: string | null;
+  prompt_tps: number | null;
+  ok: boolean;
+}
+
+/** A discovery batch: ranked measured configs for one model. */
+export interface DiscoveryReport {
+  model: string;
+  trials: DiscoveryTrial[];
+  skipped: [string, string][];
+  best: string | null;
+  row_ids: number[];
+  summary: string;
+}
+
+/** Measure candidate configs (one model load per trial) and persist rows. */
+export const discover = (p: {
+  modelPath: string;
+  runtimes?: string[];
+  variants?: number;
+  ctx?: number;
+  runs?: number;
+  maxTokens?: number;
+}) => invoke<DiscoveryReport>("discover", p);
+
 export const dedupDelete = (identity: string, deleteFile: boolean) =>
   invoke<number>("dedup_delete", { identity, deleteFile });
 

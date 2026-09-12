@@ -6,11 +6,27 @@
 //! max context, at what VRAM cost, and why the winner won. The UI's
 //! "Make it work" consumes `recommend()`; Tune consumes the full list.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::fit::{FitRequest, Verdict};
 use crate::model::ModelMeta;
 use crate::runtime::RuntimeManifest;
+
+/// Empirical proof that a (model, runtime) pair actually ran — as opposed to
+/// the estimator's prediction. Attached at the door (which owns the DB), never
+/// inside the pure planner, so `candidates_for` stays side-effect free.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TestedEvidence {
+    /// Measured generation tok/s.
+    pub tps: f64,
+    /// `native` (engine timing) or `wall` — honesty about the number's source.
+    pub kind: String,
+    pub prompt_tps: Option<f64>,
+    /// The ctx the measurement was taken at (may differ from the candidate's).
+    pub ctx: u32,
+    /// Unix epoch seconds.
+    pub at: i64,
+}
 
 /// One viable configuration for one runtime.
 #[derive(Debug, Clone, Serialize)]
@@ -27,6 +43,9 @@ pub struct FitCandidate {
     pub verdict: String,
     /// Human-readable "why" (see `library::explain_fit`).
     pub why: String,
+    /// Empirical runs beat estimates. None = estimated only, never tested.
+    #[serde(default)]
+    pub tested: Option<TestedEvidence>,
 }
 
 /// Climb 2K→256K in 2K steps and keep the largest ctx whose verdict is
@@ -90,6 +109,7 @@ pub fn candidates_for(
                 fb.available_mb,
                 offload,
             ),
+            tested: None,
         });
     }
     // Prefer the largest viable context; tie-break toward stable runtimes

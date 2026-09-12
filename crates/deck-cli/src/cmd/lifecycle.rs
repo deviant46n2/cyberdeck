@@ -126,7 +126,16 @@ pub(crate) fn make_it_work(model: PathBuf, json: bool) -> Result<()> {
         deck_core::gguf::GgufMeta::read(&model)?.to_meta(&model)
     };
     let vram = deck_core::fit::hw_vram().unwrap_or(12 * 1024);
-    let cands = deck_core::fitplan::candidates_for(&meta, &deck_core::runtime::all_manifests(), vram);
+    let mut cands = deck_core::fitplan::candidates_for(&meta, &deck_core::runtime::all_manifests(), vram);
+    // Empirical beats estimated: freshest successful measurement per runtime.
+    let path = model.display().to_string();
+    if let Ok(conn) = deck_core::store::open(&deck_core::store::default_db_path()) {
+        for c in &mut cands {
+            c.tested = deck_core::store::latest_tested(&conn, &path, &c.runtime_id)
+                .ok()
+                .flatten();
+        }
+    }
     if json {
         println!("{}", serde_json::to_string_pretty(&cands)?);
         return Ok(());
@@ -136,7 +145,11 @@ pub(crate) fn make_it_work(model: PathBuf, json: bool) -> Result<()> {
         return Ok(());
     }
     for c in &cands {
-        println!("{} [{}]: ctx {} — {}", c.display, c.status, c.max_ctx, c.why);
+        let evidence = match &c.tested {
+            Some(t) => format!(" · TESTED {:.1} tok/s ({}) @ctx{}", t.tps, t.kind, t.ctx),
+            None => " · estimated only".to_string(),
+        };
+        println!("{} [{}]: ctx {}{} — {}", c.display, c.status, c.max_ctx, evidence, c.why);
     }
     println!("\nrecommended: {} (ctx {})", cands[0].display, cands[0].max_ctx);
     Ok(())

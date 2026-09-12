@@ -250,6 +250,31 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Measure candidate configs so the fit UI can show TESTED, not just
+    /// estimated: one trial per compatible runtime at its fit-max ctx, each
+    /// booted on its own test port with the shared probe. Persists rows.
+    Discover {
+        /// Model file or safetensors dir to measure
+        #[arg(long)]
+        model: PathBuf,
+        /// Only these runtime ids (default: every compatible backend)
+        #[arg(long, value_delimiter = ',')]
+        runtimes: Vec<String>,
+        /// 1 = max ctx per runtime; 2 = plus a half-ctx point
+        #[arg(long, default_value_t = 1)]
+        variants: u32,
+        /// Clamp every trial at or below this ctx (to ask "does it run at 8K?")
+        #[arg(long)]
+        ctx: Option<u32>,
+        /// Probe repeats per trial
+        #[arg(long, default_value_t = 1)]
+        runs: u32,
+        /// Generation tokens per probe
+        #[arg(long, default_value_t = 192)]
+        max_tokens: u32,
+        #[arg(long)]
+        json: bool,
+    },
     /// Transactionally move a running model to another runtime/config:
     /// verify the replacement on its test port, then commit, with rollback.
     Swap {
@@ -841,6 +866,9 @@ fn main() -> Result<()> {
         Commands::Storage { json } => cmd::lifecycle::storage(json),
         Commands::Runtimes { json } => cmd::lifecycle::runtimes(json),
         Commands::MakeItWork { model, json } => cmd::lifecycle::make_it_work(model, json),
+        Commands::Discover { model, runtimes, variants, ctx, runs, max_tokens, json } => {
+            cmd::discover::run(model, runtimes, variants, ctx, runs, max_tokens, json)
+        }
         Commands::Swap { model, to, ctx, fast, dry_run } => cmd::swap::run(model, to, ctx, fast, dry_run),
         Commands::Promote => cmd::promote::run(),
         Commands::Dirs { action } => match action {

@@ -23,6 +23,7 @@ mod unit;
 pub mod unmanaged;
 pub mod external;
 
+pub mod discover;
 pub mod status;
 pub mod swap;
 

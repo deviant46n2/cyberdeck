@@ -490,11 +490,22 @@ fn build_profile_from_derive(
         // llama.cpp — full offload is spelled 999 (= every layer).
         p.n_gpu_layers = 999;
         p.load_mode = Some("mmap".into());
+        // q4_0 KV is a FreeToken/offload spelling — a plain llama.cpp server
+        // must not inherit it from the struct default (it crashes some builds).
+        p.kv_cache_type_k = None;
+        p.kv_cache_type_v = None;
         // NVIDIA GPU present -> offer MTP speculative decoding if a draft
         // exists next to the model (draft_model left None here; caller may set).
         p.spec_type = None;
     }
 
+    // Reasoning is opt-in per model family. `Profile::default` ships it on, so
+    // clear it here and only re-enable for reasoning models — otherwise every
+    // plain derive would force `--reasoning on`.
+    p.reasoning = None;
+    p.reasoning_format = None;
+    p.reasoning_effort = None;
+    p.reasoning_budget = None;
     if meta.name.to_lowercase().contains("reasoning") || meta.arch.as_deref() == Some("qwen3") {
         p.reasoning = Some("on".into());
         p.reasoning_budget = Some(4096);
@@ -638,6 +649,24 @@ mod tests {
         assert!(d.profile.ft_moe_cache_size.is_none());
         // offload path -> ngl 0, q4 kv.
         assert_eq!(d.profile.kv_cache_type_k.as_deref(), Some("q4_0"));
+    }
+
+    #[test]
+    fn derive_llamacpp_plain_model_has_no_kv_or_reasoning_flags() {
+        // A non-qwen3, non-reasoning model must not inherit the struct
+        // default's freetoken q4_0 KV or always-on reasoning — that combination
+        // crashed real llama.cpp servers (found via discovery trials).
+        let m = meta(1, 12, 512, "stories260K", "llama");
+        let d = derive_from_meta(&m, Engine::LlamaCpp).unwrap();
+        assert!(d.profile.kv_cache_type_k.is_none());
+        assert!(d.profile.kv_cache_type_v.is_none());
+        assert!(d.profile.reasoning.is_none());
+        assert!(d.profile.reasoning_format.is_none());
+        assert!(d.profile.reasoning_effort.is_none());
+        // qwen3 keeps reasoning.
+        let q = meta(4, 48, 5120, "Qwen3.8 27B", "qwen3");
+        let dq = derive_from_meta(&q, Engine::LlamaCpp).unwrap();
+        assert_eq!(dq.profile.reasoning.as_deref(), Some("on"));
     }
 
     #[test]

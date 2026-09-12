@@ -72,9 +72,15 @@
       },
       {
         "path": "crates/deck-engines/src/health.rs",
-        "lines": 332,
+        "lines": 415,
         "kind": "accepted",
         "reason": "Single measurement-path module: measure_generation_tps() used by bench record + bringup + CLI deck bench record; parse_tps() hardened for llama.cpp + FreeToken counter names. One cohesive health/throughput concern. AGENTS.md COHESION > ARBITRARY LINE COUNT"
+      },
+      {
+        "path": "crates/deck-engines/src/discover.rs",
+        "lines": 408,
+        "kind": "accepted",
+        "reason": "Configuration discovery is one concern end to end: trial planning (fit-derived runtime x ctx), boot + shared-probe measurement, matrix row assembly, and the ranked report share the trial-plan/result types and the boot contract. Splitting planning from measurement would separate the config it plans from the code that must honor it. Over the soft heuristic with tests, not a seam. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
       },
       {
         "path": "crates/deck-feeds/src/download.rs",

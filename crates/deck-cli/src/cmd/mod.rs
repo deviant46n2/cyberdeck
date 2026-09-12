@@ -7,6 +7,7 @@ use anyhow::Result;
 pub(crate) mod bench;
 pub(crate) mod bringup;
 pub(crate) mod dirs;
+pub(crate) mod discover;
 pub(crate) mod download;
 pub(crate) mod downloads;
 pub(crate) mod engines;

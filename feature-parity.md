@@ -200,6 +200,20 @@ provenance included — so the source stays intact while the copy is tuned (the
 (`library::diff_fields`) over the serialized profile, so no hand-maintained
 field list can drift.
 
+### Configuration discovery: measured configs, not just estimates
+
+`deck discover --model <path> [--runtimes …] [--variants 1|2] [--ctx N]`
+(and the app's `discover` command) turns fit *estimates* into facts: one trial
+per compatible runtime at its fit-max ctx (plus a half-ctx point at variants 2),
+each booted on its own test port with the shared 192-token probe. Every trial
+persists a `matrix_runs` row (`discovery-probe`), so `fit_candidates` and
+`deck make-it-work` render **TESTED tok/s @ctx** next to the prediction — and
+`estimated only` where nothing has ever run. A config that cannot boot is
+recorded as OOM/CRASH/TIMEOUT, never sampled. Discovery is also the honest
+check on the estimator: it caught the deriver wrongly inheriting freetoken q4_0
+KV + always-on reasoning into plain llama.cpp profiles (now fixed and
+regression-tested).
+
 ### Flavors: one model file, many named loadouts (2026-08-30)
 
 The vault and the loadout registry used to be two unrelated truths: `models`

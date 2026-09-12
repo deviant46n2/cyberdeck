@@ -605,6 +605,32 @@ fn fit_candidates(model_path: String) -> Result<Vec<deck_core::fitplan::FitCandi
     deck_tauri::fit_candidates(&model_path).map_err(|e| e.to_string())
 }
 
+/// Measure candidate configs for a model (one load per trial) and persist the
+/// trials, so fit candidates can render TESTED. `runtimes` empty = all
+/// compatible backends.
+#[tauri::command]
+async fn discover(
+    model_path: String,
+    runtimes: Option<Vec<String>>,
+    variants: Option<u32>,
+    ctx: Option<u32>,
+    runs: Option<u32>,
+    max_tokens: Option<u32>,
+) -> Result<deck_tauri::DiscoveryReport, String> {
+    blocking(move || {
+        deck_tauri::discover(
+            &model_path,
+            runtimes,
+            variants.unwrap_or(1),
+            ctx,
+            runs.unwrap_or(1),
+            max_tokens.unwrap_or(192),
+        )
+        .map_err(|e| e.to_string())
+    })
+    .await
+}
+
 /// Transactional runtime/config hot-swap. `dry_run` verifies only.
 #[tauri::command]
 async fn hot_swap(
@@ -810,6 +836,7 @@ fn main() {
             storage_reconcile,
             runtime_list,
             fit_candidates,
+            discover,
             hot_swap,
             dedup_delete,
             list_scan_dirs,
