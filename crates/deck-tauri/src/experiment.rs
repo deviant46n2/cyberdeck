@@ -252,7 +252,7 @@ fn run_after_download(
     }
 
     // LOAD: install + start, then bench + record.
-    if let Err(e) = bringup::save_and_apply(app2, &p, line) {
+    if let Err(e) = bringup::save_and_apply(app2, &p, fit.model_vram_mb, line) {
         finish(BringupResult {
             ok: false,
             summary: format!("apply failed: {e}"),

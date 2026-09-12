@@ -53,14 +53,92 @@ pub fn profile_origin(conn: &Connection, name: &str) -> Result<String> {
         .unwrap_or_else(|_| "auto".to_string()))
 }
 
-/// Mark a profile user-overridden (Tune saved a manual edit) with optional
-/// provenance JSON explaining the fit that produced it.
-pub fn mark_profile_override(conn: &Connection, name: &str, provenance: Option<&str>) -> Result<()> {
+/// Raw provenance JSON for a profile (the auto baseline + why), if recorded.
+pub fn profile_provenance(conn: &Connection, name: &str) -> Result<Option<String>> {
+    let mut stmt = conn.prepare("SELECT provenance FROM profiles WHERE name = ?1")?;
+    let mut rows = stmt.query_map([name], |r| r.get::<_, Option<String>>(0))?;
+    Ok(rows.next().transpose()?.flatten())
+}
+
+fn set_profile_provenance(conn: &Connection, name: &str, json: &str, origin: &str) -> Result<()> {
     conn.execute(
-        "UPDATE profiles SET origin = 'override', provenance = COALESCE(?2, provenance) WHERE name = ?1",
-        rusqlite::params![name, provenance],
+        "UPDATE profiles SET provenance = ?2, origin = ?3 WHERE name = ?1",
+        rusqlite::params![name, json, origin],
     )?;
     Ok(())
+}
+
+/// Persist a fit-derived loadout as the AUTO baseline: origin `auto` and the
+/// full provenance (runtime/artifact/vram/why + the baseline config itself).
+pub fn save_profile_derived(
+    conn: &Connection,
+    profile: &crate::profile::Profile,
+    provenance: &crate::library::Provenance,
+) -> Result<()> {
+    upsert_profile(conn, profile)?;
+    let origin = if provenance.overridden_fields.is_empty() {
+        "auto"
+    } else {
+        "override"
+    };
+    set_profile_provenance(conn, &profile.name, &serde_json::to_string(provenance)?, origin)
+}
+
+/// Persist a user-edited loadout: diff it against the stored auto baseline and
+/// record which fields the user actually changed. A hand-authored profile with
+/// no baseline keeps origin `auto` (there is nothing to deviate from).
+pub fn save_profile_edited(
+    conn: &Connection,
+    profile: &crate::profile::Profile,
+) -> Result<Vec<String>> {
+    upsert_profile(conn, profile)?;
+    let Some(raw) = profile_provenance(conn, &profile.name)? else {
+        return Ok(Vec::new());
+    };
+    let mut prov: crate::library::Provenance = serde_json::from_str(&raw).unwrap_or_default();
+    prov.overridden_fields = crate::library::diff_fields(&prov.baseline, profile);
+    let origin = if prov.overridden_fields.is_empty() {
+        "auto"
+    } else {
+        "override"
+    };
+    set_profile_provenance(conn, &profile.name, &serde_json::to_string(&prov)?, origin)?;
+    Ok(prov.overridden_fields)
+}
+
+/// Clone a saved configuration under a new name, provenance included, so the
+/// source stays known-good while the copy is edited. Fails if the target name
+/// already exists or the source does not.
+pub fn duplicate_profile(
+    conn: &Connection,
+    source: &str,
+    new_name: &str,
+) -> Result<crate::profile::Profile> {
+    if get_profile(conn, new_name)?.is_some() {
+        anyhow::bail!("a loadout named '{new_name}' already exists");
+    }
+    let mut p = get_profile(conn, source)?
+        .ok_or_else(|| anyhow::anyhow!("no loadout named '{source}'"))?;
+    p.name = new_name.to_string();
+    upsert_profile(conn, &p)?;
+    // Copy provenance (baseline + overrides) so origin semantics carry over.
+    if let Some(raw) = profile_provenance(conn, source)? {
+        let origin = profile_origin(conn, source)?;
+        set_profile_provenance(conn, new_name, &raw, &origin)?;
+    }
+    Ok(p)
+}
+
+/// Full profiles paired with their origin tag, for list views that show the
+/// AUTO/OVERRIDE badge without a second query.
+pub fn list_profiles_with_origin(conn: &Connection) -> Result<Vec<(crate::profile::Profile, String)>> {
+    Ok(list_profiles(conn)?
+        .into_iter()
+        .map(|p| {
+            let origin = profile_origin(conn, &p.name).unwrap_or_else(|_| "auto".into());
+            (p, origin)
+        })
+        .collect())
 }
 
 
@@ -312,5 +390,72 @@ mod tests {
         assert!(mid.is_some(), "backfill should link the pre-existing profile");
 
         std::fs::remove_file(&path).ok();
+    }
+
+    fn mem() -> Connection {
+        let conn = Connection::open_in_memory().expect("mem");
+        crate::store::ensure_models_table(&conn).unwrap();
+        ensure_profile_schema(&conn).unwrap();
+        conn
+    }
+
+    #[test]
+    fn derived_baseline_then_edit_marks_overrides() {
+        let conn = mem();
+        let base = crate::profile::Profile {
+            name: "q".into(),
+            ctx_size: 49152,
+            ..Default::default()
+        };
+        let prov = crate::library::Provenance {
+            runtime_id: "llamacpp".into(),
+            artifact_path: "/m.gguf".into(),
+            vram_mb: 16303,
+            why: "fits".into(),
+            baseline: base.clone(),
+            overridden_fields: vec![],
+        };
+        save_profile_derived(&conn, &base, &prov).unwrap();
+        assert_eq!(profile_origin(&conn, "q").unwrap(), "auto");
+
+        // Change only ctx: exactly that field becomes an override.
+        let mut edited = base.clone();
+        edited.ctx_size = 65536;
+        let fields = save_profile_edited(&conn, &edited).unwrap();
+        assert_eq!(fields, vec!["ctx_size".to_string()]);
+        assert_eq!(profile_origin(&conn, "q").unwrap(), "override");
+
+        let stored: crate::library::Provenance =
+            serde_json::from_str(&profile_provenance(&conn, "q").unwrap().unwrap()).unwrap();
+        assert_eq!(stored.overridden_fields, vec!["ctx_size".to_string()]);
+        assert_eq!(stored.baseline.ctx_size, 49152, "auto baseline preserved");
+    }
+
+    #[test]
+    fn duplicate_copies_config_and_provenance_source_untouched() {
+        let conn = mem();
+        let p = crate::profile::Profile {
+            name: "known-good".into(),
+            ctx_size: 49152,
+            ..Default::default()
+        };
+        let prov = crate::library::Provenance {
+            runtime_id: "llamacpp".into(),
+            baseline: p.clone(),
+            ..Default::default()
+        };
+        save_profile_derived(&conn, &p, &prov).unwrap();
+
+        let dup = duplicate_profile(&conn, "known-good", "known-good-64k").unwrap();
+        assert_eq!(dup.name, "known-good-64k");
+        assert_eq!(dup.ctx_size, 49152);
+        assert_eq!(profile_origin(&conn, "known-good-64k").unwrap(), "auto");
+        assert_eq!(
+            get_profile(&conn, "known-good").unwrap().unwrap().ctx_size,
+            49152,
+            "source config untouched by the clone"
+        );
+        assert!(duplicate_profile(&conn, "known-good", "known-good-64k").is_err());
+        assert!(duplicate_profile(&conn, "missing", "x").is_err());
     }
 }

@@ -72,8 +72,18 @@ async fn fit(
 }
 
 #[tauri::command]
-fn save_profile(profile: deck_tauri::Profile) -> Result<(), String> {
+fn save_profile(profile: deck_tauri::Profile) -> Result<Vec<String>, String> {
     deck_tauri::save_profile(profile).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn duplicate_profile(source: String, new_name: String) -> Result<deck_tauri::Profile, String> {
+    deck_tauri::duplicate_profile(&source, &new_name).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn profile_provenance(name: String) -> Result<Option<String>, String> {
+    deck_tauri::profile_provenance(&name).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -810,6 +820,8 @@ fn main() {
             ollama_stop,
             fit,
             save_profile,
+            duplicate_profile,
+            profile_provenance,
             delete_profile,
             profile_get,
             render_profile_unit,

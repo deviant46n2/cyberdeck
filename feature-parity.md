@@ -185,6 +185,21 @@ ERROR fails fast because a smaller context cannot fix it. Logic lives in
 `deck-engines::swap` with injected side effects so the transaction is tested
 without systemd.
 
+### Configuration provenance & duplication
+
+Automatic first, transparent second: a fit-derived loadout is saved as the
+**AUTO baseline** (origin `auto`, plus a `Provenance` JSON holding the
+runtime/artifact/VRAM and the plain-language `why`). When the loadout is edited,
+`save_profile_edited` diffs it against the stored baseline and records exactly
+which fields changed (`overridden_fields`), flipping origin to `override`.
+`deck profile show <name>` prints the AUTO value and the override per field;
+`deck profile list` tags each row `auto`/`ovr`. `deck profile duplicate <src>
+<new>` (CLI) and `duplicate_profile` (app) clone a known-good configuration —
+provenance included — so the source stays intact while the copy is tuned (the
+"Duplicate → change ctx to 64K" workflow). The diff is a pure function
+(`library::diff_fields`) over the serialized profile, so no hand-maintained
+field list can drift.
+
 ### Flavors: one model file, many named loadouts (2026-08-30)
 
 The vault and the loadout registry used to be two unrelated truths: `models`

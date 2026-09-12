@@ -60,7 +60,7 @@
       },
       {
         "path": "crates/deck-core/src/store/profiles.rs",
-        "lines": 316,
+        "lines": 461,
         "kind": "accepted",
         "reason": "Loadout persistence domain: profiles table + model_id linking/backfill, origin/provenance, current-profile resolution, and the ensure_* migrations. One cohesive per-table store concern carved per the ROADMAP refactor table (run history lives in store/runs.rs); just over the soft heuristic from dense docs, not a seam. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
       },

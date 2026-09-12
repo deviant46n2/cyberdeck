@@ -16,7 +16,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::model::ModelMeta;
 
@@ -148,16 +148,43 @@ impl ConfigOrigin {
     }
 }
 
-/// Which artifact + runtime + hardware facts produced a configuration.
-/// Persisted as `provenance_json` on the profile so Tune can show "why".
-#[derive(Debug, Clone, Serialize, Default)]
+/// Which artifact + runtime + hardware facts produced a configuration, plus
+/// the exact auto baseline it was derived from. Persisted as JSON in the
+/// profile's `provenance` column so Tune can show, per field, AUTO vs
+/// OVERRIDE and why the automatic value was chosen. `baseline` is what makes
+/// the distinction survive edits: overrides are the diff against it.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Provenance {
     pub runtime_id: String,
     pub artifact_path: String,
     pub vram_mb: u64,
     pub why: String,
     #[serde(default)]
+    pub baseline: crate::profile::Profile,
+    #[serde(default)]
     pub overridden_fields: Vec<String>,
+}
+
+/// Top-level `Profile` fields that differ between the auto baseline and an
+/// edited config. Field names match the serialized keys, so the UI can render
+/// an AUTO/OVERRIDE marker per field without a hand-maintained list.
+pub fn diff_fields(baseline: &crate::profile::Profile, edited: &crate::profile::Profile) -> Vec<String> {
+    let (a, b) = match (
+        serde_json::to_value(baseline).ok(),
+        serde_json::to_value(edited).ok(),
+    ) {
+        (Some(serde_json::Value::Object(a)), Some(serde_json::Value::Object(b))) => (a, b),
+        _ => return Vec::new(),
+    };
+    let mut out: Vec<String> = a
+        .iter()
+        .filter(|(k, v)| b.get(*k).map(|bv| bv != *v).unwrap_or(true))
+        .map(|(k, _)| k.clone())
+        .chain(b.keys().filter(|k| !a.contains_key(*k)).cloned())
+        .collect();
+    out.sort();
+    out.dedup();
+    out
 }
 
 pub fn explain_fit(
@@ -222,6 +249,16 @@ mod tests {
         assert_eq!(classify(true, true), Lifecycle::Running);
         // A running flag wins even if the file check raced a delete.
         assert_eq!(classify(false, true), Lifecycle::Running);
+    }
+
+    #[test]
+    fn diff_reports_only_changed_fields() {
+        let a = crate::profile::Profile::default();
+        let mut b = a.clone();
+        assert!(diff_fields(&a, &b).is_empty());
+        b.ctx_size += 4096;
+        b.n_gpu_layers = 0;
+        assert_eq!(diff_fields(&a, &b), vec!["ctx_size".to_string(), "n_gpu_layers".to_string()]);
     }
 
     #[test]

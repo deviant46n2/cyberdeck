@@ -123,8 +123,8 @@ pub use workflow::{
     workflow_per_role_bench, workflow_run, workflow_save, workflow_seed, workflow_stop,
 };
 pub use profiles::{
-    ProfileRow, UseResult, delete_profile, get_profile, list_profiles, render_profile_unit, save_profile,
-    use_profile, use_profile_with_progress,
+    ProfileRow, UseResult, delete_profile, duplicate_profile, get_profile, list_profiles,
+    profile_provenance, render_profile_unit, save_profile, use_profile, use_profile_with_progress,
 };
 pub use scan::{
     DeleteResult, DupRow, ModelRow, ScanResult, add_scan_dir, dedup, dedup_delete, delete_model,

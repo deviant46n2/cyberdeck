@@ -22,6 +22,10 @@ export interface ProfileRow {
   port: number;
   ctx: number;
   model: string;
+  /** "auto" (fit-derived) or "override" (user edited at least one field). */
+  origin: string;
+  /** Field names the user changed vs the auto baseline. */
+  overridden_fields: string[];
 }
 
 export interface FitRow {
@@ -404,11 +408,20 @@ export const tuiStop = (id: string) => invoke<void>("tui_stop", { id });
 export const tuiReady = (id: string) => invoke<void>("tui_ready", { id });
 
 // --- loadout editing ---
-export const saveProfile = (p: Profile) => invoke<void>("save_profile", { profile: p });
+/** Persist an edited profile; returns the fields the user overrode vs the
+ * auto baseline (empty when the edit matches the automatic config). */
+export const saveProfile = (p: Profile) =>
+  invoke<string[]>("save_profile", { profile: p });
 export const deleteProfile = (name: string) =>
   invoke<void>("delete_profile", { name });
 export const profileGet = (name: string) =>
   invoke<Profile | null>("profile_get", { name });
+/** Clone a saved config under a new name; the source is untouched. */
+export const duplicateProfile = (source: string, newName: string) =>
+  invoke<Profile>("duplicate_profile", { source, newName });
+/** Raw provenance JSON (auto baseline + why), or null. */
+export const profileProvenance = (name: string) =>
+  invoke<string | null>("profile_provenance", { name });
 export const renderProfileUnit = (p: Profile) =>
   invoke<string>("render_profile_unit", { profile: p });
 

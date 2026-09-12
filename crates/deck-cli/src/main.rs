@@ -663,6 +663,18 @@ enum ProfileCmd {
         #[arg(long)]
         model: Option<String>,
     },
+    /// Show one loadout with AUTO vs user-override provenance per field
+    Show {
+        name: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Clone a saved configuration under a new name (source stays untouched)
+    Duplicate {
+        source: String,
+        #[arg()]
+        name: String,
+    },
 }
 
 fn main() -> Result<()> {
@@ -697,6 +709,8 @@ fn main() -> Result<()> {
                 name,
             } => cmd::profile::import(engine, script, name),
             ProfileCmd::List { json, model } => cmd::profile::list(json, model.as_deref()),
+            ProfileCmd::Show { name, json } => cmd::profile::show(&name, json),
+            ProfileCmd::Duplicate { source, name } => cmd::profile::duplicate(&source, &name),
         },
         Commands::Use {
             name,

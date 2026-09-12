@@ -127,9 +127,10 @@ interface FlavorsCellProps {
   onApply: (name: string) => void;
   onStop: (name: string) => void;
   onAdd: () => void;
+  onDuplicate: (name: string) => void;
 }
 
-function FlavorsCell({ flavors, active, onApply, onStop, onAdd }: FlavorsCellProps) {
+function FlavorsCell({ flavors, active, onApply, onStop, onAdd, onDuplicate }: FlavorsCellProps) {
   const { open, setOpen, btnRef, menuRef, toggle, pos } = useDropdown();
   const liveCount = flavors.filter((f) => active.has(f.name)).length;
 
@@ -160,18 +161,30 @@ function FlavorsCell({ flavors, active, onApply, onStop, onAdd }: FlavorsCellPro
         )}
         {flavors.map((f) => {
           const live = active.has(f.name);
+          const overridden = f.origin === "override";
+          const why = overridden
+            ? `user override: ${f.overridden_fields.join(", ") || "edited"}`
+            : "auto (fit-derived)";
           return (
-            <button
-              key={f.name}
-              style={DROP_ITEM(live)}
-              title={`${f.engine} @ :${f.port} · ctx ${f.ctx.toLocaleString()}`}
-              onClick={() => { setOpen(false); live ? onStop(f.name) : onApply(f.name); }}
-            >
-              <span>{f.name}</span>
-              <span className="dim" style={{ fontSize: 8, whiteSpace: "nowrap" }}>
-                {shortLabel(f.engine)} {f.ctx >= 1000 ? `${Math.round(f.ctx / 1000)}k` : f.ctx}
-              </span>
-            </button>
+            <div key={f.name} style={{ display: "flex", alignItems: "center" }}>
+              <button
+                style={{ ...DROP_ITEM(live), flex: 1 }}
+                title={`${f.engine} @ :${f.port} · ctx ${f.ctx.toLocaleString()} · ${why}`}
+                onClick={() => { setOpen(false); live ? onStop(f.name) : onApply(f.name); }}
+              >
+                <span>{overridden ? "✎ " : ""}{f.name}</span>
+                <span className="dim" style={{ fontSize: 8, whiteSpace: "nowrap" }}>
+                  {shortLabel(f.engine)} {f.ctx >= 1000 ? `${Math.round(f.ctx / 1000)}k` : f.ctx}
+                </span>
+              </button>
+              <button
+                style={{ ...DROP_ITEM(false), width: 22, justifyContent: "center", color: "var(--cyan)" }}
+                title={`duplicate '${f.name}' as a new config`}
+                onClick={() => { setOpen(false); onDuplicate(f.name); }}
+              >
+                ⧉
+              </button>
+            </div>
           );
         })}
         <div style={DROP_DIVIDER} />
@@ -546,6 +559,19 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
     });
   };
 
+  // Clone a known-good config so the source stays intact while the copy is
+  // tuned — the "Duplicate → change ctx to 64K" workflow.
+  const duplicateFlavor = async (name: string) => {
+    const newName = prompt(`Duplicate '${name}' as:`, `${name}-copy`);
+    if (!newName || newName === name) return;
+    try {
+      await api.duplicateProfile(name, newName);
+      setReloadTick((t) => t + 1);
+    } catch (e) {
+      alert(`Duplicate failed: ${String(e)}`);
+    }
+  };
+
   const toggleExtService = async (unit: string, active: boolean) => {
     setExtBusy(unit);
     try {
@@ -727,6 +753,7 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
                         onApply={applyFlavor}
                         onStop={stopFlavor}
                         onAdd={() => addFlavor(m)}
+                        onDuplicate={duplicateFlavor}
                       />
                     </td>
                     <td>

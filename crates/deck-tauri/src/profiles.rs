@@ -12,6 +12,10 @@ pub struct ProfileRow {
     pub port: u16,
     pub ctx: u32,
     pub model: String,
+    /// "auto" (fit-derived) or "override" (user edited at least one field).
+    pub origin: String,
+    /// Which fields the user changed vs the auto baseline (empty when auto).
+    pub overridden_fields: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -28,25 +32,60 @@ pub fn list_profiles() -> anyhow::Result<Vec<ProfileRow>> {
     let db = deck_core::store::default_db_path();
     let conn = deck_core::store::open(&db)?;
     deck_core::store::ensure_profile_schema(&conn)?;
-    Ok(deck_core::store::list_profiles(&conn)?
+    Ok(deck_core::store::list_profiles_with_origin(&conn)?
         .into_iter()
-        .map(|p| ProfileRow {
-            name: p.name,
-            engine: format!("{:?}", p.engine),
-            alias: p.alias,
-            port: p.port,
-            ctx: p.ctx_size,
-            model: p.model,
+        .map(|(p, origin)| {
+            let overridden_fields = deck_core::store::profile_provenance(&conn, &p.name)
+                .ok()
+                .flatten()
+                .and_then(|raw| {
+                    serde_json::from_str::<deck_core::library::Provenance>(&raw)
+                        .ok()
+                        .map(|prov| prov.overridden_fields)
+                })
+                .unwrap_or_default();
+            ProfileRow {
+                name: p.name,
+                engine: format!("{:?}", p.engine),
+                alias: p.alias,
+                port: p.port,
+                ctx: p.ctx_size,
+                model: p.model,
+                origin,
+                overridden_fields,
+            }
         })
         .collect())
 }
 
-/// Persist a loadout (created or edited in the UI) to the index.
-pub fn save_profile(p: Profile) -> anyhow::Result<()> {
+/// Persist a loadout edited in the UI: diffs it against the stored AUTO
+/// baseline and records which fields the user actually changed. Returns the
+/// overridden field names.
+pub fn save_profile(p: Profile) -> anyhow::Result<Vec<String>> {
     let db = deck_core::store::default_db_path();
-    let mut conn = deck_core::store::open(&db)?;
+    let conn = deck_core::store::open(&db)?;
     deck_core::store::ensure_profile_schema(&conn)?;
-    deck_core::store::upsert_profile(&mut conn, &p)
+    // An edit is only meaningful if a baseline exists; when the editor creates
+    // a fresh hand-authored profile there is nothing to diff, so fall back to a
+    // plain upsert that leaves origin alone.
+    let fields = deck_core::store::save_profile_edited(&conn, &p)?;
+    Ok(fields)
+}
+
+/// Clone a saved configuration under a new name, provenance included.
+pub fn duplicate_profile(source: &str, new_name: &str) -> anyhow::Result<Profile> {
+    let db = deck_core::store::default_db_path();
+    let conn = deck_core::store::open(&db)?;
+    deck_core::store::ensure_profile_schema(&conn)?;
+    deck_core::store::duplicate_profile(&conn, source, new_name)
+}
+
+/// Raw provenance JSON for a profile (baseline + why), or None.
+pub fn profile_provenance(name: &str) -> anyhow::Result<Option<String>> {
+    let db = deck_core::store::default_db_path();
+    let conn = deck_core::store::open(&db)?;
+    deck_core::store::ensure_profile_schema(&conn)?;
+    deck_core::store::profile_provenance(&conn, name)
 }
 
 /// Load a FULL saved loadout by name — the editor needs every field (model,

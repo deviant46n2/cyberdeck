@@ -153,7 +153,7 @@ pub fn bringup_start(
         };
 
         // 3. Save + apply ---------------------------------------------------
-        if let Err(e) = save_and_apply(&app2, &p, &line) {
+        if let Err(e) = save_and_apply(&app2, &p, fit.model_vram_mb, &line) {
             finish(BringupResult {
                 ok: false,
                 summary: format!("apply failed: {e}"),
@@ -195,6 +195,7 @@ pub fn bringup_start(
 pub(crate) fn save_and_apply(
     app2: &tauri::AppHandle,
     p: &Profile,
+    model_vram_mb: u64,
     line: &impl Fn(String),
 ) -> anyhow::Result<()> {
     let _ = app2.emit(
@@ -206,7 +207,28 @@ pub(crate) fn save_and_apply(
     let db = deck_core::store::default_db_path();
     let conn = deck_core::store::open(&db)?;
     deck_core::store::ensure_profile_schema(&conn)?;
-    deck_core::store::upsert_profile(&conn, p)?;
+    // Record the AUTO baseline + why so the Tune surface can mark fields
+    // AUTO vs user OVERRIDE after edits (see library::diff_fields).
+    let runtime = p.runtime_key();
+    let vram = deck_core::fit::hw_vram().unwrap_or(0);
+    let offload = p.ft_backend.as_deref() == Some("offload")
+        || deck_engines::manifest_for(p).map(|m| m.is_offload()).unwrap_or(false);
+    let prov = deck_core::library::Provenance {
+        runtime_id: runtime.clone(),
+        artifact_path: p.model.clone(),
+        vram_mb: vram,
+        why: deck_core::library::explain_fit(
+            &runtime,
+            p.ctx_size as u64,
+            "Q4",
+            model_vram_mb,
+            vram,
+            offload,
+        ),
+        baseline: p.clone(),
+        overridden_fields: Vec::new(),
+    };
+    deck_core::store::save_profile_derived(&conn, p, &prov)?;
     deck_core::store::ensure_resident_schema(&conn).ok();
     let runtime = p.runtime_key();
     let _ = deck_core::store::set_resident(&conn, &runtime, &p.name, Some(true));
@@ -527,7 +549,8 @@ pub fn apply_cached_profile(
         };
 
         // 1. Save + apply (skip derive + verify — already done) -----
-        if let Err(e) = save_and_apply(&app2, &profile2, &line) {
+        let cached_vram = fit.as_ref().map(|f| f.model_vram_mb).unwrap_or(0);
+        if let Err(e) = save_and_apply(&app2, &profile2, cached_vram, &line) {
             finish(BringupResult {
                 ok: false,
                 summary: format!("apply failed: {e}"),
