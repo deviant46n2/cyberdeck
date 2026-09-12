@@ -18,6 +18,7 @@ pub(crate) mod lifecycle;
 pub(crate) mod list;
 pub(crate) mod profile;
 pub(crate) mod scan;
+pub(crate) mod swap;
 pub(crate) mod use_cmd;
 pub(crate) mod experiment;
 pub(crate) mod hardware;

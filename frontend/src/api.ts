@@ -538,6 +538,27 @@ export interface FitCandidate {
 export const fitCandidates = (modelPath: string) =>
   invoke<FitCandidate[]>("fit_candidates", { modelPath });
 
+/** Transactional runtime/config hot-swap report. `dryRun` verifies only; a
+ * swap only happens when `swapped` is true (false = live instance untouched). */
+export interface HotSwapReport {
+  from_runtime: string;
+  to_runtime: string;
+  verified: boolean;
+  swapped: boolean;
+  rolled_back: boolean;
+  ctx: number;
+  tps: number | null;
+  summary: string;
+}
+
+export const hotSwap = (p: {
+  modelPath: string;
+  to: string;
+  ctx?: number;
+  fast?: boolean;
+  dryRun?: boolean;
+}) => invoke<HotSwapReport>("hot_swap", p);
+
 export const dedupDelete = (identity: string, deleteFile: boolean) =>
   invoke<number>("dedup_delete", { identity, deleteFile });
 

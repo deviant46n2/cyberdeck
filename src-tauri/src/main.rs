@@ -595,6 +595,21 @@ fn fit_candidates(model_path: String) -> Result<Vec<deck_core::fitplan::FitCandi
     deck_tauri::fit_candidates(&model_path).map_err(|e| e.to_string())
 }
 
+/// Transactional runtime/config hot-swap. `dry_run` verifies only.
+#[tauri::command]
+async fn hot_swap(
+    model_path: String,
+    to: String,
+    ctx: Option<u32>,
+    fast: bool,
+    dry_run: bool,
+) -> Result<deck_tauri::HotSwapReport, String> {
+    blocking(move || {
+        deck_tauri::hot_swap(&model_path, &to, ctx, fast, dry_run).map_err(|e| e.to_string())
+    })
+    .await
+}
+
 #[tauri::command]
 fn list_scan_dirs() -> Result<Vec<String>, String> {
     deck_tauri::list_scan_dirs().map_err(|e| e.to_string())
@@ -785,6 +800,7 @@ fn main() {
             storage_reconcile,
             runtime_list,
             fit_candidates,
+            hot_swap,
             dedup_delete,
             list_scan_dirs,
             add_scan_dir,

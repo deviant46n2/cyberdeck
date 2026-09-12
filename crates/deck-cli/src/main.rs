@@ -250,6 +250,25 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Transactionally move a running model to another runtime/config:
+    /// verify the replacement on its test port, then commit, with rollback.
+    Swap {
+        /// Model file whose saved config should be replaced
+        #[arg(long)]
+        model: PathBuf,
+        /// Target runtime id (builtin or custom manifest)
+        #[arg(long)]
+        to: String,
+        /// Context override for the target (default: fit-derived max)
+        #[arg(long)]
+        ctx: Option<u32>,
+        /// Skip test-port verification (riskier — no safety net)
+        #[arg(long, default_value_t = false)]
+        fast: bool,
+        /// Verify + show the plan but do NOT stop/start anything
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -808,6 +827,7 @@ fn main() -> Result<()> {
         Commands::Storage { json } => cmd::lifecycle::storage(json),
         Commands::Runtimes { json } => cmd::lifecycle::runtimes(json),
         Commands::MakeItWork { model, json } => cmd::lifecycle::make_it_work(model, json),
+        Commands::Swap { model, to, ctx, fast, dry_run } => cmd::swap::run(model, to, ctx, fast, dry_run),
         Commands::Promote => cmd::promote::run(),
         Commands::Dirs { action } => match action {
             DirsCmd::List { json } => cmd::dirs::list(json),

@@ -7,27 +7,12 @@ use anyhow::Result;
 
 use super::with_profiles_db;
 
-/// Resolve a target to (derived loadout, test port): builtin engine or a
-/// custom runtime manifest. Keeps the CLI door at parity with the app's ⚡ path.
+/// Resolve a target to (derived loadout, test port) via the shared dispatcher.
 fn plan(
     model: &std::path::Path,
     engine: &str,
 ) -> Result<(deck_core::profile::DerivedLoadout, u16)> {
-    if let Some(e) = deck_core::profile::Engine::parse(engine) {
-        let d = deck_core::profile::derive_loadout(model, e).map_err(anyhow::Error::msg)?;
-        return Ok((d, e.test_port()));
-    }
-    let m = deck_core::runtime::all_manifests()
-        .into_iter()
-        .find(|m| m.id == engine)
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "unknown engine/runtime '{engine}' (builtins: llamacpp|freetoken|ollama; or a manifest in ~/.local/share/cyberdeck/runtimes)"
-            )
-        })?;
-    let test_port = m.test_port;
-    let d = deck_core::profile::derive_custom_loadout(model, &m).map_err(anyhow::Error::msg)?;
-    Ok((d, test_port))
+    deck_core::fitplan::plan_for_runtime(model, engine).map_err(anyhow::Error::msg)
 }
 
 pub(crate) fn run(

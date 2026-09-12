@@ -29,6 +29,7 @@ mod recommend;
 mod scan;
 pub mod sessions;
 mod settings;
+pub mod swap;
 mod test;
 mod workflow;
 mod workloads;
@@ -133,6 +134,7 @@ pub use lifecycle::{
     RemovalReport, RuntimeRow, StorageReport, fit_candidates, forget_model, remove_model_files,
     runtime_list, storage_reconcile,
 };
+pub use swap::{HotSwapReport, hot_swap};
 pub use test::{
     TestLine, TestPhase, TestResult, TweakResult, test_profile, test_profile_tweaked, test_stop,
 };

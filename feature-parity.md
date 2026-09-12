@@ -171,6 +171,20 @@ KV-qtype, MoE cache, or reasoning flags by hand.
 Net effect: **model + engine menu → working chat on the best-max-ctx config in
 a few seconds, with a benchmark row to prove it.** No flag surfing.
 
+### Hot-swap: change runtime/config without losing the working instance
+
+`deck swap --model <path> --to <runtime> [--ctx N] [--dry-run]` (and the app's
+`hot_swap` command) moves a running model to another runtime or config under a
+transaction: the candidate is first **verified on its own test port while the
+live instance keeps serving** (verify-before-kill), then installed and started,
+and if it fails its live health check the previous profile is **reinstalled and
+restarted (rollback)**. A candidate that fails verification is rejected without
+the live instance ever being touched — `swapped == false` means untouched, never
+half-applied. The ctx ladder is only walked for OOM/TIMEOUT; a CRASH or spawn
+ERROR fails fast because a smaller context cannot fix it. Logic lives in
+`deck-engines::swap` with injected side effects so the transaction is tested
+without systemd.
+
 ### Flavors: one model file, many named loadouts (2026-08-30)
 
 The vault and the loadout registry used to be two unrelated truths: `models`

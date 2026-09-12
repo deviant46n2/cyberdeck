@@ -170,6 +170,23 @@ pub fn get_profile(conn: &Connection, name: &str) -> Result<Option<crate::profil
     Ok(None)
 }
 
+/// The saved profile currently bound to (or merely matching) a model path —
+/// resident binding first, then any profile for that model. Shared by the CLI
+/// and the app so both doors resolve "what is this model running as" alike.
+pub fn current_profile_for_model(
+    conn: &Connection,
+    model: &str,
+) -> Result<Option<crate::profile::Profile>> {
+    let profiles = list_profiles(conn)?;
+    let residents = crate::store::list_residents(conn)?;
+    for r in &residents {
+        if let Some(p) = profiles.iter().find(|p| p.name == r.profile && p.model == model) {
+            return Ok(Some(p.clone()));
+        }
+    }
+    Ok(profiles.into_iter().find(|p| p.model == model))
+}
+
 pub fn delete_profile(conn: &Connection, name: &str) -> Result<()> {
     conn.execute("DELETE FROM profiles WHERE name = ?1", [name])?;
     Ok(())

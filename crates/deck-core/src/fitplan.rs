@@ -115,6 +115,30 @@ pub fn recommend(meta: &ModelMeta, runtimes: &[RuntimeManifest], vram_mb: u64) -
     candidates_for(meta, runtimes, vram_mb).into_iter().next()
 }
 
+/// Resolve a runtime id (builtin engine name or custom manifest id) into a
+/// derived loadout + its dedicated test port. The single derive dispatcher the
+/// app and CLI bringup/swap doors share — no door re-implements the dispatch.
+pub fn plan_for_runtime(
+    model: &std::path::Path,
+    runtime_id: &str,
+) -> Result<(crate::profile::DerivedLoadout, u16), String> {
+    if let Some(e) = crate::profile::Engine::parse(runtime_id) {
+        let d = crate::profile::derive_loadout(model, e)?;
+        return Ok((d, e.test_port()));
+    }
+    let m = crate::runtime::all_manifests()
+        .into_iter()
+        .find(|m| m.id == runtime_id)
+        .ok_or_else(|| {
+            format!(
+                "unknown engine/runtime '{runtime_id}' (builtins: llamacpp|freetoken|ollama; or a manifest in ~/.local/share/cyberdeck/runtimes)"
+            )
+        })?;
+    let test_port = m.test_port;
+    let d = crate::profile::derive_custom_loadout(model, &m)?;
+    Ok((d, test_port))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

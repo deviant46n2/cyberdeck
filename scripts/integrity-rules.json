@@ -54,9 +54,15 @@
       },
       {
         "path": "crates/deck-core/src/store/mod.rs",
-        "lines": 495,
+        "lines": 590,
         "kind": "accepted",
-        "reason": "Connection plumbing (open/schema_version) + the models index + prune + engine-resident store + the test block of the split store module; every domain table (releases/hw/workloads/settings/bench/engine_bin/profiles/residents) lives in its own per-table submodule re-exported here per the ROADMAP refactor table, so the flat `store::*` caller surface is unchanged. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
+        "reason": "Connection plumbing (open/schema_version) + the models index + prune + engine-resident store + ensure_column + the test block of the split store module; every domain table (releases/hw/workloads/settings/bench/engine_bin/profiles/residents) lives in its own per-table submodule re-exported here per the ROADMAP refactor table, so the flat `store::*` caller surface is unchanged. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
+      },
+      {
+        "path": "crates/deck-core/src/store/profiles.rs",
+        "lines": 316,
+        "kind": "accepted",
+        "reason": "Loadout persistence domain: profiles table + model_id linking/backfill, origin/provenance, current-profile resolution, and the ensure_* migrations. One cohesive per-table store concern carved per the ROADMAP refactor table (run history lives in store/runs.rs); just over the soft heuristic from dense docs, not a seam. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
       },
       {
         "path": "crates/deck-core/src/store/bench.rs",

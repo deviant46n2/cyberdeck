@@ -31,6 +31,20 @@ pub fn health_wait(host: &str, port: u16, timeout: Duration) -> bool {
     false
 }
 
+/// Polls until the engine answers on ANY known liveness endpoint (/health,
+/// /v1/models, /api/tags) or the timeout elapses. Used by transactional swap
+/// so a custom runtime that exposes only an OpenAI surface still counts as up.
+pub fn health_wait_any(host: &str, port: u16, timeout: Duration) -> bool {
+    let start = Instant::now();
+    while start.elapsed() < timeout {
+        if health_ok_any(host, port) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    false
+}
+
 /// Fast liveness check against the engine's /health endpoint. Returns false on
 /// any error or non-200 (including connection refused). Used by the HUD status
 /// pills so the UI can show which engines are live without blocking.
@@ -324,6 +338,13 @@ pub fn spawn_and_wait(
     }
 }
 
+/// Only memory pressure (OOM) or a slow load (TIMEOUT) can be relieved by a
+/// smaller context. CRASH and ERROR are deterministic — walking the ladder
+/// just repeats the failure. Extracted so the policy is unit-testable.
+pub fn should_walk_ladder(verdict: &str) -> bool {
+    matches!(verdict, "OOM" | "TIMEOUT")
+}
+
 /// Headlessly verify a draft loadout on a dedicated test port **without
 /// touching the live service**, watching for OOM and health. If the max-ctx
 /// candidate OOMs or fails to serve, walks the profile's ctx ladder down and
@@ -356,7 +377,18 @@ pub fn verify_on_test_port(p: &Profile, test_port: u16, timeout: Duration) -> Br
                 };
             }
             Err((verdict, summary)) => {
-                eprintln!("[bringup] ctx={ctx} {verdict}: {summary} — walking ladder down");
+                eprintln!("[bringup] ctx={ctx} {verdict}: {summary}");
+                if !should_walk_ladder(&verdict) {
+                    // A crash / spawn error cannot be fixed by lowering ctx —
+                    // fail fast instead of thrashing the ladder.
+                    return BringupOutcome {
+                        ctx,
+                        verdict: verdict.clone(),
+                        summary: format!("{summary} (ctx reduction cannot fix this)"),
+                        tok_per_sec: None,
+                    };
+                }
+                eprintln!("[bringup] walking ladder down");
                 continue;
             }
         }
@@ -389,6 +421,14 @@ mod tests {
         let text = "llamacpp:tokens_predicted_seconds_total 14.742\n\
                     llamacpp:prompt_tokens_seconds 980.0\n";
         assert_eq!(parse_tps(text), None);
+    }
+
+    #[test]
+    fn only_memory_and_slow_load_warrant_a_lower_ctx() {
+        assert!(should_walk_ladder("OOM"));
+        assert!(should_walk_ladder("TIMEOUT"));
+        assert!(!should_walk_ladder("CRASH"));
+        assert!(!should_walk_ladder("ERROR"));
     }
 
     #[test]

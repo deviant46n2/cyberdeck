@@ -24,6 +24,7 @@ pub mod unmanaged;
 pub mod external;
 
 pub mod status;
+pub mod swap;
 
 pub mod autotune;
 pub mod compare;
@@ -36,7 +37,8 @@ pub mod workflow;
 
 pub use health::{
     BringupOutcome, OOM_MARKERS, detect_engine_version, fetch_metrics, health_ok, health_ok_any,
-    health_wait, measure_generation_tps, parse_tps, spawn_and_wait, verify_on_test_port,
+    health_wait, health_wait_any, measure_generation_tps, parse_tps, should_walk_ladder,
+    spawn_and_wait, verify_on_test_port,
 };
 pub use inference::run_prompt;
 pub use systemd::{

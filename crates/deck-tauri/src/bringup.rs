@@ -102,17 +102,8 @@ fn plan_for(
     model: &str,
     engine_s: &str,
 ) -> anyhow::Result<(deck_core::profile::DerivedLoadout, u16)> {
-    if let Some(e) = Engine::parse(engine_s) {
-        let d = deck_core::profile::derive_loadout(model, e).map_err(anyhow::Error::msg)?;
-        return Ok((d, e.test_port()));
-    }
-    let m = deck_core::runtime::all_manifests()
-        .into_iter()
-        .find(|m| m.id == engine_s)
-        .ok_or_else(|| anyhow::anyhow!("unknown engine/runtime '{engine_s}'"))?;
-    let test_port = m.test_port;
-    let d = deck_core::profile::derive_custom_loadout(model, &m).map_err(anyhow::Error::msg)?;
-    Ok((d, test_port))
+    deck_core::fitplan::plan_for_runtime(std::path::Path::new(model), engine_s)
+        .map_err(anyhow::Error::msg)
 }
 
 pub fn bringup_start(
