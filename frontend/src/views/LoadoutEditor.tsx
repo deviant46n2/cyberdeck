@@ -80,6 +80,13 @@ export default function LoadoutEditor({
   const [fitErr, setFitErr] = useState("");
   const [unit, setUnit] = useState("");
   const [msg, setMsg] = useState("");
+  // AUTO vs USER OVERRIDE provenance for the loaded config (baseline + why).
+  const [prov, setProv] = useState<{
+    origin: string;
+    why: string;
+    overridden_fields: string[];
+    baseline: Record<string, unknown>;
+  } | null>(null);
 
   const [phase, setPhase] = useState("");
   const [log, setLog] = useState<string[]>([]);
@@ -133,6 +140,39 @@ export default function LoadoutEditor({
     return () => clearTimeout(t);
   }, [p, offload]);
 
+  const loadProv = async (name: string) => {
+    if (!name.trim()) {
+      setProv(null);
+      return;
+    }
+    try {
+      const raw = await api.profileProvenance(name);
+      if (!raw) {
+        setProv(null);
+        return;
+      }
+      const j = JSON.parse(raw) as {
+        why?: string;
+        overridden_fields?: string[];
+        baseline?: Record<string, unknown>;
+      };
+      const fields = j.overridden_fields ?? [];
+      setProv({
+        origin: fields.length ? "override" : "auto",
+        why: j.why ?? "",
+        overridden_fields: fields,
+        baseline: j.baseline ?? {},
+      });
+    } catch {
+      setProv(null);
+    }
+  };
+
+  useEffect(() => {
+    void loadProv(initial.name);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initial.name]);
+
   const testRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const ph = listen<{ phase: string }>("test-phase", (e) => setPhase(e.payload.phase));
@@ -160,8 +200,13 @@ export default function LoadoutEditor({
       return;
     }
     try {
-      await api.saveProfile(p);
-      setMsg(`saved '${p.name}'`);
+      const fields = await api.saveProfile(p);
+      setMsg(
+        fields.length
+          ? `saved '${p.name}' — overrides: ${fields.join(", ")}`
+          : `saved '${p.name}' (matches AUTO baseline)`
+      );
+      void loadProv(p.name);
       onSaved();
     } catch (e) {
       setMsg(`save failed: ${String(e)}`);
@@ -217,6 +262,25 @@ export default function LoadoutEditor({
           <div className="tty-dim" style={{fontSize:10, marginBottom:10, letterSpacing:"0.5px"}}>
             every flag editable · live fit estimate · <span style={{color:"var(--warn)"}}>TEST LOAD</span> probes for OOM on a test port
           </div>
+
+          {/* AUTO vs USER OVERRIDE provenance strip */}
+          {prov && (
+            <div style={{fontSize:10, marginBottom:10, padding:"6px 8px", border:"1px solid var(--dim)", borderRadius:4}}>
+              <span style={{color: prov.origin === "override" ? "var(--warn)" : "var(--pass)", fontWeight:"bold"}}>
+                [{prov.origin === "override" ? "USER OVERRIDE" : "AUTO"}]
+              </span>
+              {prov.why && <span className="dim"> {prov.why}</span>}
+              {prov.overridden_fields.length > 0 && (
+                <div style={{marginTop:4}}>
+                  {prov.overridden_fields.map((f) => (
+                    <div key={f}>
+                      • {f}: auto {JSON.stringify(prov.baseline[f])} → <b>{JSON.stringify((p as unknown as Record<string, unknown>)[f])}</b>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* engine switch + advanced */}
           <div className="row" style={{gap:8, marginBottom:10}}>

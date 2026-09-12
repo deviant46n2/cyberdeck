@@ -215,7 +215,9 @@ fn backfill_model_ids(conn: &Connection) -> Result<()> {
 
 pub fn upsert_profile(conn: &Connection, profile: &crate::profile::Profile) -> Result<()> {
     let body = serde_json::to_string(profile)?;
-    let engine = profile.engine.store_id();
+    // The runtime key (custom manifest id when bound) is the joinable identity;
+    // the sentinel `engine` enum is a launch detail, not the record's name.
+    let engine = profile.runtime_key();
     let model_id = ensure_model_indexed(conn, &profile.model)?;
     conn.execute(
         "INSERT INTO profiles (name, engine, body, model_id) VALUES (?1,?2,?3,?4)

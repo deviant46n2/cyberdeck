@@ -256,6 +256,14 @@ recompile. Placeholders are validated at load time so a typo names the file and
 the bad key. See `DECISIONS.md` "Runtime Adapters — Manifests Over Engine
 Matches".
 
+Registration is not installation: every registry row carries install status
+(`deck runtimes`, app `runtime_list`) resolved from the configured override,
+manifest `bin_candidates`, and PATH — no spawning. Fit candidates carry the
+same flag, so ⚡ Make-it-work refuses to recommend a backend with no binary
+instead of failing on a missing executable. `<bin> --version` stays strictly
+opt-in (`deck runtimes --probe`, `runtime_probe_version`), because a manifest
+pointing at a daemon would otherwise start serving.
+
 Build as: `deck bringup --model <path> --engine freetoken [--dedicated-port]`
 CLI first (headless-tested like everything else), then a HUD/Chat **"LOAD"
 button** that calls it.

@@ -6,6 +6,7 @@ import * as br from "../lib/br";
 import { useEngineList } from "../lib/engines";
 import LoadoutEditor, { defaultProfile } from "./LoadoutEditor";
 import PortMap from "./PortMap";
+import StoragePanel from "./StoragePanel";
 
 interface VaultProps {
   models: api.ModelRow[];
@@ -513,10 +514,65 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
         return;
       }
       const best = cands[0];
-      if (!confirm(`⚡ Make it work?\n\n${best.display} [${best.status}]\nctx ${best.max_ctx.toLocaleString()} · ${best.kv_label} KV\n\n${best.why}\n\nDerive → verify on test port → go live?`)) return;
+      if (!best.installed) {
+        alert(
+          `${best.display} is the best fit but is NOT INSTALLED (no binary resolves on this machine).\n\n` +
+          `Install the runtime or pick an installed backend first — launching now would fail on a missing executable.`
+        );
+        return;
+      }
+      const evidence = best.tested
+        ? `\nTESTED ${best.tested.tps.toFixed(1)} tok/s (${best.tested.kind}) @ctx${best.tested.ctx}\n`
+        : `\nEstimated only — never measured on this machine.\n`;
+      if (!confirm(`⚡ Make it work?\n\n${best.display} [${best.status}]\nctx ${best.max_ctx.toLocaleString()} · ${best.kv_label} KV${evidence}\n${best.why}\n\nDerive → verify on test port → go live?`)) return;
       void br.startBringup(path, best.runtime_id as api.EngineId);
     } catch (e) {
       alert(`Fit check failed: ${String(e)}`);
+    }
+  };
+
+  // Measure candidate configs so fit shows TESTED, not just estimated. One
+  // trial per compatible runtime; each trial loads the model, so confirm first.
+  const discoverModel = async (path: string) => {
+    if (!confirm(`Measure candidate configs for this model?\n\nOne trial per compatible runtime (each loads the model on its test port). This can take minutes for large models.`)) return;
+    try {
+      const rep = await api.discover({ modelPath: path });
+      alert(`${rep.summary}\n\n${rep.trials.map((t) => `${t.display} @ctx${t.ctx}: ${t.tps != null ? `${t.tps.toFixed(1)} tok/s (${t.kind})` : t.boot_verdict}`).join("\n")}`);
+      void onReload();
+    } catch (e) {
+      alert(`Discovery failed: ${String(e)}`);
+    }
+  };
+
+  // Transactional runtime swap: pick an installed compatible backend, verify
+  // it on its test port (dry-run), then commit with rollback on failure.
+  const swapRuntime = async (path: string) => {
+    try {
+      const cands = await api.fitCandidates(path);
+      const installed = cands.filter((c) => c.installed);
+      if (!installed.length) {
+        alert(`No installed compatible runtime for this model.`);
+        return;
+      }
+      const list = installed.map((c, i) => `${i}: ${c.display} (ctx ${c.max_ctx.toLocaleString()})`).join("\n");
+      const sel = prompt(`Swap to which runtime?\n\n${list}\n\nEnter number:`);
+      if (sel === null) return;
+      const target = installed[Number(sel)];
+      if (!target) {
+        alert(`Invalid selection.`);
+        return;
+      }
+      const dry = await api.hotSwap({ modelPath: path, to: target.runtime_id, dryRun: true });
+      if (!dry.verified) {
+        alert(`Swap aborted — candidate rejected:\n\n${dry.summary}\n\nLive instance untouched.`);
+        return;
+      }
+      if (!confirm(`Swap to ${target.display}?\n\n${dry.summary}\n\nThe live instance is replaced only after the candidate serves (rollback on failure).`)) return;
+      const res = await api.hotSwap({ modelPath: path, to: target.runtime_id });
+      alert(res.summary);
+      void onReload();
+    } catch (e) {
+      alert(`Swap failed: ${String(e)}`);
     }
   };
 
@@ -619,6 +675,8 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
       </div>
 
       <PortMap onChanged={() => setReloadTick((t) => t + 1)} />
+
+      <StoragePanel onChanged={() => setReloadTick((t) => t + 1)} />
 
       {extServices.length > 0 && (
         <div className="card" style={{ marginBottom: 16 }}>
@@ -779,6 +837,22 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
                           ⚡
                         </button>
                         <TestCell engines={localEngines} modelPath={m.path} onTest={test} />
+                        <button
+                          className="ghost"
+                          style={{ fontSize: 9, padding: "3px 7px", borderColor: "var(--cyan)", color: "var(--cyan)" }}
+                          onClick={() => swapRuntime(m.path)}
+                          title="swap runtime: verify a replacement on its test port, then commit with rollback"
+                        >
+                          ⇄ swap
+                        </button>
+                        <button
+                          className="ghost"
+                          style={{ fontSize: 9, padding: "3px 7px" }}
+                          onClick={() => discoverModel(m.path)}
+                          title="measure candidate configs so fit shows TESTED (one load per runtime)"
+                        >
+                          ◉ test
+                        </button>
                         <button
                           className="ghost"
                           style={{ fontSize: 9, padding: "3px 7px" }}

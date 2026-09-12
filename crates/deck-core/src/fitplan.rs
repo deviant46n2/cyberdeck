@@ -46,6 +46,32 @@ pub struct FitCandidate {
     /// Empirical runs beat estimates. None = estimated only, never tested.
     #[serde(default)]
     pub tested: Option<TestedEvidence>,
+    /// A binary resolves on this machine. False = the recommendation is
+    /// planning-only; launching would fail on a missing executable.
+    #[serde(default)]
+    pub installed: bool,
+    /// Resolved executable path, when installed.
+    #[serde(default)]
+    pub bin: Option<String>,
+}
+
+/// Mark each candidate with whether its runtime is actually installed (and
+/// where). Called at the door, which owns the DB — the pure planner leaves
+/// `installed: false` so an estimate never claims installability.
+pub fn attach_availability(
+    conn: &rusqlite::Connection,
+    path_dirs: &[std::path::PathBuf],
+    cands: &mut [FitCandidate],
+) {
+    let manifests = crate::runtime::all_manifests();
+    for c in cands {
+        if let Some(m) = manifests.iter().find(|x| x.id == c.runtime_id) {
+            let ov = crate::store::get_engine_bin(conn, &m.id).ok().flatten();
+            let a = crate::runtime::availability_for(m, ov.as_deref(), path_dirs);
+            c.installed = a.installed;
+            c.bin = a.bin.map(|p| p.display().to_string());
+        }
+    }
 }
 
 /// Climb 2K→256K in 2K steps and keep the largest ctx whose verdict is
@@ -110,6 +136,8 @@ pub fn candidates_for(
                 offload,
             ),
             tested: None,
+            installed: false,
+            bin: None,
         });
     }
     // Prefer the largest viable context; tie-break toward stable runtimes

@@ -42,7 +42,7 @@
       },
       {
         "path": "crates/deck-core/src/runtime.rs",
-        "lines": 338,
+        "lines": 465,
         "kind": "accepted",
         "reason": "The runtime manifest schema + template rendering is one cohesive contract: manifest fields, ConfigParam, and the argv/env substitution they drive must change together (a template placeholder and its declared param are a single invariant). Registry discovery (builtins + custom files) is already split into runtime_registry.rs. Just over the soft heuristic with dense docs, not a seam. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
       },

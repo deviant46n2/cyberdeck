@@ -15,7 +15,7 @@ pub(crate) fn run(name: String, dry_run: bool, managed: bool, resident: bool) ->
     // Record what this slot serves, even in dry-run, so the PORT MAP reflects
     // reality. `resident` marks it as a coexisting resident rather than a swap.
     if !dry_run {
-        deck_core::store::set_resident(&conn, p.engine.store_id(), &name, Some(resident))?;
+        deck_core::store::set_resident(&conn, &p.runtime_key(), &name, Some(resident))?;
     }
     println!(
         "applying loadout '{}' (alias={}, port={}){}{}",

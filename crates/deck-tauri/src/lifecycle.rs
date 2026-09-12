@@ -126,23 +126,59 @@ pub struct RuntimeRow {
     pub formats: Vec<String>,
     pub capabilities: Vec<String>,
     pub custom: bool,
+    /// A binary resolves on this machine (no spawning — filesystem/PATH only).
+    pub installed: bool,
+    pub bin: Option<String>,
 }
 
-/// Merged runtime registry (builtins + `~/.local/share/cyberdeck/runtimes/*.json`).
+/// Merged runtime registry (builtins + `~/.local/share/cyberdeck/runtimes/*.json`),
+/// each row annotated with whether it is actually installed.
 pub fn runtime_list() -> Vec<RuntimeRow> {
-    deck_core::runtime::list_runtimes()
+    let builtin: std::collections::HashSet<String> = deck_core::profile::Engine::all()
         .into_iter()
-        .map(|r| RuntimeRow {
-            id: r.id,
-            display: r.display,
-            status: r.status,
-            default_port: r.default_port,
-            test_port: r.test_port,
-            formats: r.formats,
-            capabilities: r.capabilities,
-            custom: r.custom,
+        .map(|e| e.store_id().to_string())
+        .collect();
+    let dirs = deck_engines::availability::system_path_dirs();
+    let conn = deck_core::store::open(&deck_core::store::default_db_path()).ok();
+    deck_core::runtime::all_manifests()
+        .into_iter()
+        .map(|m| {
+            let ov = conn
+                .as_ref()
+                .and_then(|c| deck_core::store::get_engine_bin(c, &m.id).ok().flatten());
+            let a = deck_engines::availability::availability_for(&m, ov.as_deref(), &dirs);
+            RuntimeRow {
+                id: m.id.clone(),
+                display: m.display.clone(),
+                status: m.status.tag().to_string(),
+                default_port: m.default_port,
+                test_port: m.test_port,
+                formats: m.formats.clone(),
+                capabilities: m.capabilities.clone(),
+                custom: !builtin.contains(&m.id),
+                installed: a.installed,
+                bin: a.bin.map(|p| p.display().to_string()),
+            }
         })
         .collect()
+}
+
+/// Explicit `<bin> --version` probe for one runtime. Opt-in only: never called
+/// implicitly, because a manifest pointing at a daemon could start serving.
+pub fn runtime_probe_version(id: &str) -> anyhow::Result<Option<String>> {
+    let m = deck_core::runtime::all_manifests()
+        .into_iter()
+        .find(|x| x.id == id)
+        .ok_or_else(|| anyhow::anyhow!("unknown runtime '{id}'"))?;
+    let db = deck_core::store::default_db_path();
+    let conn = deck_core::store::open(&db)?;
+    let ov = deck_core::store::get_engine_bin(&conn, &m.id).ok().flatten();
+    let dirs = deck_engines::availability::system_path_dirs();
+    let Some(bin) = deck_engines::availability::find_bin(&m.bin_candidates, &dirs, ov.as_deref())
+    else {
+        return Ok(None);
+    };
+    Ok(deck_engines::availability::probe_version(&bin))
 }
 
 /// Fit candidates for one artifact across all compatible runtimes, best first.
@@ -161,13 +197,20 @@ pub fn fit_candidates(model_path: &str) -> anyhow::Result<Vec<deck_core::fitplan
         vram,
     );
     // Empirical beats estimated: attach the freshest successful measurement
-    // per (artifact, runtime) so the UI can show TESTED instead of a guess.
+    // per (artifact, runtime) so the UI can show TESTED instead of a guess —
+    // and mark what is actually installed so a recommendation can never point
+    // at a missing binary.
     if let Ok(conn) = deck_core::store::open(&deck_core::store::default_db_path()) {
         for c in &mut cands {
             c.tested = deck_core::store::latest_tested(&conn, model_path, &c.runtime_id)
                 .ok()
                 .flatten();
         }
+        deck_core::fitplan::attach_availability(
+            &conn,
+            &deck_core::runtime::system_path_dirs(),
+            &mut cands,
+        );
     }
     Ok(cands)
 }

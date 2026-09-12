@@ -236,10 +236,14 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// List the runtime registry (builtins + custom manifests).
+    /// List the runtime registry (builtins + custom manifests) with install
+    /// status. `--probe` additionally runs `<bin> --version` (explicit: a
+    /// manifest pointing at a daemon would otherwise start serving).
     Runtimes {
         #[arg(long)]
         json: bool,
+        #[arg(long)]
+        probe: bool,
     },
     /// "Make it work" dry-run: rank compatible runtimes for a local model
     /// with max viable context + VRAM explanation. Launches nothing.
@@ -864,7 +868,7 @@ fn main() -> Result<()> {
         Commands::Forget { path } => cmd::lifecycle::forget(&path),
         Commands::RemoveFiles { paths } => cmd::lifecycle::remove_files(&paths),
         Commands::Storage { json } => cmd::lifecycle::storage(json),
-        Commands::Runtimes { json } => cmd::lifecycle::runtimes(json),
+        Commands::Runtimes { json, probe } => cmd::lifecycle::runtimes(json, probe),
         Commands::MakeItWork { model, json } => cmd::lifecycle::make_it_work(model, json),
         Commands::Discover { model, runtimes, variants, ctx, runs, max_tokens, json } => {
             cmd::discover::run(model, runtimes, variants, ctx, runs, max_tokens, json)

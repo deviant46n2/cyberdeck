@@ -336,3 +336,130 @@ pub use crate::runtime_registry::{
     all_manifests, builtin_manifests, custom_runtimes_dir, list_runtimes,
     load_custom_manifests, parse_manifest_file,
 };
+
+// ---------------------------------------------------------- availability
+//
+// Registration (a manifest exists) is not installation (a binary runs). These
+// resolvers answer the second question *without spawning anything*: an
+// executable is found from (1) the user's configured override, (2) the
+// manifest's `bin_candidates`, (3) PATH. They live in deck-core (pure domain)
+// so the fit planner and both doors share one implementation; the spawning
+// version probe lives in deck-engines.
+
+/// Resolve one backend executable, or nothing. Pure filesystem/PATH checks.
+pub fn find_bin(
+    candidates: &[String],
+    path_dirs: &[std::path::PathBuf],
+    engine_bin_override: Option<&str>,
+) -> Option<std::path::PathBuf> {
+    if let Some(o) = engine_bin_override
+        && let Some(p) = resolve_one(o, path_dirs)
+    {
+        return Some(p);
+    }
+    for c in candidates {
+        if let Some(p) = resolve_one(c, path_dirs) {
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// Resolve one candidate: an explicit path must exist as a file; a bare name
+/// is searched across the given dirs. PATH-only by design (no cwd surprises).
+fn resolve_one(candidate: &str, path_dirs: &[std::path::PathBuf]) -> Option<std::path::PathBuf> {
+    let p = std::path::Path::new(candidate);
+    if candidate.contains('/') || candidate.contains('\\') {
+        return p.is_file().then(|| p.to_path_buf());
+    }
+    for d in path_dirs {
+        let q = d.join(candidate);
+        if q.is_file() {
+            return Some(q);
+        }
+    }
+    None
+}
+
+/// This process's PATH split into dirs. Callers pass it to `find_bin` so tests
+/// inject temp dirs instead of touching the process environment.
+pub fn system_path_dirs() -> Vec<std::path::PathBuf> {
+    std::env::var_os("PATH")
+        .map(|v| std::env::split_paths(&v).collect())
+        .unwrap_or_default()
+}
+
+/// Installed = a binary resolves. No spawning.
+pub fn is_installed(
+    candidates: &[String],
+    path_dirs: &[std::path::PathBuf],
+    engine_bin_override: Option<&str>,
+) -> bool {
+    find_bin(candidates, path_dirs, engine_bin_override).is_some()
+}
+
+/// Per-runtime availability for list views and fit candidates.
+pub struct RuntimeAvailability {
+    pub id: String,
+    pub bin: Option<std::path::PathBuf>,
+    pub installed: bool,
+}
+
+/// Availability for one manifest. `engine_bin_override` is the configured
+/// `engine_bin` value for the runtime id (if any).
+pub fn availability_for(
+    manifest: &RuntimeManifest,
+    engine_bin_override: Option<&str>,
+    path_dirs: &[std::path::PathBuf],
+) -> RuntimeAvailability {
+    let bin = find_bin(&manifest.bin_candidates, path_dirs, engine_bin_override);
+    RuntimeAvailability {
+        id: manifest.id.clone(),
+        installed: bin.is_some(),
+        bin,
+    }
+}
+
+#[cfg(test)]
+mod availability_tests {
+    use super::*;
+
+    fn tmpbin(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+        let p = dir.join(name);
+        std::fs::write(&p, b"#!/bin/sh\necho v1\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&p).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&p, perms).unwrap();
+        }
+        p
+    }
+
+    #[test]
+    fn resolves_override_then_candidates_then_path() {
+        let base = std::env::temp_dir().join(format!("deck-avail-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let d1 = base.join("d1");
+        let d2 = base.join("d2");
+        std::fs::create_dir_all(&d1).unwrap();
+        std::fs::create_dir_all(&d2).unwrap();
+        let dirs = vec![d1.clone(), d2.clone()];
+        let over = tmpbin(&dirs[0], "custom-ft");
+        let cand = tmpbin(&dirs[1], "ft");
+
+        assert_eq!(
+            find_bin(&["ft".into()], &dirs, Some(over.to_str().unwrap())),
+            Some(over.clone())
+        );
+        assert_eq!(find_bin(&["ft".into()], &dirs, None), Some(cand.clone()));
+        assert_eq!(
+            find_bin(&[cand.to_str().unwrap().into()], &dirs, None),
+            Some(cand)
+        );
+        assert_eq!(find_bin(&["nope".into()], &dirs, None), None);
+        assert_eq!(find_bin(&["/no/such/bin".into()], &dirs, None), None);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+}

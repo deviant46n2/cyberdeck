@@ -35,12 +35,12 @@ fn deck_canonical_model() -> String {
         let _ = crate::store::ensure_profile_schema(&conn);
         if let Ok(Some(active)) = crate::store::active_profile(&conn) {
             if let Ok(Some(p)) = crate::store::get_profile(&conn, &active) {
-                return format!("{}/{}", p.engine.store_id(), p.alias);
+                return format!("{}/{}", p.runtime_key(), p.alias);
             }
         }
         if let Ok(profiles) = crate::store::list_profiles(&conn) {
             if let Some(p) = profiles.first() {
-                return format!("{}/{}", p.engine.store_id(), p.alias);
+                return format!("{}/{}", p.runtime_key(), p.alias);
             }
         }
     }

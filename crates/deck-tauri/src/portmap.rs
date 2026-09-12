@@ -21,8 +21,34 @@ pub struct PortMapSlot {
     pub fit_verdict: Option<String>,
 }
 
+/// Fit verdict for the profile bound to a slot, if any.
+fn fit_for(
+    profile_name: Option<&String>,
+    profile_by_name: &std::collections::HashMap<String, Profile>,
+) -> Option<String> {
+    profile_name.and_then(|name| {
+        profile_by_name.get(name).and_then(|p| {
+            // Run fit estimate for this profile's model + ctx
+            let model_path = std::path::PathBuf::from(&p.model);
+            fit(
+                model_path,
+                p.ctx_size,
+                0.5,   // kv_bytes default
+                p.n_gpu_layers,
+                None,  // kv_layers
+                1600,  // reserve
+                p.ft_backend.as_deref() == Some("offload"),
+            )
+            .ok()
+            .map(|f| f.verdict)
+        })
+    })
+}
+
 /// Build the full PORT MAP status. Probes are one-shot and non-blocking so a
-/// down engine fails fast instead of hanging the render.
+/// down engine fails fast instead of hanging the render. Builtin slots always
+/// appear; custom manifests appear when bound or installed, so a weird backend
+/// that is actually running is visible instead of invisible.
 pub fn port_map_status(host: &str) -> Vec<PortMapSlot> {
     let db = deck_core::store::default_db_path();
     let conn = deck_core::store::open(&db).ok();
@@ -45,7 +71,7 @@ pub fn port_map_status(host: &str) -> Vec<PortMapSlot> {
         .map(|p| (p.name.clone(), p))
         .collect();
 
-    deck_core::profile::Engine::all()
+    let mut slots: Vec<PortMapSlot> = deck_core::profile::Engine::all()
         .into_iter()
         .map(|e| {
             let d = e.descriptor();
@@ -59,58 +85,108 @@ pub fn port_map_status(host: &str) -> Vec<PortMapSlot> {
             };
             let r = by_engine.get(d.id);
             let profile_name = r.map(|r| r.profile.clone());
-            let fit_verdict = profile_name.as_ref().and_then(|name| {
-                profile_by_name.get(name).and_then(|p| {
-                    // Run fit estimate for this profile's model + ctx
-                    let model_path = std::path::PathBuf::from(&p.model);
-                    fit(
-                        model_path,
-                        p.ctx_size,
-                        0.5,   // kv_bytes default
-                        p.n_gpu_layers,
-                        None,  // kv_layers
-                        1600,  // reserve
-                        p.ft_backend.as_deref() == Some("offload"),
-                    )
-                    .ok()
-                    .map(|f| f.verdict)
-                })
-            });
             PortMapSlot {
                 engine: d.id.to_string(),
                 display: d.display.to_string(),
                 port: d.default_port,
-                profile: profile_name,
+                profile: profile_name.clone(),
                 resident: r.map(|r| r.resident).unwrap_or(false),
                 state,
-                fit_verdict,
+                fit_verdict: fit_for(profile_name.as_ref(), &profile_by_name),
             }
         })
-        .collect()
+        .collect();
+
+    // Custom backends: visible when bound to a profile or installed on disk.
+    let builtin_ids: std::collections::HashSet<String> = deck_core::profile::Engine::all()
+        .into_iter()
+        .map(|e| e.store_id().to_string())
+        .collect();
+    let dirs = deck_engines::availability::system_path_dirs();
+    for m in deck_core::runtime::all_manifests()
+        .into_iter()
+        .filter(|m| !builtin_ids.contains(&m.id))
+    {
+        let r = by_engine.get(&m.id);
+        let ov = conn
+            .as_ref()
+            .and_then(|c| deck_core::store::get_engine_bin(c, &m.id).ok().flatten());
+        let installed =
+            deck_engines::availability::availability_for(&m, ov.as_deref(), &dirs).installed;
+        if r.is_none() && !installed {
+            continue;
+        }
+        let profile_name = r.map(|r| r.profile.clone());
+        let (unit_name, port) = match profile_name
+            .as_ref()
+            .and_then(|n| profile_by_name.get(n))
+        {
+            Some(p) => (deck_engines::unit_name_for(p), p.port),
+            None => (m.unit_name.clone(), m.default_port),
+        };
+        let unit_active = deck_engines::is_active(&unit_name, m.is_system_service);
+        let port_up = deck_engines::health_ok_any(host, port);
+        let state = if port_up {
+            "up".to_string()
+        } else if unit_active {
+            "starting".to_string()
+        } else {
+            "down".to_string()
+        };
+        slots.push(PortMapSlot {
+            engine: m.id.clone(),
+            display: m.display.clone(),
+            port,
+            profile: profile_name.clone(),
+            resident: r.map(|r| r.resident).unwrap_or(false),
+            state,
+            fit_verdict: fit_for(profile_name.as_ref(), &profile_by_name),
+        });
+    }
+    slots
 }
 
-/// Stop one engine's unit and clear its port-map binding — the UI door to
+/// Resolve the systemd unit for a runtime id: the bound profile's resolved
+/// unit when one exists (custom-aware), else the builtin slot or the custom
+/// manifest's unit name.
+fn unit_for(conn: &rusqlite::Connection, runtime_id: &str) -> anyhow::Result<String> {
+    if let Ok(Some(r)) = deck_core::store::get_resident(conn, runtime_id)
+        && let Ok(Some(p)) = deck_core::store::get_profile(conn, &r.profile)
+    {
+        return Ok(deck_engines::unit_name_for(&p));
+    }
+    if let Some(e) = deck_core::profile::Engine::parse(runtime_id) {
+        return Ok(e.systemd_unit().to_string());
+    }
+    if let Some(m) = deck_core::runtime::all_manifests()
+        .into_iter()
+        .find(|m| m.id == runtime_id)
+    {
+        return Ok(m.unit_name);
+    }
+    anyhow::bail!("unknown engine/runtime '{runtime_id}'")
+}
+
+/// Stop one runtime's unit and clear its port-map binding — the UI door to
 /// `deck engines stop`. Other residents are untouched; that is the essence of
-/// multi-model residency.
+/// multi-model residency. Works for custom manifest ids, not just builtins.
 pub fn engine_stop(engine_id: &str) -> anyhow::Result<()> {
-    let eng = deck_core::profile::Engine::parse(engine_id)
-        .ok_or_else(|| anyhow::anyhow!("unknown engine '{engine_id}'"))?;
     let db = deck_core::store::default_db_path();
     let conn = deck_core::store::open(&db)?;
     deck_core::store::ensure_resident_schema(&conn)?;
-    deck_engines::stop(eng.systemd_unit())?;
-    deck_core::store::clear_resident(&conn, eng.store_id())?;
+    let unit = unit_for(&conn, engine_id)?;
+    deck_engines::stop(&unit)?;
+    deck_core::store::clear_resident(&conn, engine_id)?;
     Ok(())
 }
 
-/// Start the bound resident for one engine (LM-Studio-style one-click start).
-/// Uses the profile already bound in `residents`; fails if none.
+/// Start the bound resident for one runtime (LM-Studio-style one-click start).
+/// Uses the profile already bound in `residents`; fails if none. The id is a
+/// builtin store id or a custom manifest id — both key residents alike.
 pub fn engine_start(engine_id: &str) -> anyhow::Result<()> {
-    let eng = deck_core::profile::Engine::parse(engine_id)
-        .ok_or_else(|| anyhow::anyhow!("unknown engine '{engine_id}'"))?;
     let db = deck_core::store::default_db_path();
     let conn = deck_core::store::open(&db)?;
-    let r = deck_core::store::get_resident(&conn, eng.store_id())?.ok_or_else(|| anyhow::anyhow!("no profile bound to {engine_id} — use `deck use <profile> --resident` or load one first"))?;
+    let r = deck_core::store::get_resident(&conn, engine_id)?.ok_or_else(|| anyhow::anyhow!("no profile bound to {engine_id} — use `deck use <profile> --resident` or load one first"))?;
     let p = deck_core::store::get_profile(&conn, &r.profile)?.ok_or_else(|| anyhow::anyhow!("bound profile '{}' not found", r.profile))?;
     deck_engines::apply(&p, false)?;
     Ok(())

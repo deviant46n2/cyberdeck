@@ -530,9 +530,21 @@ export interface RuntimeRow {
   formats: string[];
   capabilities: string[];
   custom: boolean;
+  installed: boolean;
+  bin: string | null;
 }
 
 export const runtimeList = () => invoke<RuntimeRow[]>("runtime_list");
+export const runtimeProbeVersion = (id: string) =>
+  invoke<string | null>("runtime_probe_version", { id });
+
+export interface TestedEvidence {
+  tps: number;
+  kind: string;
+  prompt_tps: number | null;
+  ctx: number;
+  at: number;
+}
 
 export interface FitCandidate {
   runtime_id: string;
@@ -546,6 +558,9 @@ export interface FitCandidate {
   headroom_mb: number;
   verdict: string;
   why: string;
+  tested: TestedEvidence | null;
+  installed: boolean;
+  bin: string | null;
 }
 
 export const fitCandidates = (modelPath: string) =>

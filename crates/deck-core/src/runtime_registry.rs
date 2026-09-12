@@ -35,6 +35,13 @@ pub fn builtin_manifests() -> Vec<RuntimeManifest> {
             } else {
                 vec!["cuda".to_string(), "long-context".to_string()]
             };
+            // Default executable names, so availability ("is it installed?")
+            // stays generic instead of matching `Engine` at every call site.
+            let bin_candidates = match e {
+                Engine::LlamaCpp | Engine::UncensoredLlamaCpp => vec!["llama-server".to_string()],
+                Engine::FreeToken => vec!["ft".to_string()],
+                Engine::Ollama => vec!["ollama".to_string()],
+            };
             RuntimeManifest {
                 id: d.id.to_string(),
                 display: d.display.to_string(),
@@ -55,7 +62,7 @@ pub fn builtin_manifests() -> Vec<RuntimeManifest> {
                 unit_name: d.unit_name.to_string(),
                 is_system_service: d.is_system_service,
                 status: builtin_status(e),
-                bin_candidates: vec![],
+                bin_candidates,
                 configuration: vec![],
                 argv_template: vec![],
                 env: BTreeMap::new(),

@@ -132,7 +132,7 @@ pub use scan::{
 };
 pub use lifecycle::{
     RemovalReport, RuntimeRow, StorageReport, discover, fit_candidates, forget_model,
-    remove_model_files, runtime_list, storage_reconcile,
+    remove_model_files, runtime_list, runtime_probe_version, storage_reconcile,
 };
 pub use deck_engines::discover::DiscoveryReport;
 pub use swap::{HotSwapReport, hot_swap};

@@ -601,6 +601,11 @@ fn runtime_list() -> Vec<deck_tauri::RuntimeRow> {
 }
 
 #[tauri::command]
+fn runtime_probe_version(id: String) -> Result<Option<String>, String> {
+    deck_tauri::runtime_probe_version(&id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn fit_candidates(model_path: String) -> Result<Vec<deck_core::fitplan::FitCandidate>, String> {
     deck_tauri::fit_candidates(&model_path).map_err(|e| e.to_string())
 }
@@ -835,6 +840,7 @@ fn main() {
             remove_model_files,
             storage_reconcile,
             runtime_list,
+            runtime_probe_version,
             fit_candidates,
             discover,
             hot_swap,

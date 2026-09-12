@@ -150,7 +150,7 @@ pub fn use_profile_with_progress(
         // None = track which profile is live without touching resident mode
         // (bringup/CLI set Some(..) explicitly). Without this, STOP clears
         // the binding and a UI LOAD never restores it: slot UP, model unmarked.
-        deck_core::store::set_resident(&conn, p.engine.store_id(), name, None)?;
+        deck_core::store::set_resident(&conn, &p.runtime_key(), name, None)?;
     }
     progress(&format!("engine bin: {}", p.bin.display()));
     let unit = deck_engines::render_unit(&p);

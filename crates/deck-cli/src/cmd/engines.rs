@@ -46,29 +46,48 @@ pub(crate) fn status(host: &str) -> Result<()> {
     Ok(())
 }
 
-/// Stop an engine's unit and clear its port-map binding. Leaves the other
-/// residents untouched — the essence of multi-model residency.
+/// Resolve the systemd unit for a runtime id: the bound profile's resolved
+/// unit when one exists (custom-aware), else the builtin slot or the custom
+/// manifest's unit name.
+fn unit_for(conn: &rusqlite::Connection, runtime_id: &str) -> Result<String> {
+    if let Ok(Some(r)) = deck_core::store::get_resident(conn, runtime_id)
+        && let Ok(Some(p)) = deck_core::store::get_profile(conn, &r.profile)
+    {
+        return Ok(deck_engines::unit_name_for(&p));
+    }
+    if let Some(e) = deck_core::profile::Engine::parse(runtime_id) {
+        return Ok(e.systemd_unit().to_string());
+    }
+    if let Some(m) = deck_core::runtime::all_manifests()
+        .into_iter()
+        .find(|m| m.id == runtime_id)
+    {
+        return Ok(m.unit_name);
+    }
+    anyhow::bail!("unknown engine/runtime '{runtime_id}'")
+}
+
+/// Stop a runtime's unit and clear its port-map binding. Leaves the other
+/// residents untouched — the essence of multi-model residency. Accepts custom
+/// manifest ids, not just builtins.
 pub(crate) fn stop(engine: &str) -> Result<()> {
-    let eng = parse_engine(engine)?;
-    let store_id = eng.store_id();
     let db = deck_core::store::default_db_path();
     let conn = deck_core::store::open(&db)?;
     deck_core::store::ensure_resident_schema(&conn)?;
-    deck_engines::stop(eng.systemd_unit())?;
-    deck_core::store::clear_resident(&conn, store_id)?;
-    println!("[{store_id}] unit stopped; port-map binding cleared");
+    let unit = unit_for(&conn, engine)?;
+    deck_engines::stop(&unit)?;
+    deck_core::store::clear_resident(&conn, engine)?;
+    println!("[{engine}] unit stopped; port-map binding cleared");
     Ok(())
 }
 
 pub(crate) fn start(engine: &str) -> Result<()> {
-    let eng = parse_engine(engine)?;
-    let store_id = eng.store_id();
     let db = deck_core::store::default_db_path();
     let conn = deck_core::store::open(&db)?;
-    let r = deck_core::store::get_resident(&conn, store_id)?.ok_or_else(|| anyhow::anyhow!("no profile bound to {store_id} — load one via `deck use <profile> --resident` first"))?;
+    let r = deck_core::store::get_resident(&conn, engine)?.ok_or_else(|| anyhow::anyhow!("no profile bound to {engine} — load one via `deck use <profile> --resident` first"))?;
     let p = deck_core::store::get_profile(&conn, &r.profile)?.ok_or_else(|| anyhow::anyhow!("bound profile '{}' not found", r.profile))?;
     deck_engines::apply(&p, false)?;
-    println!("[{store_id}] started '{}' on :{}", p.name, p.port);
+    println!("[{engine}] started '{}' on :{}", p.name, p.port);
     Ok(())
 }
 
