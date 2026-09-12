@@ -5,6 +5,9 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 echo "==> building release binary (with embedded frontend)…"
+# Touch main.rs to force cargo to recompile — cargo skips rebuilds when only
+# frontend dist changes, but the dist is embedded at compile time.
+touch src-tauri/src/main.rs
 cargo tauri build --no-bundle 2>&1 | tail -5
 
 INSTALL_DIR="$HOME/.local/bin"

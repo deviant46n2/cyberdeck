@@ -44,5 +44,11 @@ pub fn feeds_rank(limit: usize, workload: Option<String>) -> Result<Vec<RankedRe
         if w == "coding" { weights.family = 0.35; weights.hw = 0.25; }
     }
     let ranked = deck_core::relevance::rank(releases, &installed, &bench, vram, now, &weights, disk_free_mb);
-    Ok(ranked.into_iter().take(limit).map(|(release, score)| RankedRelease { release, score }).collect())
+    // Filter: keep engine releases (always visible) + models that actually fit
+    // the user's hardware.  Unfitted models just clutter the feed.
+    Ok(ranked.into_iter()
+        .filter(|(r, s)| s.fits || r.source == "github")
+        .take(limit)
+        .map(|(release, score)| RankedRelease { release, score })
+        .collect())
 }

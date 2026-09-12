@@ -341,6 +341,11 @@ fn tui_stop(id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn tui_ready(id: String) -> Result<(), String> {
+    deck_tauri::tui_ready(&id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn hw_info() -> deck_tauri::HwInfo {
     deck_tauri::hw_info()
 }
@@ -563,6 +568,33 @@ fn dedup_delete(identity: String, delete_file: bool) -> Result<usize, String> {
     deck_tauri::dedup_delete(&identity, delete_file).map_err(|e| e.to_string())
 }
 
+/// Forget = drop the library record, files stay on disk (re-importable as orphaned).
+#[tauri::command]
+fn forget_model(path: String) -> Result<deck_tauri::DeleteResult, String> {
+    deck_tauri::forget_model(&path).map_err(|e| e.to_string())
+}
+
+/// Remove explicit local files with exact byte accounting.
+#[tauri::command]
+fn remove_model_files(paths: Vec<String>) -> Result<deck_tauri::RemovalReport, String> {
+    deck_tauri::remove_model_files(&paths).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn storage_reconcile() -> Result<deck_tauri::StorageReport, String> {
+    deck_tauri::storage_reconcile().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn runtime_list() -> Vec<deck_tauri::RuntimeRow> {
+    deck_tauri::runtime_list()
+}
+
+#[tauri::command]
+fn fit_candidates(model_path: String) -> Result<Vec<deck_core::fitplan::FitCandidate>, String> {
+    deck_tauri::fit_candidates(&model_path).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn list_scan_dirs() -> Result<Vec<String>, String> {
     deck_tauri::list_scan_dirs().map_err(|e| e.to_string())
@@ -741,12 +773,18 @@ fn main() {
     // XWayland — set_var here won't work because GTK reads the backend
     // at dlopen time, before main() runs. Keep this comment as a reminder.
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             scan_with_event,
             list_models,
             list_profiles,
             dedup,
             delete_model,
+            forget_model,
+            remove_model_files,
+            storage_reconcile,
+            runtime_list,
+            fit_candidates,
             dedup_delete,
             list_scan_dirs,
             add_scan_dir,
@@ -788,6 +826,7 @@ fn main() {
             tui_write,
             tui_resize,
             tui_stop,
+            tui_ready,
             hw_info,
             host_metrics,
             browse_fit_remote,

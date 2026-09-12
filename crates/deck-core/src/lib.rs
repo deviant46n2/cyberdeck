@@ -3,11 +3,16 @@
 
 pub mod dedup;
 pub mod fit;
+pub mod fitplan;
 pub mod gguf;
 pub mod hardware;
 pub mod importer;
+pub mod library;
 pub mod model;
 pub mod profile;
+pub mod runtime;
+pub mod runtime_registry;
+pub mod storage;
 pub mod recommend;
 pub mod relevance;
 pub mod safetensors;

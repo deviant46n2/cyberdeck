@@ -57,6 +57,15 @@ export default function TuiPane({
     // raw PTY bytes for this pane → terminal
     let unData: (() => void) | undefined;
     let unExited: (() => void) | undefined;
+    let readySent = false;
+
+    const sendReady = () => {
+      if (readySent) return;
+      readySent = true;
+      console.log(`[TuiPane ${pane.id}] listener ready — signaling backend`);
+      void api.tuiReady(pane.id);
+    };
+
     listen<{ id: string; bytes: number[] }>("tui-data", (e) => {
       if (e.payload.id !== pane.id) return;
       dataCount++;
@@ -68,12 +77,20 @@ export default function TuiPane({
     }).then((f) => {
       unData = f;
       console.log(`[TuiPane ${pane.id}] tui-data listener registered`);
+      sendReady();
+    }).catch((err) => {
+      console.error(`[TuiPane ${pane.id}] tui-data listen FAILED:`, err);
     });
     listen<{ id: string; code: number }>("tui-exited", (e) => {
       if (e.payload.id !== pane.id) return;
       console.log(`[TuiPane ${pane.id}] tui-exited code=${e.payload.code} (received ${dataCount} data events, ${byteCount} bytes total)`);
       onExitedRef.current(pane.id);
-    }).then((f) => (unExited = f));
+    }).then((f) => {
+      unExited = f;
+      sendReady();
+    }).catch((err) => {
+      console.error(`[TuiPane ${pane.id}] tui-exited listen FAILED:`, err);
+    });
 
     // keystrokes → PTY master
     const d = term.onData((chunk) => {

@@ -14,6 +14,7 @@ pub mod agents;
 mod bench;
 mod bringup;
 mod compare;
+pub mod lifecycle;
 pub mod console;
 pub mod console_reaper;
 mod downloads;
@@ -92,7 +93,7 @@ pub use bringup::{
 pub use compare::{CandidateStanding, CompareReport, ScoredTrial, compare_run};
 pub use console::{OpDone, OpLine, OpStarted, kill_all, opencode_run, opencode_stop};
 pub use console_reaper::reap_orphans;
-pub use tui::{tui_resize, tui_spawn, tui_stop, tui_write};
+pub use tui::{tui_ready, tui_resize, tui_spawn, tui_stop, tui_write};
 pub use sessions::{
     SessionView, create_session, delete_session, generate_handoff, get_session,
     get_session_events, list_sessions, mark_session_complete, mark_session_error,
@@ -127,6 +128,10 @@ pub use profiles::{
 pub use scan::{
     DeleteResult, DupRow, ModelRow, ScanResult, add_scan_dir, dedup, dedup_delete, delete_model,
     index_downloaded, list_models, list_scan_dirs, remove_scan_dir, scan,
+};
+pub use lifecycle::{
+    RemovalReport, RuntimeRow, StorageReport, fit_candidates, forget_model, remove_model_files,
+    runtime_list, storage_reconcile,
 };
 pub use test::{
     TestLine, TestPhase, TestResult, TweakResult, test_profile, test_profile_tweaked, test_stop,

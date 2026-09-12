@@ -36,14 +36,17 @@ pub mod workflow;
 
 pub use health::{
     BringupOutcome, OOM_MARKERS, detect_engine_version, fetch_metrics, health_ok, health_ok_any,
-    health_wait, measure_generation_tps, parse_tps, verify_on_test_port,
+    health_wait, measure_generation_tps, parse_tps, spawn_and_wait, verify_on_test_port,
 };
 pub use inference::run_prompt;
 pub use systemd::{
     apply, apply_with_progress, backup_existing, backup_file, install, is_active, reload_daemon,
     restore_last_good, start, start_system, stop, stop_system,
 };
-pub use unit::{build_args, render_unit};
+pub use unit::{
+    args_for, build_args, child_env_for, display_for, env_for, manifest_for, render_unit,
+    unit_name_for,
+};
 
 /// Unit names owned by cyberdeck — derived from the engine registry (the one
 /// truth) so a newly added engine is automatically excluded from external /

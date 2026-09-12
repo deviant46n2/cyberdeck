@@ -9,6 +9,7 @@ mod hw;
 mod profiles;
 mod releases;
 mod residents;
+pub mod runs;
 mod settings;
 mod workloads;
 mod agents;
@@ -20,6 +21,7 @@ pub use hw::*;
 pub use profiles::*;
 pub use releases::*;
 pub use residents::*;
+pub use runs::*;
 pub use settings::*;
 pub use workloads::*;
 pub use agents::*;
@@ -60,7 +62,7 @@ pub fn models_dir() -> PathBuf {
 /// stay idempotent and ADD-only, so an older binary opening a newer DB still
 /// works (unknown tables/columns are simply unused) and a newer binary is the
 /// only one that advances the version.
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 
 /// Non-destructive forward migration. `ensure_schema_version` stamps the
 /// version at `SCHEMA_VERSION`; no steps are wired yet because every current
@@ -152,6 +154,24 @@ fn now() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+/// ADD-only column helper: creates the column when absent, no-ops otherwise.
+/// Shared by per-table `ensure_*` migrations so schema evolution never drops.
+pub fn ensure_column(conn: &Connection, table: &str, column: &str, ddl: &str) -> Result<()> {
+    let has = conn
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .and_then(|mut stmt| {
+            Ok::<_, rusqlite::Error>(
+                stmt.query_map([], |r| r.get::<_, String>(1))?
+                    .flatten()
+                    .any(|c| c == column),
+            )
+        })?;
+    if !has {
+        conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {column} {ddl}"), [])?;
+    }
+    Ok(())
 }
 
 pub fn upsert_many(conn: &mut Connection, models: &[ModelMeta]) -> Result<usize> {

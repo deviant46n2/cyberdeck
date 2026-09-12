@@ -211,7 +211,7 @@ fn run_after_download(
     let _ = app2.emit("bringup-phase", BringupPhase { phase: "derive".into() });
 
     let Some((p, fit, tps)) =
-        bringup::derive_and_verify(app2, model, eng, false, apply, line, finish)
+        bringup::derive_and_verify(app2, model, eng.store_id(), false, apply, line, finish)
     else {
         return;
     };

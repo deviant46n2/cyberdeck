@@ -169,6 +169,15 @@ pub fn engine_descriptors() -> Vec<EngineDescriptor> {
 pub struct Profile {
     pub name: String,
     pub engine: Engine,
+    /// Set for non-builtin runtimes (a manifest id). When `Some`, launch
+    /// resolution ignores `engine` and drives the runtime manifest instead —
+    /// so experimental backends are first-class without an `Engine` variant.
+    #[serde(default)]
+    pub runtime_id: Option<String>,
+    /// Structured tunables for custom-runtime templates (`{key}` placeholders).
+    /// Kept as values, not baked into an opaque CLI string.
+    #[serde(default)]
+    pub params: std::collections::BTreeMap<String, String>,
     pub bin: PathBuf,
     pub model: String,
     pub alias: String,
@@ -216,6 +225,8 @@ impl Default for Profile {
         Self {
             name: String::new(),
             engine: Engine::LlamaCpp,
+            runtime_id: None,
+            params: std::collections::BTreeMap::new(),
             bin: PathBuf::from("/usr/bin/llama-server"),
             model: String::new(),
             alias: "model".into(),
@@ -254,6 +265,30 @@ impl Profile {
         ladder.extend(self.ctx_ladder.iter().copied());
         ladder
     }
+
+    /// Canonical runtime id: a custom manifest id when bound, else the builtin
+    /// engine's store id. All string-keyed lookups (engine_bin, residents,
+    /// bench) route through this so custom runtimes are first-class.
+    pub fn runtime_key(&self) -> String {
+        self.runtime_id
+            .clone()
+            .unwrap_or_else(|| self.engine.store_id().to_string())
+    }
+}
+
+/// Slugify a model name into an alias (`Qwen3.8 27B UD Q3` → `qwen3.8-27b-ud-q3`).
+pub fn slugify(name: &str) -> String {
+    name.chars()
+        .filter_map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
+                Some(c.to_ascii_lowercase())
+            } else if c.is_whitespace() {
+                Some('-')
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 /// Computed result of deriving a loadout from a model + engine.
@@ -312,53 +347,102 @@ pub fn derive_from_meta(
             engine.descriptor().display
         ));
     }
-    let vram_mb = kind_of_vram();
-
     // Weights are small enough to hold on GPU wholesale in the common case;
     // FreeToken offload spills the remainder to RAM when they aren't.
     let offload = engine == Engine::FreeToken;
-    let reserved = 1600u64; // desktop reserve (compositor + ckb-next etc)
-
-    // Find the largest ctx whose fit verdict is Pass or Warn (never OOM).
-    let mut max_ctx: u64 = 0;
-    let mut best: Option<crate::fit::FitBreakdown> = None;
-    // Step up from 2K in 2K jumps to a sane ceiling (TODO: binary search for
-    // speed on huge ctx; linear is fine for local planning).
-    let step = 2048u64;
-    for ctx in (step..=262_144).step_by(step as usize) {
-        let req = crate::fit::FitRequest {
-            ctx,
-            kv_bytes: 0.5,
-            ngl_frac: 1.0,
-            kv_layers: None,
-            reserved_mb: reserved,
-            offload,
-        };
-        let fb = crate::fit::estimate(meta, &req, vram_mb);
-        use crate::fit::Verdict;
-        if matches!(fb.verdict, Verdict::Pass | Verdict::Warn) {
-            max_ctx = ctx;
-            best = Some(fb);
-        } else {
-            break; // first OOM terminates the climb
-        }
-    }
-    if max_ctx == 0 {
+    let vram_mb = kind_of_vram();
+    let Some((max_ctx, fb)) = crate::fitplan::max_ctx_for(meta, offload, vram_mb) else {
         return Err(format!(
             "model {:?} does not fit this GPU (vram={vram_mb} MiB) even at 2K ctx",
             meta.path
         ));
-    }
+    };
 
-    let fb = best.unwrap();
-    let profile = build_profile_from_derive(meta, engine, offload, max_ctx, &fb);
-    let available = kind_of_vram();
+    let profile = build_profile_from_derive(meta, engine, offload, max_ctx);
+    Ok(assemble_loadout(profile, max_ctx, fb, vram_mb))
+}
+
+/// Build a launch spec for a manifest-driven (non-builtin) runtime: same fit
+/// climb as builtins, but the profile carries `runtime_id` + the manifest's
+/// default params so `deck-engines` can render its argv/unit generically.
+pub fn derive_custom_loadout(
+    model_path: impl AsRef<std::path::Path>,
+    manifest: &crate::runtime::RuntimeManifest,
+) -> Result<DerivedLoadout, String> {
+    let path = model_path.as_ref();
+    let meta = if path.is_dir() {
+        crate::safetensors::open_dir(path)
+            .map_err(|e| format!("read safetensors dir {path:?}: {e}"))?
+    } else {
+        crate::gguf::GgufMeta::read(path)
+            .map_err(|e| format!("read GGUF {path:?}: {e}"))?
+            .to_meta(path)
+    };
+    derive_custom_from_meta(&meta, manifest)
+}
+
+/// Pure core of [`derive_custom_loadout`].
+pub fn derive_custom_from_meta(
+    meta: &crate::model::ModelMeta,
+    manifest: &crate::runtime::RuntimeManifest,
+) -> Result<DerivedLoadout, String> {
+    if !manifest.supports(&meta.format, meta.arch.as_deref()) {
+        return Err(format!(
+            "{} does not support this artifact (format {:?}, arch {:?})",
+            manifest.display, meta.format, meta.arch
+        ));
+    }
+    let vram_mb = kind_of_vram();
+    let offload = manifest.is_offload();
+    let Some((max_ctx, fb)) = crate::fitplan::max_ctx_for(meta, offload, vram_mb) else {
+        return Err(format!(
+            "{} cannot fit {:?} on this GPU (vram={vram_mb} MiB) even at 2K ctx",
+            manifest.display, meta.path
+        ));
+    };
+
+    let mut p = Profile::default();
+    p.engine = Engine::LlamaCpp; // sentinel; `runtime_id` drives launch
+    p.runtime_id = Some(manifest.id.clone());
+    p.params = manifest.default_params();
+    p.model = meta.path.display().to_string();
+    p.alias = slugify(&meta.name);
+    p.port = manifest.default_port;
+    p.ctx_size = max_ctx as u32;
+    p.ctx_ladder = ladder_below(p.ctx_size);
+    p.flash_attn = true;
+    // Offload runtimes keep weights in RAM (ngl 0); direct ones put all layers
+    // on GPU (llama.cpp spells full offload as 999).
+    p.n_gpu_layers = if offload { 0 } else { 999 };
+    if let Some(bin) = manifest
+        .bin_candidates
+        .iter()
+        .find(|c| std::path::Path::new(c).is_file())
+        .or_else(|| manifest.bin_candidates.first())
+    {
+        p.bin = PathBuf::from(bin);
+    } else {
+        p.bin = PathBuf::from(&manifest.id); // PATH-resolved
+    }
+    Ok(assemble_loadout(p, max_ctx, fb, vram_mb))
+}
+
+/// Ladder steps below the max so a real-world OOM still degrades gracefully.
+fn ladder_below(ctx: u32) -> Vec<u32> {
+    let grain = 4096u32;
+    [ctx.saturating_sub(grain), ctx.saturating_sub(2 * grain)]
+        .into_iter()
+        .filter(|c| *c >= 2048 && *c != ctx)
+        .collect()
+}
+
+/// Shared tail: pack a fit breakdown + profile into the serializable result.
+fn assemble_loadout(profile: Profile, max_ctx: u64, fb: crate::fit::FitBreakdown, vram_mb: u64) -> DerivedLoadout {
     let reserved = 1600u64;
-    let available_for_model = available.saturating_sub(reserved);
+    let available_for_model = vram_mb.saturating_sub(reserved);
     let model_vram = fb.weights_mb + fb.kv_mb + fb.buffers_mb;
     let headroom = available_for_model.saturating_sub(model_vram);
-
-    Ok(DerivedLoadout {
+    DerivedLoadout {
         profile,
         max_ctx: max_ctx as u32,
         kv_mb: fb.kv_mb,
@@ -366,11 +450,11 @@ pub fn derive_from_meta(
         weights_ram_mb: fb.weights_ram_mb,
         buffers_mb: fb.buffers_mb,
         model_vram_mb: model_vram,
-        available_mb: available,
+        available_mb: vram_mb,
         available_for_model_mb: available_for_model,
         headroom_mb: headroom,
         verdict: format!("{:?}", fb.verdict),
-    })
+    }
 }
 
 /// Assemble a fully-populated `Profile` from the derived fit. `offload` is
@@ -380,35 +464,14 @@ fn build_profile_from_derive(
     engine: Engine,
     offload: bool,
     ctx: u64,
-    fb: &crate::fit::FitBreakdown,
 ) -> Profile {
     let mut p = Profile::default();
     p.engine = engine;
     p.model = meta.path.display().to_string();
-    p.alias = meta
-        .name
-        .chars()
-        .filter_map(|c| {
-            if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
-                Some(c.to_ascii_lowercase())
-            } else if c.is_whitespace() {
-                Some('-')
-            } else {
-                None
-            }
-        })
-        .collect::<String>();
+    p.alias = slugify(&meta.name);
     p.port = default_port(engine);
     p.ctx_size = ctx as u32;
-    // Ladder steps below the max so a real-world OOM still degrades gracefully.
-    let grain = 4096u32;
-    p.ctx_ladder = [
-        p.ctx_size.saturating_sub(grain),
-        p.ctx_size.saturating_sub(2 * grain),
-    ]
-    .into_iter()
-    .filter(|c| *c >= 2048 && *c != p.ctx_size)
-    .collect();
+    p.ctx_ladder = ladder_below(p.ctx_size);
     p.flash_attn = true;
 
     if offload {
@@ -582,5 +645,37 @@ mod tests {
         let m = meta(4, 48, 5120, "Qwen3.8 27B UD Q3", "qwen3");
         let d = derive_from_meta(&m, Engine::LlamaCpp).unwrap();
         assert_eq!(d.profile.alias, "qwen3.8-27b-ud-q3");
+    }
+
+    fn manifest(json: &str) -> crate::runtime::RuntimeManifest {
+        serde_json::from_str(json).expect("manifest json")
+    }
+
+    #[test]
+    fn custom_runtime_derives_with_id_port_and_params() {
+        let m = meta(4, 48, 5120, "Qwen3.8 27B", "qwen3");
+        let rt = manifest(
+            r#"{"id":"beellama","display":"Beellama","formats":["gguf"],
+                "default_port":18222,"test_port":18991,
+                "configuration":[{"key":"gpu_layers","default":"999"}],
+                "argv_template":["--model","{model}","--n-gpu-layers","{gpu_layers}"]}"#,
+        );
+        let d = derive_custom_from_meta(&m, &rt).expect("derives");
+        assert_eq!(d.profile.runtime_id.as_deref(), Some("beellama"));
+        assert_eq!(d.profile.port, 18222);
+        assert_eq!(d.profile.runtime_key(), "beellama");
+        assert_eq!(d.profile.params.get("gpu_layers").map(String::as_str), Some("999"));
+        assert!(d.max_ctx >= 32768);
+    }
+
+    #[test]
+    fn custom_runtime_rejects_unsupported_format() {
+        let m = meta(4, 48, 5120, "safetensors-only", "qwen3");
+        let rt = manifest(
+            r#"{"id":"x","display":"X","formats":["safetensors-dir"],
+                "default_port":18001,"test_port":18901}"#,
+        );
+        let err = derive_custom_from_meta(&m, &rt).unwrap_err();
+        assert!(err.contains("does not support"), "{err}");
     }
 }

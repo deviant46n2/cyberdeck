@@ -35,3 +35,25 @@ Established examples of this decision in practice:
 
 Related: `ROADMAP.md` "Things Not To Build Yet (Explicit)", `FUTURE.md`
 (the parking lot — interesting, not committed), `AGENTS.md` Scope Control.
+
+## Runtime Adapters — Manifests Over Engine Matches
+
+Runtimes are described by a `RuntimeManifest` (identity, formats,
+architectures, capabilities, ports, status, `configuration` params, argv/env
+templates) instead of an `Engine` enum arm plus a `match` at every launch site.
+Builtins (llama.cpp / Uncensored / FreeToken / Ollama) are generated from the
+existing `Engine` registry, so behavior is unchanged. A new backend is ONE JSON
+file in `~/.local/share/cyberdeck/runtimes/*.json` — no core code, no
+recompile. `deck-engines` resolves launch generically (`args_for` / `env_for` /
+`unit_name_for`), so bring-up, test-port verification, unit install, and bench
+treat an experimental runtime exactly like a builtin. A `Profile` binds a
+custom runtime via `runtime_id` + structured `params` (values, not a baked CLI
+string); placeholders are validated at load time so a typo names the file and
+the bad key. Proven end-to-end by the mock-runtime test in
+`deck-engines/tests/generic_runtime.rs`.
+
+Deliberate ceiling: a custom runtime must expose the OpenAI-compatible HTTP
+surface for health/bench (the manifest `protocol`); process-level plugins are
+the upgrade path if a runtime needs a different lifecycle. This follows
+"Integration Before Recreation" — the adapter is the boundary; cyberdeck does
+not implement the runtime.

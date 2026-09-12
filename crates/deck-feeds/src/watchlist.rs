@@ -17,13 +17,17 @@ pub fn open() -> Result<rusqlite::Connection> {
     Ok(conn)
 }
 
-/// Default orgs to watch, per the cyberdeck lore.
+/// Default orgs to watch — quantization-focused uploaders + the major model
+/// families.  nvidia was swapped out: their enterprise models rarely fit a
+/// desktop 16 GB VRAM box.  mradermacher uploads high-quality quants across
+/// many families; mistralai is the first-party source for Mistral/Ministral.
 pub fn default_watchlist() -> Vec<String> {
     vec![
         "unsloth".into(),
         "bartowski".into(),
         "ggml-org".into(),
-        "nvidia".into(),
+        "mradermacher".into(),
+        "mistralai".into(),
     ]
 }
 

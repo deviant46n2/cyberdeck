@@ -82,6 +82,39 @@ impl Drop for BringupGuard {
 /// thread emitting `bringup-phase` / `bringup-line` / `bringup-result` events.
 ///
 /// Single-flight: a second request while one runs is rejected.
+/// Cheap pre-flight: is this a builtin engine or a registered custom runtime?
+fn ensure_known_runtime(engine_s: &str) -> anyhow::Result<()> {
+    if Engine::parse(engine_s).is_some() {
+        return Ok(());
+    }
+    if deck_core::runtime::all_manifests().iter().any(|m| m.id == engine_s) {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "unknown engine/runtime '{engine_s}' (builtins: llamacpp|freetoken|ollama; or a manifest in ~/.local/share/cyberdeck/runtimes)"
+    )
+}
+
+/// Resolve a target to (derived loadout, test port). Builtins derive from the
+/// `Engine` registry; a custom manifest derives the same way but carries
+/// `runtime_id` + structured params, so launch/verify/bench run generically.
+fn plan_for(
+    model: &str,
+    engine_s: &str,
+) -> anyhow::Result<(deck_core::profile::DerivedLoadout, u16)> {
+    if let Some(e) = Engine::parse(engine_s) {
+        let d = deck_core::profile::derive_loadout(model, e).map_err(anyhow::Error::msg)?;
+        return Ok((d, e.test_port()));
+    }
+    let m = deck_core::runtime::all_manifests()
+        .into_iter()
+        .find(|m| m.id == engine_s)
+        .ok_or_else(|| anyhow::anyhow!("unknown engine/runtime '{engine_s}'"))?;
+    let test_port = m.test_port;
+    let d = deck_core::profile::derive_custom_loadout(model, &m).map_err(anyhow::Error::msg)?;
+    Ok((d, test_port))
+}
+
 pub fn bringup_start(
     app: &tauri::AppHandle,
     model_path: &str,
@@ -91,8 +124,7 @@ pub fn bringup_start(
     if !std::path::Path::new(model_path).exists() {
         anyhow::bail!("model not found on disk: {model_path}");
     }
-    let eng = Engine::parse(engine_s)
-        .ok_or_else(|| anyhow::anyhow!("unknown engine '{engine_s}' (llamacpp|freetoken)"))?;
+    ensure_known_runtime(engine_s)?;
     if BRINGUP_RUNNING.swap(true, Ordering::SeqCst) {
         anyhow::bail!("a bring-up is already running");
     }
@@ -106,6 +138,7 @@ pub fn bringup_start(
 
     let app2 = app.clone();
     let model = model_path.to_string();
+    let engine = engine_s.to_string();
     std::thread::spawn(move || {
         let finish = |res: BringupResult| {
             let _ = app2.emit("bringup-result", res);
@@ -123,7 +156,7 @@ pub fn bringup_start(
 
         // 1+2. Derive + verify (headless, never touches live) ---------------
         let Some((p, fit, _tps)) =
-            derive_and_verify(&app2, &model, eng, fast, true, &line, &finish)
+            derive_and_verify(&app2, &model, &engine, fast, true, &line, &finish)
         else {
             return;
         };
@@ -184,13 +217,12 @@ pub(crate) fn save_and_apply(
     deck_core::store::ensure_profile_schema(&conn)?;
     deck_core::store::upsert_profile(&conn, p)?;
     deck_core::store::ensure_resident_schema(&conn).ok();
-    let _ = deck_core::store::set_resident(&conn, p.engine.store_id(), &p.name, Some(true));
+    let runtime = p.runtime_key();
+    let _ = deck_core::store::set_resident(&conn, &runtime, &p.name, Some(true));
     deck_engines::apply(p, false)?;
     line(format!(
         "[apply] '{}' live on :{} ({}), health OK",
-        p.name,
-        p.port,
-        format!("{:?}", p.engine).to_lowercase()
+        p.name, p.port, runtime
     ));
     Ok(())
 }
@@ -229,7 +261,7 @@ pub(crate) fn bench_and_record(app2: &tauri::AppHandle, p: &Profile, line: &impl
             // Canonical store id ("uncensored"), not the Debug variant name
             // ("uncensoredllamacpp") — bench rows must join with matrix_runs
             // on (model, engine).
-            let engine_str = p.engine.store_id().to_string();
+            let engine_str = p.runtime_key();
             let row = deck_core::store::BenchRow::with_provenance(
                 &conn, &engine_str, &p.host, p.port, &p.model, p.ctx_size, v, at,
                 engine_version, None, None,
@@ -258,15 +290,15 @@ pub(crate) fn bench_and_record(app2: &tauri::AppHandle, p: &Profile, line: &impl
 pub(crate) fn derive_and_verify(
     app2: &tauri::AppHandle,
     model: &str,
-    eng: Engine,
+    engine_s: &str,
     fast: bool,
     save_on_fail: bool,
     line: &impl Fn(String),
     finish: &impl Fn(BringupResult),
 ) -> Option<(Profile, FitBreakdown, Option<f64>)> {
     line(format!("[derive] reading {} header…", model));
-    let derived = match deck_core::profile::derive_loadout(model, eng) {
-        Ok(d) => d,
+    let (derived, test_port) = match plan_for(model, engine_s) {
+        Ok(v) => v,
         Err(e) => {
             finish(BringupResult {
                 ok: false,
@@ -325,7 +357,6 @@ pub(crate) fn derive_and_verify(
     ));
 
     if !fast {
-        let test_port = eng.test_port();
         let _ = app2.emit(
             "bringup-phase",
             BringupPhase {
@@ -394,8 +425,7 @@ pub fn test_model_start(
     if !std::path::Path::new(model_path).exists() {
         anyhow::bail!("model not found on disk: {model_path}");
     }
-    let eng = Engine::parse(engine_s)
-        .ok_or_else(|| anyhow::anyhow!("unknown engine '{engine_s}' (llamacpp|freetoken)"))?;
+    ensure_known_runtime(engine_s)?;
     if BRINGUP_RUNNING.swap(true, Ordering::SeqCst) {
         anyhow::bail!("a bring-up or test is already running");
     }
@@ -409,6 +439,7 @@ pub fn test_model_start(
 
     let app2 = app.clone();
     let model = model_path.to_string();
+    let engine = engine_s.to_string();
     std::thread::spawn(move || {
         let _guard = BringupGuard;
         let finish = |res: BringupResult| {
@@ -427,7 +458,7 @@ pub fn test_model_start(
 
         // derive + verify on the test port — the live service is never touched.
         let Some((p, fit, tps)) =
-            derive_and_verify(&app2, &model, eng, false, false, &line, &finish)
+            derive_and_verify(&app2, &model, &engine, false, false, &line, &finish)
         else {
             return;
         };
@@ -443,7 +474,7 @@ pub fn test_model_start(
                 deck_core::store::ensure_bench_schema(&conn).ok();
                 let engine_version = deck_engines::detect_engine_version(p.engine, &p.host, p.port);
                 // Canonical store id — see bench_and_record above.
-                let engine_str = p.engine.store_id().to_string();
+                let engine_str = p.runtime_key();
                 let row = deck_core::store::BenchRow::with_provenance(
                     &conn, &engine_str, &p.host, p.port, &p.model, p.ctx_size, v, at,
                     engine_version, None, None,

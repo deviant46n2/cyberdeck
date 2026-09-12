@@ -13,13 +13,36 @@
 //! master handle stays for resizes. The reader is cloned out to the waiter
 //! thread, which forwards bytes as events and emits `tui-exited` on EOF.
 
-use std::collections::HashMap;
-use std::sync::{LazyLock, Mutex};
+use std::collections::{HashMap, VecDeque};
+use std::io::Write;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock, Mutex, Once};
 
 use anyhow::Context;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
 use tauri::Emitter;
+
+/// Diagnostic log file — all TUI diagnostics go here so we can read them
+/// even when launched from the dock (no terminal for stderr).
+/// Truncated on each app launch so the file doesn't grow forever.
+static LOG_INIT: Once = Once::new();
+
+fn tui_log_init() {
+    LOG_INIT.call_once(|| {
+        let _ = std::fs::write("/tmp/cyberdeck-tui.log", "");
+    });
+}
+
+fn tui_log(msg: &str) {
+    eprintln!("{msg}");
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true).append(true)
+        .open("/tmp/cyberdeck-tui.log")
+    {
+        let _ = writeln!(f, "{msg}");
+    }
+}
 
 /// Emitted for every chunk of raw PTY output from a pane, tagged by pane id.
 #[derive(Clone, Serialize)]
@@ -43,20 +66,14 @@ struct Active {
     master: Box<dyn MasterPty + Send>,
     writer: Mutex<Box<dyn std::io::Write + Send>>,
     child: Mutex<Option<Box<dyn Child + Send>>>,
-    tmux_session: Option<String>,
+    /// Set to true when the frontend calls tui_ready. The PTY reader thread
+    /// buffers output until this flips, then flushes the buffer and switches
+    /// to live emission — prevents data loss from Tauri's non-queuing events.
+    ready: Arc<AtomicBool>,
+    /// Buffered PTY output accumulated before the frontend was ready.
+    buffer: Mutex<VecDeque<Vec<u8>>>,
 }
 
-fn tmux_available() -> bool {
-    std::process::Command::new("tmux")
-        .arg("-V")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
-fn tmux_session_name(id: &str) -> String {
-    format!("deck-{id}")
-}
 
 /// Panes and the shared serve process. The serve child is a singleton started
 /// lazily on the first spawn so all panes attach to the same running server.
@@ -161,11 +178,33 @@ fn ensure_serve() {
 /// `tmux attach-session -t <sess>`, so killing the Tauri window detaches but
 /// the session lives — relaunch re-attaches. Without tmux we fall back to the
 /// direct PTY child (previous behaviour).
+/// Kill any orphaned `deck-*` tmux sessions left from prior app launches.
+/// NEXT_PANE resets to 1 on restart so session names (deck-pane-1, etc.)
+/// collide with stale sessions whose opencode attach process is already dead.
+fn cleanup_orphaned_tmux_sessions() {
+    let Ok(output) = std::process::Command::new("tmux")
+        .args(["list-sessions", "-F", "#{session_name}"])
+        .output()
+    else {
+        return;
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for name in stdout.lines() {
+        if name.starts_with("deck-") {
+            eprintln!("[deck] tui: killing orphaned tmux session {name}");
+            let _ = std::process::Command::new("tmux")
+                .args(["kill-session", "-t", name])
+                .output();
+        }
+    }
+}
+
 pub fn tui_spawn(app: &tauri::AppHandle, dir: &str, cols: u16, rows: u16) -> anyhow::Result<String> {
+    tui_log_init();
+    tui_log(&format!("[deck] tui_spawn called: dir={dir} cols={cols} rows={rows}"));
     ensure_serve();
-    // One truth: deck's vault → opencode.json. Best-effort mirror on first pane
-    // so the TUI `Ask anything` model picker matches `deck workflow` / `deck bench`.
     let _ = deck_core::opencode_sync::sync_opencode(true);
+    cleanup_orphaned_tmux_sessions();
 
     let pty = native_pty_system();
     let pair = pty
@@ -173,55 +212,68 @@ pub fn tui_spawn(app: &tauri::AppHandle, dir: &str, cols: u16, rows: u16) -> any
         .context("open PTY")?;
 
     let id = format!("pane-{}", NEXT_PANE.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
-    let sess = tmux_session_name(&id);
-    let use_tmux = tmux_available();
+    let sess = format!("deck-{id}");
+    let ready = Arc::new(AtomicBool::new(false));
+
+    // Try tmux first for session persistence, fall back to direct PTY.
+    let use_tmux = std::process::Command::new("tmux")
+        .arg("-V")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
 
     let child: Box<dyn Child + Send> = if use_tmux {
-        // Ensure a detached tmux session exists that runs the real opencode client.
-        // `has-session` fails if missing — then we create it.
-        let has = std::process::Command::new("tmux")
-            .args(["has-session", "-t", &sess])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-        if !has {
-            // Escape dir for shell inside tmux (tmux runs via $SHELL -c).
-            let dir_q = if dir.contains(' ') || dir.contains('\'') {
-                format!("'{}'", dir.replace('\'', "'\\''"))
-            } else {
-                dir.to_string()
-            };
-            let inner = format!("opencode attach http://127.0.0.1:{} --dir {dir_q}", serve_port());
-            let st = std::process::Command::new("tmux")
-                .args(["new-session", "-d", "-s", &sess, "-c", dir, &inner])
-                .output();
-            match st {
-                Ok(o) if o.status.success() => eprintln!("[deck] tui: tmux session {sess} created (dir={dir})"),
-                Ok(o) => {
-                    eprintln!("[deck] tui: tmux new-session failed for {sess}: {}", String::from_utf8_lossy(&o.stderr));
-                    // fall through to direct attach below as fallback — do not return yet
-                }
-                Err(e) => eprintln!("[deck] tui: tmux new-session spawn failed: {e}"),
+        let dir_q = if dir.contains(' ') || dir.contains('\'') {
+            format!("'{}'", dir.replace('\'', "'\\''"))
+        } else {
+            dir.to_string()
+        };
+        let inner = format!("opencode attach http://127.0.0.1:{} --dir {dir_q}", serve_port());
+        eprintln!("[deck] tui: creating tmux session {sess} with: {inner}");
+        tui_log(&format!("[deck] tui: creating tmux session {sess} with: {inner}"));
+        let st = std::process::Command::new("tmux")
+            .args(["new-session", "-d", "-e", "TERM=xterm-256color", "-s", &sess, "-c", dir, &inner])
+            .output();
+        match &st {
+            Ok(o) if o.status.success() => {
+                eprintln!("[deck] tui: tmux session {sess} created OK");
+                tui_log(&format!("[deck] tui: tmux session {sess} created OK"));
+            }
+            Ok(o) => {
+                let msg = format!("[deck] tui: tmux session create FAILED: {}", String::from_utf8_lossy(&o.stderr));
+                eprintln!("{msg}");
+                tui_log(&msg);
+            }
+            Err(e) => {
+                let msg = format!("[deck] tui: tmux session create ERROR: {e}");
+                eprintln!("{msg}");
+                tui_log(&msg);
             }
         }
-        // Now attach the PTY to that session. If attach fails, fall back to direct opencode.
+        std::thread::sleep(std::time::Duration::from_millis(200));
         let mut pb = CommandBuilder::new("tmux");
         pb.arg("attach-session");
         pb.arg("-t");
         pb.arg(&sess);
+        pb.env("TERM", "xterm-256color");
         match pair.slave.spawn_command(pb) {
             Ok(c) => {
-                eprintln!("[deck] tui: pane {id} → tmux {sess} (dir={dir})");
+                let msg = format!("[deck] tui: pane {id} → tmux {sess} attached OK (dir={dir})");
+                eprintln!("{msg}");
+                tui_log(&msg);
                 c
             }
             Err(e) => {
-                eprintln!("[deck] tui: tmux attach failed for {sess}: {e} — falling back to direct opencode attach");
+                let msg = format!("[deck] tui: tmux attach failed for {sess}: {e} — direct opencode");
+                eprintln!("{msg}");
+                tui_log(&msg);
                 let mut pb2 = CommandBuilder::new("opencode");
                 pb2.arg("attach");
                 pb2.arg(format!("http://127.0.0.1:{}", serve_port()));
                 pb2.arg("--dir");
                 pb2.arg(dir);
-                pair.slave.spawn_command(pb2).context("spawn opencode attach (tmux fallback)")?
+                pb2.env("TERM", "xterm-256color");
+                pair.slave.spawn_command(pb2).context("spawn opencode")?
             }
         }
     } else {
@@ -230,7 +282,8 @@ pub fn tui_spawn(app: &tauri::AppHandle, dir: &str, cols: u16, rows: u16) -> any
         pb.arg(format!("http://127.0.0.1:{}", serve_port()));
         pb.arg("--dir");
         pb.arg(dir);
-        pair.slave.spawn_command(pb).context("spawn opencode attach")?
+        pb.env("TERM", "xterm-256color");
+        pair.slave.spawn_command(pb).context("spawn opencode")?
     };
     drop(pair.slave);
 
@@ -238,14 +291,14 @@ pub fn tui_spawn(app: &tauri::AppHandle, dir: &str, cols: u16, rows: u16) -> any
     let mut reader = master.try_clone_reader().context("clone PTY reader")?;
     let writer = master.take_writer().context("take PTY writer")?;
 
-    let tmux_sess = if use_tmux { Some(sess.clone()) } else { None };
     PANES.lock().unwrap().insert(
         id.clone(),
         Active {
             master,
             writer: Mutex::new(writer),
             child: Mutex::new(Some(child)),
-            tmux_session: tmux_sess,
+            ready: ready.clone(),
+            buffer: Mutex::new(VecDeque::new()),
         },
     );
 
@@ -254,27 +307,81 @@ pub fn tui_spawn(app: &tauri::AppHandle, dir: &str, cols: u16, rows: u16) -> any
     let app_w = app.clone();
     let id_w = id.clone();
     std::thread::spawn(move || {
+        tui_log(&format!("[deck] tui: reader thread started for {id_w}"));
         // Forward raw PTY bytes as tui-data events until EOF.
+        // While `ready` is false, buffer output so the frontend doesn't miss
+        // the initial render (Tauri events are non-queuing — emitted before
+        // the listener registers are silently lost). Once `ready` flips,
+        // flush the buffer then switch to live emission.
         let mut buf = [0u8; 4096];
         let mut total_bytes: usize = 0;
         let mut read_count: usize = 0;
+        let mut flushed = false;
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => {
-                    eprintln!("[deck] tui: pane {id_w} PTY EOF after {read_count} reads, {total_bytes} bytes");
+                    let msg = format!("[deck] tui: pane {id_w} PTY EOF after {read_count} reads, {total_bytes} bytes");
+                    eprintln!("{msg}");
+                    tui_log(&msg);
                     break;
                 }
                 Err(e) => {
-                    eprintln!("[deck] tui: pane {id_w} PTY read error: {e} after {read_count} reads, {total_bytes} bytes");
+                    let msg = format!("[deck] tui: pane {id_w} PTY read error: {e} after {read_count} reads, {total_bytes} bytes");
+                    eprintln!("{msg}");
+                    tui_log(&msg);
                     break;
                 }
                 Ok(n) => {
                     read_count += 1;
                     total_bytes += n;
+                    let chunk = buf[..n].to_vec();
                     if read_count <= 3 {
-                        eprintln!("[deck] tui: pane {id_w} PTY read #{read_count}: {n} bytes (total {total_bytes})");
+                        let preview = String::from_utf8_lossy(&chunk);
+                        let msg = format!("[deck] tui: pane {id_w} PTY read #{read_count}: {n} bytes, ready={}, preview={:?}", ready.load(Ordering::Relaxed), preview);
+                        eprintln!("{msg}");
+                        tui_log(&msg);
                     }
-                    let _ = app_w.emit("tui-data", TuiData { id: id_w.clone(), bytes: buf[..n].to_vec() });
+                    if ready.load(Ordering::Relaxed) {
+                        // Frontend is listening — flush buffer on first transition, then emit live.
+                        if !flushed {
+                            let mut q = PANES.lock().unwrap();
+                            if let Some(a) = q.get_mut(&id_w) {
+                                let buffered: Vec<Vec<u8>> = a.buffer.lock().unwrap().drain(..).collect();
+                                for bc in buffered {
+                                    let _ = app_w.emit("tui-data", TuiData { id: id_w.clone(), bytes: bc });
+                                }
+                            }
+                            flushed = true;
+                            let msg = format!("[deck] tui: pane {id_w} flushed buffer, now live");
+                            eprintln!("{msg}");
+                            tui_log(&msg);
+                        }
+                        if read_count <= 3 {
+                            eprintln!("[deck] tui: pane {id_w} PTY read #{read_count}: {n} bytes (total {total_bytes})");
+                        }
+                        let _ = app_w.emit("tui-data", TuiData { id: id_w.clone(), bytes: chunk });
+                    } else {
+                        // Frontend not ready yet — buffer it.
+                        if read_count <= 3 {
+                            let msg = format!("[deck] tui: pane {id_w} BUFFERING read #{read_count}: {n} bytes (ready=false)");
+                            eprintln!("{msg}");
+                            tui_log(&msg);
+                        }
+                        let mut q = PANES.lock().unwrap();
+                        if let Some(a) = q.get_mut(&id_w) {
+                            a.buffer.lock().unwrap().push_back(chunk);
+                        }
+                    }
+                }
+            }
+        }
+        // Drain any remaining buffer on exit (covers the case where the
+        // process exits before the frontend calls tui_ready).
+        if !flushed {
+            let mut q = PANES.lock().unwrap();
+            if let Some(a) = q.get_mut(&id_w) {
+                for chunk in a.buffer.lock().unwrap().drain(..) {
+                    let _ = app_w.emit("tui-data", TuiData { id: id_w.clone(), bytes: chunk });
                 }
             }
         }
@@ -286,12 +393,29 @@ pub fn tui_spawn(app: &tauri::AppHandle, dir: &str, cols: u16, rows: u16) -> any
             }
         };
         PANES.lock().unwrap().remove(&id_w);
-        eprintln!("[deck] tui: pane {id_w} exited code={code} (total {read_count} reads, {total_bytes} bytes)");
+        let msg = format!("[deck] tui: pane {id_w} exited code={code} (total {read_count} reads, {total_bytes} bytes)");
+        eprintln!("{msg}");
+        tui_log(&msg);
         let _ = app_w.emit("tui-exited", TuiExited { id: id_w.clone(), code });
     });
 
-    eprintln!("[deck] tui: pane {id} attached to :{} (dir={dir})", serve_port());
+    let msg = format!("[deck] tui: pane {id} attached to :{} (dir={dir})", serve_port());
+    eprintln!("{msg}");
+    tui_log(&msg);
     Ok(id)
+}
+
+/// Signal that the frontend listener is registered. The PTY reader thread
+/// buffers output until this is called — after which it flushes the buffer
+/// and switches to live emission.
+pub fn tui_ready(id: &str) -> anyhow::Result<()> {
+    let g = PANES.lock().unwrap();
+    let a = g.get(id).context("no such pane")?;
+    a.ready.store(true, Ordering::Relaxed);
+    let msg = format!("[deck] tui: pane {id} marked ready — reader will flush buffer");
+    eprintln!("{msg}");
+    tui_log(&msg);
+    Ok(())
 }
 
 /// Forward keystrokes from an xterm pane into the pane's PTY master.
@@ -323,18 +447,16 @@ pub fn tui_resize(id: &str, cols: u16, rows: u16) -> anyhow::Result<()> {
 pub fn tui_stop(id: &str) -> anyhow::Result<()> {
     let mut g = PANES.lock().unwrap();
     if let Some(a) = g.remove(id) {
-        let sess = a.tmux_session.clone();
         drop(a.writer.lock().unwrap());
         if let Some(mut c) = a.child.lock().unwrap().take() {
             let _ = c.kill();
             let _ = c.wait();
         }
-        if let Some(s) = sess {
-            let _ = std::process::Command::new("tmux")
-                .args(["kill-session", "-t", &s])
-                .output();
-            eprintln!("[deck] tui: tmux session {s} killed");
-        }
+        // Kill the backing tmux session so we don't leak deck-* sessions.
+        let sess = format!("deck-{id}");
+        let _ = std::process::Command::new("tmux")
+            .args(["kill-session", "-t", &sess])
+            .output();
     }
     Ok(())
 }

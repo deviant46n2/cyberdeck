@@ -401,6 +401,7 @@ export const tuiWrite = (id: string, bytes: number[]) =>
 export const tuiResize = (id: string, cols: number, rows: number) =>
   invoke<void>("tui_resize", { id, cols, rows });
 export const tuiStop = (id: string) => invoke<void>("tui_stop", { id });
+export const tuiReady = (id: string) => invoke<void>("tui_ready", { id });
 
 // --- loadout editing ---
 export const saveProfile = (p: Profile) => invoke<void>("save_profile", { profile: p });
@@ -480,6 +481,63 @@ export interface DeleteResult {
 export const deleteModel = (path: string, deleteFile: boolean) =>
   invoke<DeleteResult>("delete_model", { path, deleteFile });
 
+/** Forget = drop the library record, files stay on disk (re-importable). */
+export const forgetModel = (path: string) =>
+  invoke<DeleteResult>("forget_model", { path });
+
+export interface RemovalReport {
+  files: { path: string; bytes: number; gib: number }[];
+  total_bytes: number;
+  total_gib: number;
+  missing: string[];
+  rows_removed: number;
+}
+
+/** Remove explicit local files with exact byte accounting. */
+export const removeModelFiles = (paths: string[]) =>
+  invoke<RemovalReport>("remove_model_files", { paths });
+
+export interface StorageReport {
+  ok_count: number;
+  ok_gib: number;
+  total_gib: number;
+  missing: { path: string; name: string; claimed_bytes: number }[];
+  orphaned: { path: string; name: string; bytes: number }[];
+}
+
+export const storageReconcile = () =>
+  invoke<StorageReport>("storage_reconcile");
+
+export interface RuntimeRow {
+  id: string;
+  display: string;
+  status: string;
+  default_port: number;
+  test_port: number;
+  formats: string[];
+  capabilities: string[];
+  custom: boolean;
+}
+
+export const runtimeList = () => invoke<RuntimeRow[]>("runtime_list");
+
+export interface FitCandidate {
+  runtime_id: string;
+  display: string;
+  status: string;
+  max_ctx: number;
+  kv_label: string;
+  model_vram_mb: number;
+  weights_ram_mb: number;
+  available_mb: number;
+  headroom_mb: number;
+  verdict: string;
+  why: string;
+}
+
+export const fitCandidates = (modelPath: string) =>
+  invoke<FitCandidate[]>("fit_candidates", { modelPath });
+
 export const dedupDelete = (identity: string, deleteFile: boolean) =>
   invoke<number>("dedup_delete", { identity, deleteFile });
 
@@ -539,7 +597,7 @@ export interface RankedCandidate { model: string; engine: string; runs: number; 
 export const recommend = (workload: string, objective: string) => invoke<RankedCandidate[]>("recommend", { workload, objective });
 
 export interface Release { source: string; repo: string; rev: string; kind: string; title: string; url: string; published_at: string; payload_json: string; fetched_at: number; }
-export interface ScoredRelease { release: Release; score: { total: number; hw: number; family: number; novelty: number; bench: number; recency: number; fits: boolean; disk_gb: number | null; max_ctx: number | null; disk_fits: boolean; reasons: string[] } }
+export interface ScoredRelease { release: Release; score: { total: number; hw: number; family: number; novelty: number; bench: number; recency: number; fits: boolean; disk_gb: number | null; max_ctx: number | null; disk_fits: boolean; reasons: string[]; quant_sizes: [string, number][]; model_type: string } }
 export const feedsList = (limit: number) => invoke<Release[]>("feeds_list", { limit });
 export const feedsPoll = (sources: string[]) => invoke<{ fetched: number; inserted: number }>("feeds_poll", { sources });
 export const feedsRank = (limit: number, workload?: string | null) => invoke<ScoredRelease[]>("feeds_rank", { limit, workload: workload ?? null });

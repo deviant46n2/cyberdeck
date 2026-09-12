@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use deck_core::profile::{Engine, Profile};
 
 use crate::health::health_wait;
-use crate::unit::{generated_dir, render_unit, systemd_dir};
+use crate::unit::{generated_dir, render_unit, systemd_dir, unit_name_for};
 
 /// Copies an existing unit to `<unit>.bak.<timestamp>` before overwriting.
 /// Returns the backup path, or None if there was nothing to back up.
@@ -70,7 +70,8 @@ pub fn restore_last_good(dir: &Path, unit_name: &str) -> Result<bool> {
 /// Installs the rendered unit (and a LimitMEMLOCK drop-in for llama.cpp),
 /// backing up any prior unit first. Returns the paths written.
 pub fn install(p: &Profile, dry_run: bool) -> Result<Vec<PathBuf>> {
-    let unit_name = p.engine.systemd_unit();
+    let unit_name = unit_name_for(p);
+    let unit_name = unit_name.as_str();
     let dir = systemd_dir();
     std::fs::create_dir_all(&dir)?;
     let gen_dir = generated_dir();
@@ -171,14 +172,14 @@ pub fn apply(p: &Profile, dry_run: bool) -> Result<()> {
 /// string so the UI can show what's happening during the potentially slow
 /// health_wait / ctx-ladder walk.
 pub fn apply_with_progress(p: &Profile, dry_run: bool, progress: &dyn Fn(&str)) -> Result<()> {
-    let unit = p.engine.systemd_unit();
+    let unit = unit_name_for(p);
     progress("installing unit file");
     install(p, dry_run)?;
     if dry_run {
         return Ok(());
     }
     progress("starting service");
-    start(unit)?;
+    start(&unit)?;
     progress("waiting for health check (60s timeout)");
     if health_wait(&p.host, p.port, Duration::from_secs(60)) {
         progress("healthy");
@@ -190,7 +191,7 @@ pub fn apply_with_progress(p: &Profile, dry_run: bool, progress: &dyn Fn(&str)) 
         reduced.ctx_size = ctx;
         progress(&format!("retry {}/{}: ctx={}", i + 1, p.ctx_ladder.len(), ctx));
         install(&reduced, false)?;
-        start(unit)?;
+        start(&unit)?;
         progress(&format!("waiting for health at ctx={ctx} (60s timeout)"));
         if health_wait(&reduced.host, reduced.port, Duration::from_secs(60)) {
             progress(&format!("healthy at ctx={ctx}"));
@@ -199,8 +200,8 @@ pub fn apply_with_progress(p: &Profile, dry_run: bool, progress: &dyn Fn(&str)) 
     }
     progress("all ctx steps failed; attempting last-good restore");
     let dir = systemd_dir();
-    if restore_last_good(&dir, unit).unwrap_or(false) {
-        let _ = start(unit);
+    if restore_last_good(&dir, &unit).unwrap_or(false) {
+        let _ = start(&unit);
     }
     Ok(())
 }

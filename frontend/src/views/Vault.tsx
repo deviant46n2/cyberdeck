@@ -461,23 +461,49 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
     }
   };
 
-  const remove = async (path: string) => {
-    if (!confirm(`Delete "${path}"\n\nThis removes the index entry and deletes the file from disk.`)) return;
+  const forget = async (path: string) => {
+    if (!confirm(`Forget "${path}"?\n\nRemoves the library record. FILES STAY on disk and will resurface as orphaned.`)) return;
     setDeleting((prev) => new Set(prev).add(path));
     try {
-      const deleted = await api.deleteModel(path, true);
-      if (deleted.rows > 0) {
-        setFlash(path);
-        setTimeout(() => setFlash(null), 2000);
-        void onReload();
-      }
-      if (!deleted.file_deleted) {
-        alert(`Removed from the Vault, but the file is still on disk.\n${deleted.message}`);
-      }
+      await api.forgetModel(path);
+      setFlash(path);
+      setTimeout(() => setFlash(null), 2000);
+      void onReload();
     } catch (e) {
-      alert(`Delete failed: ${String(e)}`);
+      alert(`Forget failed: ${String(e)}`);
     } finally {
       setDeleting((prev) => { const n = new Set(prev); n.delete(path); return n; });
+    }
+  };
+
+  const removeFiles = async (path: string, sizeGib: number) => {
+    if (!confirm(`Remove local file?\n\n${path}\n${sizeGib.toFixed(2)} GiB will be freed.\n\nThe library record is dropped too.`)) return;
+    setDeleting((prev) => new Set(prev).add(path));
+    try {
+      const r = await api.removeModelFiles([path]);
+      if (r.missing.length) alert(`Not on disk (record kept):\n${r.missing.join("\n")}`);
+      setFlash(path);
+      setTimeout(() => setFlash(null), 2000);
+      void onReload();
+    } catch (e) {
+      alert(`Remove failed: ${String(e)}`);
+    } finally {
+      setDeleting((prev) => { const n = new Set(prev); n.delete(path); return n; });
+    }
+  };
+
+  const makeItWork = async (path: string) => {
+    try {
+      const cands = await api.fitCandidates(path);
+      if (!cands.length) {
+        alert(`No viable runtime/configuration for this model on this machine.`);
+        return;
+      }
+      const best = cands[0];
+      if (!confirm(`⚡ Make it work?\n\n${best.display} [${best.status}]\nctx ${best.max_ctx.toLocaleString()} · ${best.kv_label} KV\n\n${best.why}\n\nDerive → verify on test port → go live?`)) return;
+      void br.startBringup(path, best.runtime_id as api.EngineId);
+    } catch (e) {
+      alert(`Fit check failed: ${String(e)}`);
     }
   };
 
@@ -717,15 +743,32 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
                     </td>
                     <td>
                       <div style={{ display: "flex", gap: 4 }}>
+                        <button
+                          className="ghost"
+                          style={{ fontSize: 9, padding: "3px 7px", borderColor: "var(--pass)", color: "var(--pass)" }}
+                          onClick={() => makeItWork(m.path)}
+                          title="fit check across runtimes → derive → verify → go live"
+                        >
+                          ⚡
+                        </button>
                         <TestCell engines={localEngines} modelPath={m.path} onTest={test} />
                         <button
                           className="ghost"
-                          style={{ fontSize: 9, padding: "3px 7px", borderColor: "var(--oom)", color: "var(--oom)" }}
-                          onClick={() => remove(m.path)}
+                          style={{ fontSize: 9, padding: "3px 7px" }}
+                          onClick={() => forget(m.path)}
                           disabled={isDeleting}
-                          title={isDeleting ? "deleting..." : "delete from index and disk"}
+                          title="forget: drop the library record, files stay on disk"
                         >
-                          {isDeleting ? "..." : "✕"}
+                          {isDeleting ? "..." : "forget"}
+                        </button>
+                        <button
+                          className="ghost"
+                          style={{ fontSize: 9, padding: "3px 7px", borderColor: "var(--oom)", color: "var(--oom)" }}
+                          onClick={() => removeFiles(m.path, m.footprint_gib)}
+                          disabled={isDeleting}
+                          title={`remove local file (${m.footprint_gib.toFixed(2)} GiB freed)`}
+                        >
+                          ✕ file
                         </button>
                       </div>
                     </td>

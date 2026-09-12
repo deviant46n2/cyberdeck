@@ -217,6 +217,39 @@ enum Commands {
         #[command(subcommand)]
         action: DirsCmd,
     },
+    /// Forget a model: drop the library record, LEAVE files on disk.
+    /// The file resurfaces as orphaned on the next storage check.
+    Forget {
+        /// Exact indexed path to forget
+        path: String,
+    },
+    /// Remove local artifact files explicitly (reports exact bytes freed).
+    /// Does NOT silently drop records: rows for deleted files are removed,
+    /// missing paths are reported.
+    RemoveFiles {
+        /// One or more artifact paths to delete from disk
+        #[arg(required = true)]
+        paths: Vec<String>,
+    },
+    /// Reconcile DB index vs filesystem: ok / missing / orphaned + disk use.
+    Storage {
+        #[arg(long)]
+        json: bool,
+    },
+    /// List the runtime registry (builtins + custom manifests).
+    Runtimes {
+        #[arg(long)]
+        json: bool,
+    },
+    /// "Make it work" dry-run: rank compatible runtimes for a local model
+    /// with max viable context + VRAM explanation. Launches nothing.
+    MakeItWork {
+        /// Path to a local GGUF file or safetensors dir
+        #[arg(long)]
+        model: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -770,6 +803,11 @@ fn main() -> Result<()> {
             DownloadsCmd::List { json } => cmd::downloads::list(json),
             DownloadsCmd::Discard { name } => cmd::downloads::discard(&name),
         }
+        Commands::Forget { path } => cmd::lifecycle::forget(&path),
+        Commands::RemoveFiles { paths } => cmd::lifecycle::remove_files(&paths),
+        Commands::Storage { json } => cmd::lifecycle::storage(json),
+        Commands::Runtimes { json } => cmd::lifecycle::runtimes(json),
+        Commands::MakeItWork { model, json } => cmd::lifecycle::make_it_work(model, json),
         Commands::Promote => cmd::promote::run(),
         Commands::Dirs { action } => match action {
             DirsCmd::List { json } => cmd::dirs::list(json),

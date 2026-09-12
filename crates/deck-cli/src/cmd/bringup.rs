@@ -5,7 +5,30 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-use super::{parse_engine, with_profiles_db};
+use super::with_profiles_db;
+
+/// Resolve a target to (derived loadout, test port): builtin engine or a
+/// custom runtime manifest. Keeps the CLI door at parity with the app's ⚡ path.
+fn plan(
+    model: &std::path::Path,
+    engine: &str,
+) -> Result<(deck_core::profile::DerivedLoadout, u16)> {
+    if let Some(e) = deck_core::profile::Engine::parse(engine) {
+        let d = deck_core::profile::derive_loadout(model, e).map_err(anyhow::Error::msg)?;
+        return Ok((d, e.test_port()));
+    }
+    let m = deck_core::runtime::all_manifests()
+        .into_iter()
+        .find(|m| m.id == engine)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "unknown engine/runtime '{engine}' (builtins: llamacpp|freetoken|ollama; or a manifest in ~/.local/share/cyberdeck/runtimes)"
+            )
+        })?;
+    let test_port = m.test_port;
+    let d = deck_core::profile::derive_custom_loadout(model, &m).map_err(anyhow::Error::msg)?;
+    Ok((d, test_port))
+}
 
 pub(crate) fn run(
     model: PathBuf,
@@ -15,12 +38,11 @@ pub(crate) fn run(
     dry_run: bool,
     bin: Option<String>,
 ) -> Result<()> {
-    let eng = parse_engine(&engine)?;
     println!(
-        "[bringup] deriving loadout for {:?} via {eng:?}…",
+        "[bringup] deriving loadout for {:?} via {engine}…",
         model.file_name().unwrap_or_default()
     );
-    let derived = deck_core::profile::derive_loadout(&model, eng).map_err(anyhow::Error::msg)?;
+    let (derived, test_port) = plan(&model, &engine)?;
     let mut p = derived.profile;
     if let Some(b) = &bin {
         p.bin = PathBuf::from(b);
@@ -52,8 +74,10 @@ pub(crate) fn run(
 
     if dry_run {
         println!(
-            "[bringup] --dry-run: would save loadout '{}' (engine={:?} port={}) and apply it. nothing changed.",
-            p.name, p.engine, p.port
+            "[bringup] --dry-run: would save loadout '{}' (runtime={} port={}) and apply it. nothing changed.",
+            p.name,
+            p.runtime_key(),
+            p.port
         );
         return Ok(());
     }
@@ -61,7 +85,6 @@ pub(crate) fn run(
     // Option 1 (default): verify headlessly on a test port WITHOUT touching the
     // live service, walking the ctx ladder if the max OOMs. Only then install.
     if !fast {
-        let test_port = eng.test_port();
         println!(
             "[bringup] verifying on test port :{test_port} (live :{} untouched)…",
             p.port
@@ -98,10 +121,11 @@ pub(crate) fn run(
     let (_db, mut conn) = with_profiles_db()?;
     deck_core::store::upsert_profile(&mut conn, &p)?;
     deck_core::store::ensure_resident_schema(&mut conn).ok();
-    let _ = deck_core::store::set_resident(&mut conn, p.engine.store_id(), &p.name, Some(true));
+    let runtime = p.runtime_key();
+    let _ = deck_core::store::set_resident(&mut conn, &runtime, &p.name, Some(true));
     println!(
-        "[bringup] saved loadout '{}' (engine={:?} port={})",
-        p.name, p.engine, p.port
+        "[bringup] saved loadout '{}' (runtime={} port={})",
+        p.name, runtime, p.port
     );
 
     deck_engines::apply(&p, false)?;
@@ -118,7 +142,7 @@ pub(crate) fn run(
         let conn = deck_core::store::open(&db)?;
         deck_core::store::ensure_bench_schema(&conn)?;
         let engine_version = deck_engines::detect_engine_version(p.engine, &p.host, p.port);
-        let engine_str = format!("{:?}", p.engine).to_lowercase();
+        let engine_str = p.runtime_key();
         let row = deck_core::store::BenchRow::with_provenance(
             &conn, &engine_str, &p.host, p.port, &p.model, p.ctx_size, tps, at,
             engine_version, None, None,

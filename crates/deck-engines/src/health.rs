@@ -8,8 +8,6 @@ use std::time::{Duration, Instant};
 
 use deck_core::profile::{Engine, Profile};
 
-use crate::unit::build_args;
-
 fn agent(timeout: Duration) -> ureq::Agent {
     let config = ureq::config::Config::builder()
         .timeout_global(Some(timeout))
@@ -242,21 +240,36 @@ pub fn boot_on_test_port(
 ) -> Result<std::process::Child, (String, String)> {
     let mut draft = p.clone();
     draft.port = test_port;
-    let host = draft.host.clone();
-    let args = build_args(&draft);
-    let mut cmd = Command::new(&draft.bin);
-    cmd.args(&args)
+    let args = crate::unit::args_for(&draft);
+    let env = crate::unit::child_env_for(&draft);
+    spawn_and_wait(&draft.bin, &args, &env, &draft.host, test_port, timeout)
+}
+
+/// Spawn a runtime binary and wait until it serves, OOMs, crashes, or times
+/// out. On success the live child is returned (caller OWNS and MUST kill it).
+/// Runtime-agnostic: the caller supplies the argv/env, so a custom manifest
+/// and a builtin engine share this exact verification path.
+pub fn spawn_and_wait(
+    bin: &std::path::Path,
+    args: &[String],
+    env: &[(String, String)],
+    host: &str,
+    test_port: u16,
+    timeout: Duration,
+) -> Result<std::process::Child, (String, String)> {
+    let mut cmd = Command::new(bin);
+    cmd.args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    if draft.engine == deck_core::profile::Engine::Ollama {
-        cmd.env("OLLAMA_HOST", format!("{host}:{test_port}"));
+    for (k, v) in env {
+        cmd.env(k, v);
     }
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
             return Err((
                 "ERROR".into(),
-                format!("failed to spawn {}: {e}", draft.bin.display()),
+                format!("failed to spawn {}: {e}", bin.display()),
             ));
         }
     };
@@ -290,7 +303,7 @@ pub fn boot_on_test_port(
             verdict = ("CRASH", format!("engine exited early with status {s}"));
             break;
         }
-        if health_ok_any(&host, test_port) {
+        if health_ok_any(host, test_port) {
             verdict = (
                 "RUNNING",
                 "engine loaded and is serving on the test port".into(),

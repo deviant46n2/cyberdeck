@@ -204,6 +204,15 @@ The engine menus (VAULT load/test buttons, DOWNLOADS "TEST WITH" picker, HUD
 status pills) all derive from the `engine_list` registry — a runtime
 appears everywhere the moment it's registered; nothing is a hardcoded button.
 
+Custom runtimes extend this past the builtin four: a `RuntimeManifest` JSON in
+`~/.local/share/cyberdeck/runtimes/` (formats, architectures, capabilities,
+ports, status, `configuration` params, argv/env templates) merges into the same
+registry, so it appears in fit candidates and the ⚡ Make-it-work path and
+launches through the same generic unit/verify/bench pipeline — no core code, no
+recompile. Placeholders are validated at load time so a typo names the file and
+the bad key. See `DECISIONS.md` "Runtime Adapters — Manifests Over Engine
+Matches".
+
 Build as: `deck bringup --model <path> --engine freetoken [--dedicated-port]`
 CLI first (headless-tested like everything else), then a HUD/Chat **"LOAD"
 button** that calls it.

@@ -14,6 +14,7 @@ pub(crate) mod agents;
 pub(crate) mod secrets;
 pub(crate) mod feeds;
 pub(crate) mod fit;
+pub(crate) mod lifecycle;
 pub(crate) mod list;
 pub(crate) mod profile;
 pub(crate) mod scan;

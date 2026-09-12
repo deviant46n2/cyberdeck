@@ -37,9 +37,33 @@ pub fn ensure_profile_schema(conn: &Connection) -> Result<()> {
             [],
         )?;
     }
+    crate::store::ensure_column(conn, "profiles", "origin", "TEXT NOT NULL DEFAULT 'auto'")?;
+    crate::store::ensure_column(conn, "profiles", "provenance", "TEXT")?;
+    super::runs::ensure_runs_schema(conn)?;
     backfill_model_ids(conn)?;
     Ok(())
 }
+
+/// Configuration origin: 'auto' (fit-engine recommended) vs 'override'
+/// (user touched at least one field). Defaults to 'auto' for old rows.
+pub fn profile_origin(conn: &Connection, name: &str) -> Result<String> {
+    Ok(conn
+        .prepare("SELECT origin FROM profiles WHERE name = ?1")?
+        .query_row([name], |r| r.get::<_, String>(0))
+        .unwrap_or_else(|_| "auto".to_string()))
+}
+
+/// Mark a profile user-overridden (Tune saved a manual edit) with optional
+/// provenance JSON explaining the fit that produced it.
+pub fn mark_profile_override(conn: &Connection, name: &str, provenance: Option<&str>) -> Result<()> {
+    conn.execute(
+        "UPDATE profiles SET origin = 'override', provenance = COALESCE(?2, provenance) WHERE name = ?1",
+        rusqlite::params![name, provenance],
+    )?;
+    Ok(())
+}
+
+
 
 /// Resolve the vault row for a profile's model string (real local file/dir
 /// paths only — remote HF ids and empty drafts stay unlinked). Returns None

@@ -36,9 +36,15 @@
       },
       {
         "path": "crates/deck-core/src/profile.rs",
-        "lines": 562,
+        "lines": 681,
         "kind": "accepted",
         "reason": "Profile type + derive/parse logic is one cohesive domain module within the deck-core layering. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
+      },
+      {
+        "path": "crates/deck-core/src/runtime.rs",
+        "lines": 338,
+        "kind": "accepted",
+        "reason": "The runtime manifest schema + template rendering is one cohesive contract: manifest fields, ConfigParam, and the argv/env substitution they drive must change together (a template placeholder and its declared param are a single invariant). Registry discovery (builtins + custom files) is already split into runtime_registry.rs. Just over the soft heuristic with dense docs, not a seam. AGENTS.md 'COHESION > ARBITRARY LINE COUNT'"
       },
       {
         "path": "crates/deck-core/src/safetensors.rs",

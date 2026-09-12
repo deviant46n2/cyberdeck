@@ -62,7 +62,9 @@ pub fn resolve_engine_bin(
     conn: &Connection,
     mut p: crate::profile::Profile,
 ) -> Result<crate::profile::Profile> {
-    if let Some(b) = get_engine_bin(conn, p.engine.store_id())?
+    // Keyed by runtime id so a custom manifest ("beellama") can have its own
+    // configured executable, exactly like a builtin engine.
+    if let Some(b) = get_engine_bin(conn, &p.runtime_key())?
         && b != p.bin.to_string_lossy()
     {
         p.bin = std::path::PathBuf::from(b);

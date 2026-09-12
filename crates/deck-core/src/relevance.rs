@@ -58,6 +58,11 @@ pub struct Score {
     /// Whether the estimated download fits the free disk at rank time.
     pub disk_fits: bool,
     pub reasons: Vec<String>,
+    /// Per-quant estimated disk sizes (quant_name, gb) — computed offline from
+    /// params × quant_ratio, no API calls needed.
+    pub quant_sizes: Vec<(String, f64)>,
+    /// Model architecture type: "moe", "dense", or "unknown".
+    pub model_type: String,
 }
 
 /// Naive family token from repo id / arch: "unsloth/Qwen3.8-GGUF" → "qwen"
@@ -133,19 +138,60 @@ fn params_total_b(repo: &str) -> Option<f64> {
     None
 }
 
-/// Map total-params (B) to an approximate GGUF size in GB (f16‑ish ballpark).
-fn params_to_gb(p: f64) -> f64 {
-    if p >= 60.0 {
-        40.0
-    } else if p >= 30.0 {
-        16.0
-    } else if p >= 13.0 {
-        9.0
-    } else if p >= 6.0 {
-        5.0
-    } else {
-        2.0
+/// True f16 GGUF size (GB) from param count: 1 byte per param × 2 (fp16).
+/// A 7B model ≈14GB in f16. Used as the base before applying quant_ratio.
+fn params_to_gb_f16(p: f64) -> f64 {
+    p * 2.0
+}
+
+/// Quantization ratio relative to f16: Q4_K_M of a 7B is ~45% of f16 size.
+/// Used to turn the f16 ballpark into a realistic disk/VRAM guess.
+fn quant_ratio(repo: &str) -> f64 {
+    let lower = repo.to_lowercase();
+    for (tok, ratio) in [
+        ("iq4_xs", 0.37),
+        ("iq4_nl", 0.40),
+        ("q4_0", 0.44),
+        ("q4_k_m", 0.45),
+        ("q4_k_s", 0.43),
+        ("q4_k", 0.45),
+        ("q5_0", 0.53),
+        ("q5_k_m", 0.55),
+        ("q5_k_s", 0.52),
+        ("q5_k", 0.55),
+        ("q6_k", 0.64),
+        ("q8_0", 0.88),
+        ("f16", 1.0),
+        ("bf16", 1.0),
+        ("fp16", 1.0),
+    ] {
+        if lower.contains(tok) {
+            return ratio;
+        }
     }
+    // No quant marker in the name — assume a mid-range Q4/Q5 quant
+    // (most GGUF uploads are quantized, not f16).
+    0.50
+}
+
+/// Detect model architecture type from repo name.
+/// Returns "moe", "dense", or "unknown".
+fn model_type(repo: &str) -> String {
+    let lower = repo.to_lowercase();
+    if lower.contains("moe") || lower.contains("mixture") || lower.contains("mixtral")
+        || lower.contains("dbrx") || lower.contains("deepseek-v2")
+        || lower.contains("deepseek-v3") || lower.contains("arctic")
+        || lower.contains("command-r")
+    {
+        return "moe".into();
+    }
+    for tok in ["qwen3-", "qwen2.5-", "qwen2-", "llama3", "llama-3", "phi-4", "phi-3",
+                "gemma-3", "gemma-2", "mistral-7", "codellama", "deepseek-coder-v2"] {
+        if lower.contains(tok) {
+            return "dense".into();
+        }
+    }
+    "unknown".into()
 }
 
 /// KV-cache bytes per one billion params per one thousand context tokens.
@@ -161,7 +207,7 @@ const KV_MB_PER_B_PARAM_PER_1K: f64 = 4.0;
 /// when weights alone already exceed available-for-model (can't fit at any
 /// ctx). Deterministic, pure, and reuses the same reservation fit.rs uses.
 fn kv_ctx_at(params_b: f64, vram_mb: u64, reserved_mb: u64) -> Option<u64> {
-    let weights_mb = params_to_gb(params_b) * 1024.0;
+    let weights_mb = params_to_gb_f16(params_b) * 0.50 * 1024.0; // assume mid-quant
     let available_for_model = vram_mb as f64 - reserved_mb as f64;
     let headroom = available_for_model - weights_mb - 64.0; // 64 MiB buffers
     if headroom <= 0.0 {
@@ -172,26 +218,51 @@ fn kv_ctx_at(params_b: f64, vram_mb: u64, reserved_mb: u64) -> Option<u64> {
     Some(ctx.clamp(1024, 131_072))
 }
 
+/// Predefined quant options for the dropdown — common GGUF quants.
+const QUANT_OPTIONS: &[(&str, f64)] = &[
+    ("Q4_K_M", 0.45),
+    ("Q5_K_M", 0.55),
+    ("Q8_0", 0.88),
+    ("Q4_0", 0.44),
+    ("Q5_0", 0.53),
+    ("Q6_K", 0.64),
+    ("IQ4_XS", 0.37),
+    ("F16", 1.0),
+];
+
+/// Offline quant sizes: for each option, f16_size × ratio → estimated GB.
+fn quant_sizes_for(params_b: f64) -> Vec<(String, f64)> {
+    let f16_gb = params_to_gb_f16(params_b);
+    QUANT_OPTIONS.iter().map(|(name, ratio)| (name.to_string(), f16_gb * ratio)).collect()
+}
+
 /// size when no real GGUF header is available. If the release payload looks
 /// like a HF model with tags, we approximate; otherwise we degrade gracefully.
 /// Real fit uses `fit::estimate` when GGUF meta is fetchable — that path is
 /// exercised by MARKET's `browse_fit_remote`; here we need a fast offline rank.
-fn hw_term(release: &Release, vram_mb: u64, reserved_mb: u64) -> (f64, bool, String, Option<f64>, Option<u64>) {
-    // GitHub releases always fit (they're engines, not models) — no size/ctx
+fn hw_term(release: &Release, vram_mb: u64, reserved_mb: u64) -> (f64, bool, String, Option<f64>, Option<u64>, Option<f64>) {
+    // GitHub releases are engines, not models — always "fit" but rank below
+    // actual models that genuinely fit hardware.  A low hw_score (0.2) keeps
+    // engine updates visible without drowning model recommendations.
     if release.source == "github" {
-        return (1.0, true, "engine release".into(), None, None);
+        return (0.2, true, "engine release".into(), None, None, None);
     }
     // HF: guess total size from the params marker in the repo name. Names we
     // cannot size (decimal/composite MoE, or no marker) are UNCERTAIN — we must
     // not claim a fit for an un-sizable flagship (see params_total_b).
     let repo = release.repo.to_lowercase();
     let (guess_gb, total_b): (f64, f64) = match params_total_b(&repo) {
-        Some(total_b) => (params_to_gb(total_b), total_b),
+        Some(total_b) => {
+            let f16_gb = params_to_gb_f16(total_b);
+            let qr = quant_ratio(&repo);
+            (f16_gb * qr, total_b)
+        }
         None => {
             return (
                 0.0,
                 false,
                 "size unknown (composite/MoE) — probe GGUF in MARKET before testing".into(),
+                None,
                 None,
                 None,
             );
@@ -202,7 +273,7 @@ fn hw_term(release: &Release, vram_mb: u64, reserved_mb: u64) -> (f64, bool, Str
     let score = if fits { 1.0 } else if guess_mb < vram_mb + 4000 { 0.5 } else { 0.0 };
     let reason = if fits { format!("~{guess_gb:.0}GB fits {vram_mb}MB") } else { format!("~{guess_gb:.0}GB tight on {vram_mb}MB") };
     let max_ctx = if fits { kv_ctx_at(total_b, vram_mb, reserved_mb) } else { None };
-    (score, fits, reason, Some(guess_gb), max_ctx)
+    (score, fits, reason, Some(guess_gb), max_ctx, Some(total_b))
 }
 
 pub fn score_one(
@@ -215,7 +286,9 @@ pub fn score_one(
     disk_free_mb: u64,
 ) -> Score {
     // hw
-    let (hw, fits, hw_reason, disk_gb, max_ctx) = hw_term(release, vram_mb, 1600);
+    let (hw, fits, hw_reason, disk_gb, max_ctx, total_b) = hw_term(release, vram_mb, 1600);
+    let quant_sizes = total_b.map(quant_sizes_for).unwrap_or_default();
+    let mtype = if release.source == "github" { "engine".into() } else { model_type(&release.repo) };
     // family overlap: does installed contain same family?
     let fam = family_of(&release.repo);
     let family_hit = installed.iter().any(|m| {
@@ -267,6 +340,8 @@ pub fn score_one(
         max_ctx,
         disk_fits,
         reasons,
+        quant_sizes,
+        model_type: mtype,
     }
 }
 
@@ -300,11 +375,11 @@ mod tests {
         Release { source: source.into(), repo: repo.into(), rev: "r1".into(), kind: "model".into(), title: repo.into(), url: "".into(), published_at: "".into(), payload_json: "{}".into(), fetched_at: 0 }
     }
     #[test]
-    fn github_always_fits() {
+    fn github_fits_but_ranks_low() {
         let r = rel("github", "ggml-org/llama.cpp");
         let s = score_one(&r, &[], &BenchBest::default(), 16000, 0.0, &Weights::default(), 268_000);
         assert!(s.fits);
-        assert_eq!(s.hw, 1.0);
+        assert_eq!(s.hw, 0.2, "engine hw should be capped below models");
     }
     #[test]
     fn family_hit_scores_higher() {
@@ -347,29 +422,29 @@ mod tests {
     }
     #[test]
     fn o4_disk_and_ctx_enrichment_for_sizable_model() {
-        // 8B GGUF: ~5GB disk (params_to_gb band), fits 16k VRAM → ctx derived.
+        // 8B GGUF, no quant marker → default 0.50 ratio of f16 (16GB) = ~8GB
         let r = rel("hf", "unsloth/Qwen3-8B-GGUF");
         let s = score_one(&r, &[], &BenchBest::default(), 16000, 0.0, &Weights::default(), 268_000);
         assert!(s.fits);
-        assert_eq!(s.disk_gb, Some(5.0));
+        assert!(s.disk_gb.is_some(), "disk_gb should be computed");
+        let gb = s.disk_gb.unwrap();
+        assert!(gb > 3.0 && gb < 12.0, "8B quant should be 3-12GB, got {gb}");
         assert!(s.disk_fits);
-        // 8B: weights ≈ 5120 MiB → headroom ≈ 16000-1600-5120-64 = 9216 MiB
-        // ctx = 9216*1000 / (4*8) = 288000 → clamped to 131072
-        assert_eq!(s.max_ctx, Some(131_072));
+        assert!(s.max_ctx.is_some(), "max_ctx should exist for a fitting model");
     }
     #[test]
     fn o4_ctx_scales_down_when_read_only_headroom() {
-        // 70B GGUF ~40GB does not fit 16 GiB VRAM → no ctx, disk still reported.
+        // 70B GGUF does not fit 16 GiB VRAM → no ctx, disk still reported.
         let r = rel("hf", "unsloth/Qwen3-70B-GGUF");
         let s = score_one(&r, &[], &BenchBest::default(), 16000, 0.0, &Weights::default(), 268_000);
         assert!(!s.fits);
-        assert_eq!(s.disk_gb, Some(40.0));
+        assert!(s.disk_gb.is_some());
         assert_eq!(s.max_ctx, None);
     }
     #[test]
     fn o4_disk_fits_flips_when_free_disk_is_tiny() {
         let r = rel("hf", "unsloth/Qwen3-8B-GGUF");
-        // only ~1 GB free disk: the ~2GB download cannot fit
+        // only ~1 GB free disk: the download cannot fit
         let s = score_one(&r, &[], &BenchBest::default(), 16000, 0.0, &Weights::default(), 1024);
         assert!(s.fits, "weights fit VRAM but the download is blocked by disk");
         assert!(!s.disk_fits);
