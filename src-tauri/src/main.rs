@@ -601,6 +601,24 @@ fn model_status(model_path: String) -> Result<ModelStatus, String> {
     deck_tauri::model_status(&model_path).map_err(|e| e.to_string())
 }
 
+/// Bulk lifecycle status (path → status) for models that have a saved config.
+#[tauri::command]
+fn model_status_all() -> Result<std::collections::HashMap<String, ModelStatus>, String> {
+    deck_tauri::model_status_all().map_err(|e| e.to_string())
+}
+
+/// Start a model from its saved configuration (per-model convenience).
+#[tauri::command]
+fn start_model(path: String) -> Result<(), String> {
+    deck_tauri::start_model(&path).map_err(|e| e.to_string())
+}
+
+/// Stop whichever slot serves this model (idempotent).
+#[tauri::command]
+fn stop_model(path: String) -> Result<(), String> {
+    deck_tauri::stop_model(&path).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn runtime_list() -> Vec<deck_tauri::RuntimeRow> {
     deck_tauri::runtime_list()
@@ -863,6 +881,9 @@ fn main() {
             remove_model_files,
             storage_reconcile,
             model_status,
+            model_status_all,
+            start_model,
+            stop_model,
             runtime_list,
             runtime_probe_version,
             runtime_check_updates,

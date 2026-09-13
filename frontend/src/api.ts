@@ -537,6 +537,16 @@ export type ModelStatus =
 export const modelStatus = (path: string) =>
   invoke<ModelStatus>("model_status", { modelPath: path });
 
+/** Bulk status keyed by model path; a missing key means NeedsSetup. */
+export const modelStatusAll = () =>
+  invoke<Record<string, ModelStatus>>("model_status_all");
+
+/** Start a model from its saved configuration. */
+export const startModel = (path: string) => invoke<void>("start_model", { path });
+
+/** Stop whichever slot serves this model (idempotent). */
+export const stopModel = (path: string) => invoke<void>("stop_model", { path });
+
 export interface RuntimeRow {
   id: string;
   display: string;

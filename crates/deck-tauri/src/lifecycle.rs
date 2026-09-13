@@ -116,6 +116,62 @@ pub fn storage_reconcile() -> anyhow::Result<StorageReport> {
     })
 }
 
+// ── per-model lifecycle convenience (Needs Setup → Ready → Running) ────────
+//
+// Normal users name a model, never a profile or an engine. These wrap the
+// existing machinery (`use_profile` / `engine_stop`) so the simplified UI can
+// start/stop a model without knowing either.
+
+/// Lifecycle status for every model that has at least one saved profile,
+/// keyed by model path. Paths absent from the map are `NeedsSetup` — the
+/// frontend defaults them, so an empty vault costs nothing.
+pub fn model_status_all(
+) -> anyhow::Result<std::collections::HashMap<String, deck_core::store::ModelStatus>> {
+    let db = deck_core::store::default_db_path();
+    let conn = deck_core::store::open(&db)?;
+    let mut out = std::collections::HashMap::new();
+    for p in deck_core::store::list_profiles(&conn)? {
+        if out.contains_key(&p.model) {
+            continue;
+        }
+        out.insert(
+            p.model.clone(),
+            deck_core::store::model_status(&conn, &p.model)?,
+        );
+    }
+    Ok(out)
+}
+
+/// Start a model using its saved configuration — the per-model convenience
+/// over `use_profile`. Fails when the model has never been set up.
+pub fn start_model(path: &str) -> anyhow::Result<()> {
+    let db = deck_core::store::default_db_path();
+    let conn = deck_core::store::open(&db)?;
+    let p = deck_core::store::current_profile_for_model(&conn, path)?.ok_or_else(|| {
+        anyhow::anyhow!("no saved configuration for this model — run Make It Work first")
+    })?;
+    drop(conn);
+    crate::profiles::use_profile(&p.name, false, false)?;
+    Ok(())
+}
+
+/// Stop whichever engine slot is serving this model. Idempotent — a model that
+/// is not running is a no-op, so the UI can call it without a status check.
+pub fn stop_model(path: &str) -> anyhow::Result<()> {
+    let db = deck_core::store::default_db_path();
+    let conn = deck_core::store::open(&db)?;
+    let residents = deck_core::store::list_residents(&conn)?;
+    let profiles = deck_core::store::list_profiles(&conn)?;
+    drop(conn);
+    if let Some(r) = residents
+        .iter()
+        .find(|r| profiles.iter().any(|p| p.name == r.profile && p.model == path))
+    {
+        crate::portmap::engine_stop(&r.engine_id)?;
+    }
+    Ok(())
+}
+
 #[derive(Serialize)]
 pub struct RuntimeRow {
     pub id: String,
