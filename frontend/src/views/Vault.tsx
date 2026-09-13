@@ -378,6 +378,13 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
   const [ollamaBusy, setOllamaBusy] = useState(false);
   const [extServices, setExtServices] = useState<api.ExternalService[]>([]);
   const [extBusy, setExtBusy] = useState<string | null>(null);
+  // path → lifecycle status. Absent means Needs Setup.
+  const [statusMap, setStatusMap] = useState<Record<string, api.ModelStatus>>({});
+  // Simple is the default door; Advanced keeps every existing control reachable.
+  const [mode, setMode] = useState<"simple" | "advanced">(
+    () => (localStorage.getItem("cyberdeck-vault-mode") as "simple" | "advanced") || "simple",
+  );
+  const simple = mode === "simple";
   const dupIds = new Set(dups.flatMap((d) => d.members));
   const localEngines = useEngineList("LocalPath");
 
@@ -449,11 +456,12 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
       // allSettled: one failing door must not blank the rest, and failures
       // surface in the sync line instead of a silent catch — an empty vault
       // with no error is otherwise indistinguishable from "nothing loaded".
-      const [slotsR, proR, ollamaR, extR] = await Promise.allSettled([
+      const [slotsR, proR, ollamaR, extR, statusR] = await Promise.allSettled([
         api.portMapStatus("127.0.0.1"),
         api.listProfiles(),
         api.ollamaIsRunning(),
         api.externalServices(),
+        api.modelStatusAll(),
       ]);
       const errs: string[] = [];
       const slots = slotsR.status === "fulfilled" ? slotsR.value : [];
@@ -478,6 +486,7 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
       }
       if (ollamaR.status === "fulfilled") setOllamaRunning(ollamaR.value);
       if (extR.status === "fulfilled") setExtServices(extR.value);
+      if (statusR.status === "fulfilled") setStatusMap(statusR.value);
       setSyncErr(errs.length ? errs.join(" · ") : null);
       setSyncAt(Date.now());
     };
@@ -535,6 +544,40 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
     } catch (e) {
       alert(String(e));
     }
+  };
+
+  // Simplified lifecycle: the UI names only the model; the backend resolves
+  // the profile and the slot.
+  const startSimple = async (path: string) => {
+    setApplying("Starting…");
+    try {
+      await api.startModel(path);
+      setApplying(null);
+      setReloadTick((t) => t + 1);
+    } catch (e) {
+      setApplying(`ERROR: ${String(e)}`);
+      setTimeout(() => setApplying(null), 4000);
+    }
+  };
+
+  const stopSimple = async (path: string) => {
+    setApplying("Stopping…");
+    try {
+      await api.stopModel(path);
+      setApplying(null);
+      setReloadTick((t) => t + 1);
+    } catch (e) {
+      setApplying(`ERROR: ${String(e)}`);
+      setTimeout(() => setApplying(null), 4000);
+    }
+  };
+
+  const toggleMode = () => {
+    setMode((m) => {
+      const next = m === "simple" ? "advanced" : "simple";
+      localStorage.setItem("cyberdeck-vault-mode", next);
+      return next;
+    });
   };
 
   const toggleOllama = async () => {
@@ -744,8 +787,16 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
       <div className="view-title" style={{ display: "flex", alignItems: "center", gap: 12 }}>
         VAULT
         <button
-          className={ollamaRunning ? "action" : "ghost"}
+          className="ghost"
           style={{ fontSize: 10, padding: "3px 10px", marginLeft: "auto" }}
+          onClick={toggleMode}
+          title={simple ? "show every control (engines, flavors, fit, swap)" : "hide the machinery — just start and stop"}
+        >
+          {simple ? "⚙ ADVANCED" : "◱ SIMPLE"}
+        </button>
+        <button
+          className={ollamaRunning ? "action" : "ghost"}
+          style={{ fontSize: 10, padding: "3px 10px" }}
           onClick={toggleOllama}
           disabled={ollamaBusy}
           title={ollamaRunning ? "Ollama is running — click to stop" : "Ollama is stopped — click to start"}
@@ -754,11 +805,11 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
         </button>
       </div>
 
-      <PortMap onChanged={() => setReloadTick((t) => t + 1)} />
+      {!simple && <PortMap onChanged={() => setReloadTick((t) => t + 1)} />}
 
-      <StoragePanel onChanged={() => setReloadTick((t) => t + 1)} />
+      {!simple && <StoragePanel onChanged={() => setReloadTick((t) => t + 1)} />}
 
-      {extServices.length > 0 && (
+      {!simple && extServices.length > 0 && (
         <div className="card" style={{ marginBottom: 16 }}>
           <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
             <h3 style={{ fontSize: 11, letterSpacing: 0.6, color: "var(--cyan)", margin: 0 }}>EXTERNAL SERVICES</h3>
@@ -804,7 +855,7 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
         </div>
       )}
 
-      {dups.length > 0 && (
+      {!simple && dups.length > 0 && (
         <div className="card" style={{ marginBottom: 16, borderColor: "var(--oom)" }}>
           <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
             <h3 style={{ color: "var(--oom)", margin: 0 }}>DUPLICATE SHARDS — WASTED SPACE</h3>
@@ -841,21 +892,32 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
         <table>
           <thead>
             <tr>
-              <th>NAME</th>
-              <th>QUANT</th>
-              <th>ARCH</th>
-              <th>TRAIN CTX</th>
-              <th>SIZE</th>
-              <th>PATH</th>
-              <th>FLAVORS</th>
-              <th>LOAD</th>
-              <th>ACTIONS</th>
+              {simple ? (
+                <>
+                  <th>MODEL</th>
+                  <th>SIZE</th>
+                  <th>STATUS</th>
+                  <th>ACTION</th>
+                </>
+              ) : (
+                <>
+                  <th>NAME</th>
+                  <th>QUANT</th>
+                  <th>ARCH</th>
+                  <th>TRAIN CTX</th>
+                  <th>SIZE</th>
+                  <th>PATH</th>
+                  <th>FLAVORS</th>
+                  <th>LOAD</th>
+                  <th>ACTIONS</th>
+                </>
+              )}
             </tr>
           </thead>
           <tbody>
             {groups.length === 0 ? (
               <tr>
-                <td colSpan={9} className="dim">
+                <td colSpan={simple ? 4 : 9} className="dim">
                   no models indexed — run a SCAN from HUD
                 </td>
               </tr>
@@ -868,11 +930,12 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
                   const isLoaded = loadedPaths.has(m.path);
                   const g = groupOfPath.get(m.path);
                   const multi = !!g && g.members.length > 1;
+                  const st = statusMap[m.path]?.status ?? "NeedsSetup";
                   return (
                     <Fragment key={m.path}>
                     {multi && g && (
                       <tr>
-                        <td colSpan={9} style={{ background: "rgba(91,139,245,0.06)", fontSize: 10, padding: "5px 10px" }}>
+                        <td colSpan={simple ? 4 : 9} style={{ background: "rgba(91,139,245,0.06)", fontSize: 10, padding: "5px 10px" }}>
                           <b>{g.display}</b>
                           <span className="dim"> · {g.members.length} variants · {g.totalGib.toFixed(1)} GiB total</span>
                           {g.members.some((x) => loadedPaths.has(x.path)) && (
@@ -901,6 +964,56 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
                         transition: "opacity 0.2s, background 0.2s",
                       }}
                     >
+                    {simple ? (
+                      <>
+                        <td>
+                          {g && g.members.length > 1 ? g.display : (m.basename ?? m.name)}
+                          {g && g.members.length > 1 && (
+                            <span className="dim" style={{ marginLeft: 6, fontSize: 10 }}>{variantLabel(m)}</span>
+                          )}
+                          {isLoaded && <span className="badge" style={{ marginLeft: 6, background: "var(--pass)", color: "#000", fontSize: 8, padding: "2px 5px" }}>● LIVE</span>}
+                        </td>
+                        <td className="mono">{m.footprint_gib.toFixed(2)} GiB</td>
+                        <td>
+                          {st === "Running" && <span style={{ color: "var(--pass)" }}>● Running</span>}
+                          {st === "Ready" && <span style={{ color: "var(--cyan)" }}>● Ready</span>}
+                          {st === "NeedsSetup" && <span className="dim">Needs Setup</span>}
+                        </td>
+                        <td>
+                          {st === "NeedsSetup" && (
+                            <button
+                              className="ghost"
+                              style={{ fontSize: 10, padding: "4px 12px", borderColor: "var(--pass)", color: "var(--pass)" }}
+                              onClick={() => makeItWork(m.path)}
+                              title="set up this model: pick the best fit, verify it, and save the configuration"
+                            >
+                              ⚡ Make It Work
+                            </button>
+                          )}
+                          {st === "Ready" && (
+                            <button
+                              className="ghost"
+                              style={{ fontSize: 10, padding: "4px 12px", borderColor: "var(--pass)", color: "var(--pass)" }}
+                              onClick={() => startSimple(m.path)}
+                              title="start this model with its saved configuration"
+                            >
+                              ▶ Start
+                            </button>
+                          )}
+                          {st === "Running" && (
+                            <button
+                              className="ghost"
+                              style={{ fontSize: 10, padding: "4px 12px", borderColor: "var(--oom)", color: "var(--oom)" }}
+                              onClick={() => stopSimple(m.path)}
+                              title="stop this model"
+                            >
+                              ■ Stop
+                            </button>
+                          )}
+                        </td>
+                      </>
+                    ) : (
+                      <>
                     <td>{m.name}{isLoaded && <span className="badge" style={{ marginLeft: 6, background: "var(--pass)", color: "#000", fontSize: 8, padding: "2px 5px" }}>● LIVE</span>}</td>
                     <td>{m.quant ?? "—"}</td>
                     <td>{m.arch ?? "—"}</td>
@@ -978,6 +1091,8 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
                         </button>
                       </div>
                     </td>
+                      </>
+                    )}
                     </tr>
                     </Fragment>
                 );
