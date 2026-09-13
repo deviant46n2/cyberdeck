@@ -171,6 +171,25 @@ KV-qtype, MoE cache, or reasoning flags by hand.
 Net effect: **model + engine menu → working chat on the best-max-ctx config in
 a few seconds, with a benchmark row to prove it.** No flag surfing.
 
+### Model lifecycle: set up once, then Start/Stop (2026-09-12)
+
+The normal door shows three user-facing states per model, derived in
+`deck-core::store::model_status` from the `profiles` + `residents` tables (no
+health probing, no new persistence):
+
+- **Needs Setup** — no saved profile. One action: **⚡ Make It Work** (the
+  BringUp flow above, which auto-picks the runtime).
+- **Ready** — a known-good saved configuration exists. One action: **▶ Start**
+  (`start_model` → `use_profile`, the backend resolves the profile and slot).
+- **Running** — a profile for this model is the current resident, live on its
+  engine slot. One action: **■ Stop** (`stop_model` → `engine_stop`, idempotent).
+
+The Vault arrives in **Simple** mode (persisted); **⚙ ADVANCED** restores every
+existing control — PortMap, Storage, external services, engines, flavors, fit,
+swap, measure, forget/remove. Nothing is removed, only re-fronted. The two
+convenience commands are the one-truth backend for both doors; the model is the
+only noun the simple UI names.
+
 ### Hot-swap: change runtime/config without losing the working instance
 
 `deck swap --model <path> --to <runtime> [--ctx N] [--dry-run]` (and the app's

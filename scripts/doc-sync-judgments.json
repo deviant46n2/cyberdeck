@@ -119,6 +119,22 @@
     {
       "commit": "1d760dc",
       "reason": "feat(agents) store cloud API keys in the OS keychain via deck-agents::keys (Secret Service/Keychain/Credential Manager): documented in ROADMAP.md \u00a7Provider key storage (LANDED 2026-08-31) \u2014 keychain-first security model, env fallback matching gh, deck secrets + Tauri secret_* doors, and the no-secrets-in-tree invariant."
+    },
+    {
+      "commit": "578efff",
+      "reason": "feat(model) lifecycle status derivation (NeedsSetup/Ready/Running): the user-facing states are documented in feature-parity.md \u00a7Model lifecycle: set up once, then Start/Stop (2026-09-12); this commit is the derivation primitive that section specifies."
+    },
+    {
+      "commit": "75bddc9",
+      "reason": "feat(model) per-model start/stop + bulk status: documented in feature-parity.md \u00a7Model lifecycle: set up once, then Start/Stop (2026-09-12) \u2014 start_model/stop_model are the per-model convenience commands that section names."
+    },
+    {
+      "commit": "af082af",
+      "reason": "feat(vault) simplified model rows with a default Simple door: documented in feature-parity.md \u00a7Model lifecycle: set up once, then Start/Stop (2026-09-12) \u2014 the Simple/Advanced doors, three states, and one-action rows."
+    },
+    {
+      "commit": "1222d9d",
+      "reason": "feat(vault) refresh model status when a load finishes: implementation detail of the lifecycle flow documented in feature-parity.md \u00a7Model lifecycle: set up once, then Start/Stop (2026-09-12); no new surface."
     }
   ]
 }
