@@ -8,6 +8,7 @@
 //! surface so `src-tauri` can keep addressing commands as `deck_tauri::name`.
 
 pub use deck_core::profile::{Engine, EngineDescriptor, ModelSource, Profile};
+pub use deck_core::store::ModelStatus;
 
 pub mod agent;
 pub mod agents;
@@ -84,6 +85,14 @@ pub fn engine_bin_clear(store_id: &str) -> Result<(), String> {
     let db = deck_core::store::default_db_path();
     let conn = deck_core::store::open(&db).map_err(|e| e.to_string())?;
     deck_core::store::clear_engine_bin(&conn, store_id).map_err(|e| e.to_string())
+}
+
+/// User-facing lifecycle status for a single model. Pure DB derivation — no
+/// health probing, no systemd calls.
+pub fn model_status(model_path: &str) -> Result<deck_core::store::ModelStatus, String> {
+    let db = deck_core::store::default_db_path();
+    let conn = deck_core::store::open(&db).map_err(|e| e.to_string())?;
+    deck_core::store::model_status(&conn, model_path).map_err(|e| e.to_string())
 }
 
 pub use bench::{BenchRow, EngineStatus, bench_history, bench_now, engine_status};

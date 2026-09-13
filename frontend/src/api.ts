@@ -529,6 +529,14 @@ export interface StorageReport {
 export const storageReconcile = () =>
   invoke<StorageReport>("storage_reconcile");
 
+export type ModelStatus =
+  | { status: "NeedsSetup" }
+  | { status: "Ready"; profile: string }
+  | { status: "Running"; profile: string; engine: string };
+
+export const modelStatus = (path: string) =>
+  invoke<ModelStatus>("model_status", { modelPath: path });
+
 export interface RuntimeRow {
   id: string;
   display: string;

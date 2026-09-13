@@ -5,7 +5,7 @@
 // the network (curl/HF) or heavy FS/sqlite work must run via spawn_blocking or
 // it freezes the window. Everything remote is async below; fast local SQLite
 // reads stay sync on purpose.
-use deck_tauri::{DupRow, FitRow, ModelRow, ProfileRow, ScanResult, TweakResult, UseResult};
+use deck_tauri::{DupRow, FitRow, ModelRow, ModelStatus, ProfileRow, ScanResult, TweakResult, UseResult};
 use std::path::PathBuf;
 use tauri::Emitter;
 
@@ -595,6 +595,12 @@ fn storage_reconcile() -> Result<deck_tauri::StorageReport, String> {
     deck_tauri::storage_reconcile().map_err(|e| e.to_string())
 }
 
+/// User-facing lifecycle status for a single model: NeedsSetup / Ready / Running.
+#[tauri::command]
+fn model_status(model_path: String) -> Result<ModelStatus, String> {
+    deck_tauri::model_status(&model_path).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn runtime_list() -> Vec<deck_tauri::RuntimeRow> {
     deck_tauri::runtime_list()
@@ -856,6 +862,7 @@ fn main() {
             forget_model,
             remove_model_files,
             storage_reconcile,
+            model_status,
             runtime_list,
             runtime_probe_version,
             runtime_check_updates,

@@ -152,6 +152,48 @@ pub fn schema_version(conn: &Connection) -> Option<i64> {
         .and_then(|v| v.parse::<i64>().ok())
 }
 
+// ── model lifecycle status ────────────────────────────────────────────────
+
+/// User-facing model state derived from the DB. No health probing — the
+/// residents table *is* the source of truth for "is this model live."
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "status")]
+pub enum ModelStatus {
+    /// No saved profile references this model.
+    NeedsSetup,
+    /// At least one profile exists, but none is the current resident on an
+    /// engine slot.
+    Ready { profile: String },
+    /// A profile for this model is the current resident on a live engine slot.
+    Running { profile: String, engine: String },
+}
+
+/// Derive the lifecycle status of a model from profiles + residents.
+pub fn model_status(conn: &Connection, model_path: &str) -> Result<ModelStatus> {
+    let profiles = list_profiles(conn)?;
+    let residents = list_residents(conn)?;
+    let model_profiles: Vec<&crate::profile::Profile> = profiles
+        .iter()
+        .filter(|p| p.model == model_path)
+        .collect();
+    if model_profiles.is_empty() {
+        return Ok(ModelStatus::NeedsSetup);
+    }
+    // Check if any of this model's profiles is the current resident.
+    for r in &residents {
+        if let Some(p) = model_profiles.iter().find(|p| p.name == r.profile) {
+            return Ok(ModelStatus::Running {
+                profile: p.name.clone(),
+                engine: r.engine_id.clone(),
+            });
+        }
+    }
+    // Has profiles but none is resident — pick the first one as the "ready" profile.
+    Ok(ModelStatus::Ready {
+        profile: model_profiles[0].name.clone(),
+    })
+}
+
 fn now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -592,5 +634,54 @@ mod tests {
 
         let empty = per_role_bench(&conn, &[]).unwrap();
         assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn model_status_transitions() {
+        let conn = Connection::open_in_memory().expect("mem");
+        ensure_models_table(&conn).unwrap();
+        ensure_profile_schema(&conn).unwrap();
+        ensure_resident_schema(&conn).unwrap();
+        ensure_engine_bin_schema(&conn).unwrap();
+
+        let model = "/m/qwen.gguf";
+
+        // No profile → NeedsSetup.
+        assert_eq!(model_status(&conn, model).unwrap(), ModelStatus::NeedsSetup);
+
+        // Insert a profile for this model.
+        let p = Profile {
+            name: "qwen-auto".into(),
+            model: model.into(),
+            ..Default::default()
+        };
+        upsert_profile(&conn, &p).unwrap();
+
+        // Has profile, no resident → Ready.
+        assert_eq!(
+            model_status(&conn, model).unwrap(),
+            ModelStatus::Ready {
+                profile: "qwen-auto".into()
+            }
+        );
+
+        // Bind it as a resident → Running.
+        set_resident(&conn, "llamacpp", "qwen-auto", Some(true)).unwrap();
+        assert_eq!(
+            model_status(&conn, model).unwrap(),
+            ModelStatus::Running {
+                profile: "qwen-auto".into(),
+                engine: "llamacpp".into()
+            }
+        );
+
+        // Unbind → back to Ready.
+        clear_resident(&conn, "llamacpp").unwrap();
+        assert_eq!(
+            model_status(&conn, model).unwrap(),
+            ModelStatus::Ready {
+                profile: "qwen-auto".into()
+            }
+        );
     }
 }
