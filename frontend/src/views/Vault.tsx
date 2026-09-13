@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { listen } from "@tauri-apps/api/event";
 import * as api from "../api";
@@ -494,6 +494,15 @@ export default function Vault({ models, dups, onRefresh, onReload }: VaultProps)
     const t = window.setInterval(() => void poll(), 10000);
     return () => { alive = false; window.clearInterval(t); };
   }, [reloadTick]);
+
+  // After a Make It Work / LOAD finishes, re-derive status so the row flips
+  // Needs Setup → Ready (or Ready → Running) without waiting for the poll.
+  const brState = useSyncExternalStore(br.subscribe, br.getSnapshot);
+  useEffect(() => {
+    if (!brState.running && brState.mode === "load" && brState.result?.ok) {
+      setReloadTick((t) => t + 1);
+    }
+  }, [brState.running, brState.mode, brState.result]);
 
   // Live progress from the backend apply path (unit install → start →
   // health check → ctx-ladder retries). Keeps the toast truthful during the
